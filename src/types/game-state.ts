@@ -1,0 +1,92 @@
+export type ColorSymbol = 'W' | 'U' | 'B' | 'R' | 'G' | 'C'
+
+export interface CommanderCard {
+  scryfallId: string
+  name: string
+  imageUri: string
+  colorIdentity: ColorSymbol[]
+  manaCost: string | null
+  typeLine: string
+}
+
+export interface PlayerCounters {
+  poison: number
+  experience: number
+  energy: number
+  storm: number
+}
+
+export interface Player {
+  id: string
+  name: string
+  seat: number
+  life: number
+  commanderDamage: Record<string, number> // keyed by opponent player id
+  counters: PlayerCounters
+  commander: CommanderCard | null
+  isEliminated: boolean
+  hasMonarch: boolean
+  hasInitiative: boolean
+  isConnected: boolean
+}
+
+export interface LogEntry {
+  seq: number
+  timestamp: string
+  playerId: string
+  playerName: string
+  description: string
+  action: ActionPayload
+  undoable: boolean
+}
+
+export interface GameState {
+  roomId: string
+  roomCode: string
+  phase: 'lobby' | 'active' | 'ended'
+  players: Player[]
+  turnOrder: string[] // player IDs in sequence
+  currentTurnIndex: number
+  round: number
+  log: LogEntry[]
+  actionSeq: number
+  createdAt: string
+}
+
+// Discriminated union of all possible game actions
+export type ActionPayload =
+  | { type: 'LIFE_CHANGE'; targetId: string; delta: number }
+  | { type: 'COMMANDER_DAMAGE'; fromId: string; toId: string; delta: number }
+  | { type: 'COUNTER_CHANGE'; targetId: string; counter: keyof PlayerCounters; delta: number }
+  | { type: 'SET_MONARCH'; playerId: string }
+  | { type: 'CLEAR_MONARCH' }
+  | { type: 'SET_INITIATIVE'; playerId: string }
+  | { type: 'CLEAR_INITIATIVE' }
+  | { type: 'NEXT_TURN' }
+  | { type: 'SET_TURN_ORDER'; order: string[] }
+  | { type: 'PLAYER_JOIN'; player: Player }
+  | { type: 'PLAYER_ELIMINATE'; playerId: string }
+  | { type: 'PLAYER_CONNECTED'; playerId: string; connected: boolean }
+  | { type: 'SET_COMMANDER'; playerId: string; commander: CommanderCard }
+  | { type: 'SET_PLAYER_NAME'; playerId: string; name: string }
+  | { type: 'UNDO' }
+  | { type: 'GAME_START' }
+  | { type: 'RESET_GAME' }
+
+export type BroadcastEvent = 'ACTION' | 'STATE_SYNC' | 'HOST_CHANGE'
+
+export interface BroadcastMessage {
+  event: BroadcastEvent
+  payload: ActionPayload | GameState | { newHostId: string }
+  senderId: string
+  seq: number
+}
+
+export interface RoomRecord {
+  id: string
+  code: string
+  created_at: string
+  expires_at: string
+  host_id: string
+  state: GameState
+}

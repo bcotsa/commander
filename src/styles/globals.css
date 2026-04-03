@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+    box-sizing: border-box;
+  }
+
+  html {
+    font-family: system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    @apply bg-slate-950 text-white;
+    overscroll-behavior: none;
+    user-select: none;
+  }
+
+  /* Safe area insets for notched phones */
+  #root {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}
+
+@layer utilities {
+  .touch-callout-none {
+    -webkit-touch-callout: none;
+  }
+
+  /* Rotated player panels for tablet table-top use */
+  .rotate-180 {
+    transform: rotate(180deg);
+  }
+}
