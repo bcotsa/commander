@@ -10,7 +10,7 @@ import { useGameStore } from '@/store/game-store'
 import { usePlayerStore } from '@/store/player-store'
 import { useRoom } from '@/hooks/useRoom'
 import { createPlayer } from '@/lib/game-reducer'
-import type { CommanderCard, ImportedDeck } from '@/types/game-state'
+import type { CommanderCard } from '@/types/game-state'
 
 export function Lobby() {
   const { code } = useParams<{ code: string }>()
@@ -19,7 +19,7 @@ export function Lobby() {
   const { state, isHost } = useGameStore()
   const { id: playerId, name, setName } = usePlayerStore()
   // BUG FIX 2: get subscribed so we wait before sending PLAYER_JOIN
-  const { sendAction, subscribed } = useRoom(state.roomId || null)
+  const { sendAction, requestDeckImport, subscribed } = useRoom(state.roomId || null)
 
   const [localName, setLocalName] = useState(name)
   const [joined, setJoined] = useState(false)
@@ -62,10 +62,6 @@ export function Lobby() {
 
   function handleCommanderSelect(card: CommanderCard) {
     sendAction({ type: 'SET_COMMANDER', playerId, commander: card })
-  }
-
-  function handleDeckImport(payload: { deck: ImportedDeck; commander: CommanderCard | null }) {
-    sendAction({ type: 'SET_DECK', playerId, deck: payload.deck, commander: payload.commander })
   }
 
   function handleStartGame() {
@@ -135,7 +131,8 @@ export function Lobby() {
         <div>
           <p className="text-sm text-slate-400 mb-2">Deck</p>
           <MoxfieldImport
-            onImport={handleDeckImport}
+            onImportUrl={(input) => requestDeckImport({ source: 'moxfield', input })}
+            onImportDecklist={(input) => requestDeckImport({ source: 'decklist', input })}
             selectedDeck={myPlayer?.deck}
           />
         </div>

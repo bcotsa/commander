@@ -7,7 +7,9 @@ import { usePlayerStore } from '@/store/player-store'
 import { gameReducer } from '@/lib/game-reducer'
 import { getWinner } from '@/lib/game-engine'
 import { useUiStore } from '@/store/ui-store'
-import type { ActionPayload, GameState } from '@/types/game-state'
+import { importMoxfieldDeck } from '@/lib/moxfield'
+import { importDecklistText } from '@/lib/scryfall'
+import type { ActionPayload, DeckImportRequest, DeckImportStatus, GameState } from '@/types/game-state'
 
 /**
  * Core multiplayer hook. Manages Supabase realtime channel, dispatching,
@@ -23,6 +25,63 @@ export function useRoom(roomId: string | null) {
   const playerId = usePlayerStore(s => s.id)
   const showToast = useUiStore(s => s.showToast)
   const [subscribed, setSubscribed] = useState(false)
+
+  const performDeckImport = useCallback(async (request: DeckImportRequest) => {
+    const store = useGameStore.getState()
+    if (!store.isHost) return
+
+    try {
+      const payload = request.source === 'moxfield'
+        ? await importMoxfieldDeck(request.input)
+        : await importDecklistText(request.input)
+
+      const action: ActionPayload = {
+        type: 'SET_DECK',
+        playerId: request.playerId,
+        deck: payload.deck,
+        commander: payload.commander,
+      }
+
+      const nextState = gameReducer(store.state, action)
+      store.setState(nextState)
+
+      channelRef.current?.send({
+        type: 'broadcast',
+        event: 'STATE_SYNC',
+        payload: { event: 'STATE_SYNC', payload: nextState, senderId: playerId, seq: nextState.actionSeq },
+      })
+
+      const status: DeckImportStatus = {
+        playerId: request.playerId,
+        ok: true,
+        message: `Imported ${payload.deck.name}`,
+      }
+      channelRef.current?.send({
+        type: 'broadcast',
+        event: 'DECK_IMPORT_STATUS',
+        payload: { event: 'DECK_IMPORT_STATUS', payload: status, senderId: playerId, seq: nextState.actionSeq },
+      })
+
+      if (roomId && store.hostId) {
+        persistState(roomId, nextState, store.hostId).catch(console.error)
+      }
+    } catch (error) {
+      const status: DeckImportStatus = {
+        playerId: request.playerId,
+        ok: false,
+        message: error instanceof Error ? error.message : 'Deck import failed',
+      }
+      channelRef.current?.send({
+        type: 'broadcast',
+        event: 'DECK_IMPORT_STATUS',
+        payload: { event: 'DECK_IMPORT_STATUS', payload: status, senderId: playerId, seq: store.state.actionSeq + 1 },
+      })
+
+      if (request.playerId === playerId) {
+        showToast(status.message)
+      }
+    }
+  }, [playerId, roomId, showToast])
 
   const sendAction = useCallback(
     (action: ActionPayload) => {
@@ -53,6 +112,23 @@ export function useRoom(roomId: string | null) {
     },
     [playerId, roomId]
   )
+
+  const requestDeckImport = useCallback(async (request: Omit<DeckImportRequest, 'playerId'>) => {
+    const store = useGameStore.getState()
+    const fullRequest: DeckImportRequest = { ...request, playerId }
+
+    if (store.isHost) {
+      await performDeckImport(fullRequest)
+      return
+    }
+
+    showToast('Deck import requested from host...')
+    channelRef.current?.send({
+      type: 'broadcast',
+      event: 'DECK_IMPORT_REQUEST',
+      payload: { event: 'DECK_IMPORT_REQUEST', payload: fullRequest, senderId: playerId, seq: store.state.actionSeq + 1 },
+    })
+  }, [performDeckImport, playerId, showToast])
 
   useEffect(() => {
     if (!roomId) return
@@ -94,6 +170,18 @@ export function useRoom(roomId: string | null) {
         if (store.isHost) return
         store.setState((payload as { payload: GameState }).payload)
       })
+      .on('broadcast', { event: 'DECK_IMPORT_REQUEST' }, ({ payload }) => {
+        const store = useGameStore.getState()
+        if (!store.isHost) return
+        const request = (payload as { payload: DeckImportRequest }).payload
+        void performDeckImport(request)
+      })
+      .on('broadcast', { event: 'DECK_IMPORT_STATUS' }, ({ payload }) => {
+        const status = (payload as { payload: DeckImportStatus }).payload
+        if (status.playerId === playerId) {
+          showToast(status.message)
+        }
+      })
       .on('presence', { event: 'join' }, ({ newPresences }) => {
         newPresences.forEach((p) => {
           const pid = (p as Record<string, unknown>)['player_id'] as string | undefined
@@ -120,7 +208,7 @@ export function useRoom(roomId: string | null) {
       channel.unsubscribe()
       channelRef.current = null
     }
-  }, [roomId, playerId, showToast])
+  }, [performDeckImport, roomId, playerId, showToast])
 
-  return { sendAction, subscribed }
+  return { sendAction, requestDeckImport, subscribed }
 }

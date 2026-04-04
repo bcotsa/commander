@@ -1,16 +1,15 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { importMoxfieldDeck } from '@/lib/moxfield'
-import { importDecklistText } from '@/lib/scryfall'
-import type { CommanderCard, ImportedDeck } from '@/types/game-state'
+import type { ImportedDeck } from '@/types/game-state'
 
 interface MoxfieldImportProps {
-  onImport: (payload: { deck: ImportedDeck; commander: CommanderCard | null }) => void
+  onImportUrl: (input: string) => Promise<void> | void
+  onImportDecklist: (input: string) => Promise<void> | void
   selectedDeck?: ImportedDeck | null
 }
 
-export function MoxfieldImport({ onImport, selectedDeck }: MoxfieldImportProps) {
+export function MoxfieldImport({ onImportUrl, onImportDecklist, selectedDeck }: MoxfieldImportProps) {
   const [urlValue, setUrlValue] = useState('')
   const [textValue, setTextValue] = useState('')
   const [loading, setLoading] = useState(false)
@@ -25,8 +24,7 @@ export function MoxfieldImport({ onImport, selectedDeck }: MoxfieldImportProps) 
     setWarning(null)
 
     try {
-      const payload = await importMoxfieldDeck(urlValue)
-      onImport(payload)
+      await onImportUrl(urlValue)
       setUrlValue('')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -48,10 +46,7 @@ export function MoxfieldImport({ onImport, selectedDeck }: MoxfieldImportProps) 
     setWarning(null)
 
     try {
-      const payload = await importDecklistText(textValue)
-      onImport(payload)
-      const warnings = payload.deck.importWarnings ?? []
-      setWarning(warnings.length > 0 ? warnings.join(' | ') : null)
+      await onImportDecklist(textValue)
       setTextValue('')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -100,12 +95,12 @@ export function MoxfieldImport({ onImport, selectedDeck }: MoxfieldImportProps) 
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-800 bg-red-900/20 p-3 text-sm text-red-300">
+        <div className="rounded-lg border border-red-800 bg-red-900/20 p-3 text-sm text-red-300 select-text cursor-text">
           <span className="font-medium text-red-400">Error: </span>{error}
         </div>
       )}
       {warning && !error && (
-        <div className="rounded-lg border border-amber-800 bg-amber-900/20 p-3 text-sm text-amber-300">
+        <div className="rounded-lg border border-amber-800 bg-amber-900/20 p-3 text-sm text-amber-300 select-text cursor-text">
           <span className="font-medium text-amber-400">Warning: </span>{warning}
         </div>
       )}
@@ -118,12 +113,12 @@ export function MoxfieldImport({ onImport, selectedDeck }: MoxfieldImportProps) 
             {selectedDeck.commanders[0] ? ` • Commander: ${selectedDeck.commanders[0].name}` : ''}
           </div>
           {selectedDeck.importWarnings && selectedDeck.importWarnings.length > 0 && (
-            <div className="mt-2 text-xs text-amber-200">
+            <div className="mt-2 text-xs text-amber-200 select-text cursor-text">
               {selectedDeck.importWarnings.join(' ')}
             </div>
           )}
           {selectedDeck.unresolvedCards && selectedDeck.unresolvedCards.length > 0 && (
-            <div className="mt-2 text-xs text-red-200">
+            <div className="mt-2 text-xs text-red-200 select-text cursor-text">
               Unresolved: {selectedDeck.unresolvedCards.slice(0, 8).join(', ')}
             </div>
           )}

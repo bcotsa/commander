@@ -119,11 +119,23 @@ export type ActionPayload =
   | { type: 'GAME_START' }
   | { type: 'RESET_GAME' }
 
-export type BroadcastEvent = 'ACTION' | 'STATE_SYNC' | 'HOST_CHANGE'
+export type BroadcastEvent = 'ACTION' | 'STATE_SYNC' | 'HOST_CHANGE' | 'DECK_IMPORT_REQUEST' | 'DECK_IMPORT_STATUS'
+
+export interface DeckImportRequest {
+  playerId: string
+  source: 'moxfield' | 'decklist'
+  input: string
+}
+
+export interface DeckImportStatus {
+  playerId: string
+  ok: boolean
+  message: string
+}
 
 export interface BroadcastMessage {
   event: BroadcastEvent
-  payload: ActionPayload | GameState | { newHostId: string }
+  payload: ActionPayload | GameState | { newHostId: string } | DeckImportRequest | DeckImportStatus
   senderId: string
   seq: number
 }
