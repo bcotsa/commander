@@ -63,6 +63,113 @@ function ZoneRow({
   )
 }
 
+function ZonePilePreview({
+  title,
+  cards,
+  accentClass,
+  onOpen,
+}: {
+  title: string
+  cards: GameCard[]
+  accentClass: string
+  onOpen: () => void
+}) {
+  const topCards = cards.slice(-3)
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className={`relative flex min-h-28 flex-col rounded-xl border bg-slate-900/70 p-2 text-left transition-colors hover:bg-slate-800/90 ${accentClass}`}
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] uppercase tracking-wide text-slate-400">{title}</span>
+        <span className="text-sm font-semibold text-white">{cards.length}</span>
+      </div>
+      <div className="relative mt-2 h-16">
+        {topCards.length > 0 ? (
+          topCards.map((card, index) => (
+            <div
+              key={card.instanceId}
+              className="absolute top-0 w-12"
+              style={{ left: `${index * 14}px`, zIndex: index + 1 }}
+            >
+              {card.imageUri ? (
+                <img
+                  src={card.imageUri}
+                  alt={card.name}
+                  className="aspect-[5/7] w-full rounded-md object-cover shadow-lg"
+                  loading="lazy"
+                />
+              ) : (
+                <div className="flex aspect-[5/7] w-full items-end rounded-md border border-slate-700 bg-slate-800 p-1 text-[9px] text-slate-200">
+                  {card.name}
+                </div>
+              )}
+            </div>
+          ))
+        ) : (
+          <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-slate-700 text-[11px] text-slate-500">
+            Empty
+          </div>
+        )}
+      </div>
+    </button>
+  )
+}
+
+function FanOverlay({
+  title,
+  cards,
+  onClose,
+  onSelect,
+}: {
+  title: string
+  cards: GameCard[]
+  onClose: () => void
+  onSelect: (card: GameCard) => void
+}) {
+  return (
+    <div className="absolute inset-0 z-20 bg-slate-950/95 backdrop-blur-sm p-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-sm font-semibold text-white">{title}</div>
+          <div className="text-xs text-slate-400">{cards.length} card{cards.length === 1 ? '' : 's'}</div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 transition-colors hover:bg-slate-800"
+        >
+          Close
+        </button>
+      </div>
+
+      <div className="mt-4 overflow-x-auto overflow-y-hidden pb-3">
+        <div className="flex min-h-48 items-end px-3">
+          {cards.length > 0 ? (
+            cards.map((card, index) => (
+              <button
+                key={card.instanceId}
+                type="button"
+                onClick={() => onSelect(card)}
+                className="-ml-8 first:ml-0 w-24 flex-shrink-0 text-left transition-transform hover:-translate-y-2"
+                style={{ zIndex: index + 1 }}
+              >
+                <CardThumb card={card} />
+              </button>
+            ))
+          ) : (
+            <div className="rounded-lg border border-dashed border-slate-700 px-4 py-6 text-sm text-slate-500">
+              No cards here
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 interface PlayerTileProps {
   player: Player
   isCurrentTurn: boolean
@@ -85,6 +192,7 @@ export function PlayerTile({
   const borderColor = isCurrentTurn ? 'border-violet-500' : 'border-slate-700'
   const { library, hand, lands, battlefield, graveyard, exile, commandZone } = player.zones
   const [selected, setSelected] = useState<{ zone: ZoneName; card: GameCard } | null>(null)
+  const [expandedZone, setExpandedZone] = useState<{ zone: 'graveyard' | 'exile'; title: string } | null>(null)
 
   const selectedIsLand = selected ? selected.card.typeLine.toLowerCase().includes('land') : false
   const selectedIsPermanent = selected ? !selected.card.typeLine.toLowerCase().includes('instant') && !selected.card.typeLine.toLowerCase().includes('sorcery') : false
@@ -161,18 +269,6 @@ export function PlayerTile({
             <div className="rounded-lg bg-slate-800/90 p-2">
               <div className="text-slate-500 uppercase tracking-wide">Battlefield</div>
               <div className="mt-1 text-sm font-semibold">{battlefield.length}</div>
-            </div>
-            <div className="rounded-lg bg-slate-800/90 p-2">
-              <div className="text-slate-500 uppercase tracking-wide">Graveyard</div>
-              <div className="mt-1 text-sm font-semibold">{graveyard.length}</div>
-            </div>
-            <div className="rounded-lg bg-slate-800/90 p-2">
-              <div className="text-slate-500 uppercase tracking-wide">Exile</div>
-              <div className="mt-1 text-sm font-semibold">{exile.length}</div>
-            </div>
-            <div className="rounded-lg bg-slate-800/90 p-2">
-              <div className="text-slate-500 uppercase tracking-wide">Command</div>
-              <div className="mt-1 text-sm font-semibold">{commandZone.length}</div>
             </div>
             <div className="rounded-lg bg-slate-800/90 p-2">
               <div className="text-slate-500 uppercase tracking-wide">Hand</div>
@@ -282,13 +378,45 @@ export function PlayerTile({
             </div>
           )}
 
-          <ZoneRow
-            title="Command Zone"
-            cards={commandZone}
-            empty="No commander in command zone"
-            selectedCardId={selected?.card.instanceId ?? null}
-            onSelect={(card) => setSelected({ zone: 'commandZone', card })}
-          />
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <div className="rounded-xl border border-violet-800/70 bg-violet-950/20 p-2">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-[11px] uppercase tracking-wide text-violet-200">Command</span>
+                <span className="text-sm font-semibold text-white">{commandZone.length}</span>
+              </div>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {commandZone.length > 0 ? (
+                  commandZone.map(card => (
+                    <div key={card.instanceId} className="w-16 flex-shrink-0">
+                      <CardThumb
+                        card={card}
+                        selected={selected?.card.instanceId === card.instanceId}
+                        onClick={() => setSelected({ zone: 'commandZone', card })}
+                      />
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-dashed border-slate-700 px-2 py-4 text-[11px] text-slate-500">
+                    Empty
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <ZonePilePreview
+              title="Graveyard"
+              cards={graveyard}
+              accentClass="border-emerald-900/70"
+              onOpen={() => setExpandedZone({ zone: 'graveyard', title: 'Graveyard' })}
+            />
+
+            <ZonePilePreview
+              title="Exile"
+              cards={exile}
+              accentClass="border-amber-900/70"
+              onOpen={() => setExpandedZone({ zone: 'exile', title: 'Exile' })}
+            />
+          </div>
 
           <ZoneRow
             title="Hand"
@@ -313,24 +441,20 @@ export function PlayerTile({
             selectedCardId={selected?.card.instanceId ?? null}
             onSelect={(card) => setSelected({ zone: 'battlefield', card })}
           />
-
-          <ZoneRow
-            title="Graveyard"
-            cards={graveyard}
-            empty="No cards in graveyard"
-            selectedCardId={selected?.card.instanceId ?? null}
-            onSelect={(card) => setSelected({ zone: 'graveyard', card })}
-          />
-
-          <ZoneRow
-            title="Exile"
-            cards={exile}
-            empty="No cards in exile"
-            selectedCardId={selected?.card.instanceId ?? null}
-            onSelect={(card) => setSelected({ zone: 'exile', card })}
-          />
         </div>
       </div>
+
+      {expandedZone && (
+        <FanOverlay
+          title={expandedZone.title}
+          cards={player.zones[expandedZone.zone]}
+          onClose={() => setExpandedZone(null)}
+          onSelect={(card) => {
+            setSelected({ zone: expandedZone.zone, card })
+            setExpandedZone(null)
+          }}
+        />
+      )}
 
       {/* Status badges */}
       <div className="flex flex-wrap gap-1 px-2 py-1 border-t border-slate-800 bg-slate-950/90">
