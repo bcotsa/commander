@@ -6,9 +6,11 @@ interface TurnTrackerProps {
   currentTurnIndex: number
   currentPhase: TurnPhase
   stackCount: number
+  priorityPlayerId: string | null
+  myPlayerId: string
   round: number
   onNextStep: () => void
-  onResolveStack: () => void
+  onPassPriority: () => void
   onResolveCombat: () => void
   isHost: boolean
 }
@@ -24,8 +26,9 @@ const PHASE_LABELS: Record<TurnPhase, string> = {
 }
 const PHASE_ORDER: TurnPhase[] = ['untap', 'upkeep', 'draw', 'main1', 'combat', 'main2', 'end']
 
-export function TurnTracker({ players, turnOrder, currentTurnIndex, currentPhase, stackCount, round, onNextStep, onResolveStack, onResolveCombat, isHost }: TurnTrackerProps) {
+export function TurnTracker({ players, turnOrder, currentTurnIndex, currentPhase, stackCount, priorityPlayerId, myPlayerId, round, onNextStep, onPassPriority, onResolveCombat, isHost }: TurnTrackerProps) {
   const playerMap = Object.fromEntries(players.map(p => [p.id, p]))
+  const priorityPlayerName = priorityPlayerId ? playerMap[priorityPlayerId]?.name || `P${(playerMap[priorityPlayerId]?.seat ?? 0) + 1}` : null
 
   return (
     <div className="border-b border-slate-700 bg-slate-900/80 px-3 py-2">
@@ -72,14 +75,22 @@ export function TurnTracker({ players, turnOrder, currentTurnIndex, currentPhase
           })}
         </div>
 
-        {isHost && (
+        {stackCount > 0 && priorityPlayerName && (
+          <span className="flex-shrink-0 rounded-full bg-slate-800 px-2 py-1 text-[11px] text-slate-300">
+            Priority: {priorityPlayerName}
+          </span>
+        )}
+
+        {(stackCount > 0 && priorityPlayerId === myPlayerId) ? (
+          <button
+            onClick={onPassPriority}
+            className="flex-shrink-0 text-xs bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-full transition-colors"
+          >
+            Pass
+          </button>
+        ) : isHost && (
           stackCount > 0 ? (
-            <button
-              onClick={onResolveStack}
-              className="flex-shrink-0 text-xs bg-violet-700 hover:bg-violet-600 text-white px-3 py-1.5 rounded-full transition-colors"
-            >
-              Resolve Top
-            </button>
+            <span className="flex-shrink-0 text-xs text-slate-500 px-2">Waiting</span>
           ) : currentPhase === 'combat' ? (
             <button
               onClick={onResolveCombat}

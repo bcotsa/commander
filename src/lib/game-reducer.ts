@@ -17,6 +17,8 @@ export function createInitialGameState(roomCode: string, roomId = ''): GameState
     currentPhase: 'untap',
     combat: { attackers: [] },
     stack: [],
+    priorityPlayerId: null,
+    priorityPassedIds: [],
     round: 1,
     log: [],
     actionSeq: 0,
@@ -213,6 +215,21 @@ function nextLivingTurnIndex(state: GameState): number {
   return state.currentTurnIndex
 }
 
+function livingTurnOrder(state: GameState): string[] {
+  return state.turnOrder.filter(playerId => {
+    const player = state.players.find(entry => entry.id === playerId)
+    return Boolean(player && !player.isEliminated)
+  })
+}
+
+function nextLivingPlayerIdAfter(state: GameState, playerId: string): string | null {
+  const livingOrder = livingTurnOrder(state)
+  if (livingOrder.length === 0) return null
+  const currentIndex = livingOrder.indexOf(playerId)
+  if (currentIndex === -1) return livingOrder[0] ?? null
+  return livingOrder[(currentIndex + 1) % livingOrder.length] ?? null
+}
+
 function describeTarget(state: GameState, targetCardId?: string, targetPlayerId?: string): string {
   if (targetPlayerId) {
     return state.players.find(player => player.id === targetPlayerId)?.name ?? 'a player'
@@ -242,6 +259,8 @@ function pushStackItem(
         id: crypto.randomUUID(),
       },
     ],
+    priorityPlayerId: nextLivingPlayerIdAfter(state, item.casterId),
+    priorityPassedIds: [],
     actionSeq: state.actionSeq + 1,
   }
 }
@@ -481,6 +500,8 @@ function resolveStackTop(state: GameState): GameState {
     ...state,
     players,
     stack: state.stack.slice(0, -1),
+    priorityPlayerId: state.turnOrder[state.currentTurnIndex] ?? null,
+    priorityPassedIds: [],
     actionSeq: state.actionSeq + 1,
   }
   return checkEliminations(next)
@@ -554,6 +575,8 @@ function describe(state: GameState, action: ActionPayload): string {
       const top = state.stack[state.stack.length - 1]
       return `Resolved ${top?.card.name ?? 'top of stack'}`
     }
+    case 'PASS_PRIORITY':
+      return `${player(action.playerId)} passed priority`
     case 'PLAYER_ELIMINATE':
       return `${player(action.playerId)} was eliminated`
     case 'GAME_START':
@@ -913,7 +936,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
 
     case 'CAST_COMMANDER': {
       const currentPlayerId = state.turnOrder[state.currentTurnIndex]
-      if (currentPlayerId !== action.playerId || !isMainPhase(state.currentPhase)) return state
+      if (state.stack.length > 0 && state.priorityPlayerId !== action.playerId) return state
+      if (state.stack.length === 0 && (currentPlayerId !== action.playerId || !isMainPhase(state.currentPhase))) return state
 
       let nextState = state
       let changed = false
@@ -967,7 +991,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
 
     case 'CAST_PERMANENT': {
       const currentPlayerId = state.turnOrder[state.currentTurnIndex]
-      if (currentPlayerId !== action.playerId || !isMainPhase(state.currentPhase)) return state
+      if (state.stack.length > 0 && state.priorityPlayerId !== action.playerId) return state
+      if (state.stack.length === 0 && (currentPlayerId !== action.playerId || !isMainPhase(state.currentPhase))) return state
 
       const originalCard = state.players.find(p => p.id === action.playerId)?.zones.hand.find(c => c.instanceId === action.cardId)
       let changed = false
@@ -1019,7 +1044,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
 
     case 'CAST_SPELL': {
       const currentPlayerId = state.turnOrder[state.currentTurnIndex]
-      if (currentPlayerId !== action.playerId || !isMainPhase(state.currentPhase)) return state
+      if (state.stack.length > 0 && state.priorityPlayerId !== action.playerId) return state
+      if (state.stack.length === 0 && (currentPlayerId !== action.playerId || !isMainPhase(state.currentPhase))) return state
 
       const caster = state.players.find(player => player.id === action.playerId)
       const card = caster?.zones.hand.find(entry => entry.instanceId === action.cardId)
@@ -1356,6 +1382,44 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       }
     }
 
+    case 'PASS_PRIORITY': {
+      if (state.stack.length === 0) return state
+      if (state.priorityPlayerId !== action.playerId) return state
+
+      const livingPlayers = livingTurnOrder(state)
+      const passedIds = [...new Set([...state.priorityPassedIds, action.playerId])]
+
+      if (passedIds.length >= livingPlayers.length) {
+        const resolved = resolveStackTop(state)
+        return {
+          ...resolved,
+          log: appendLog(state.log, {
+            timestamp: new Date().toISOString(),
+            playerId: action.playerId,
+            playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+            description: describe(state, action),
+            action,
+            undoable: true,
+          }),
+        }
+      }
+
+      return {
+        ...state,
+        priorityPlayerId: nextLivingPlayerIdAfter(state, action.playerId),
+        priorityPassedIds: passedIds,
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }
+    }
+
     case 'PLAYER_JOIN': {
       const exists = state.players.some(p => p.id === action.player.id)
       if (exists) {
@@ -1430,6 +1494,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         players: state.players.map(initializePlayerForGame),
         currentPhase: 'untap',
         stack: [],
+        priorityPlayerId: null,
+        priorityPassedIds: [],
         actionSeq: state.actionSeq + 1,
         log: appendLog(state.log, {
           timestamp: new Date().toISOString(),
@@ -1452,6 +1518,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         currentTurnIndex: 0,
         currentPhase: 'untap',
         stack: [],
+        priorityPlayerId: null,
+        priorityPassedIds: [],
         round: 1,
         log: [],
         actionSeq: state.actionSeq + 1,

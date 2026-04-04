@@ -21,7 +21,7 @@ export function Game() {
   const navigate = useNavigate()
 
   const { state, isHost } = useGameStore()
-  void usePlayerStore(s => s.id)
+  const myPlayerId = usePlayerStore(s => s.id)
   const { activeModal, modalTargetPlayerId, openModal, closeModal, showToast } = useUiStore()
   const { sendAction } = useRoom(state.roomId || null)
 
@@ -53,9 +53,11 @@ export function Game() {
         currentTurnIndex={state.currentTurnIndex}
         currentPhase={state.currentPhase}
         stackCount={state.stack.length}
+        priorityPlayerId={state.priorityPlayerId}
+        myPlayerId={myPlayerId}
         round={state.round}
         onNextStep={() => sendAction({ type: 'NEXT_STEP' })}
-        onResolveStack={() => sendAction({ type: 'RESOLVE_STACK' })}
+        onPassPriority={() => sendAction({ type: 'PASS_PRIORITY', playerId: myPlayerId })}
         onResolveCombat={() => sendAction({ type: 'RESOLVE_COMBAT' })}
         isHost={isHost}
       />
@@ -63,8 +65,8 @@ export function Game() {
       <StackPanel
         stack={state.stack}
         players={state.players}
-        isHost={isHost}
-        onResolveTop={() => sendAction({ type: 'RESOLVE_STACK' })}
+        priorityPlayerId={state.priorityPlayerId}
+        passedIds={state.priorityPassedIds}
       />
 
       {/* Player grid — fills remaining space */}

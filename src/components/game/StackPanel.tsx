@@ -3,8 +3,8 @@ import type { Player, StackItem } from '@/types/game-state'
 interface StackPanelProps {
   stack: StackItem[]
   players: Player[]
-  isHost: boolean
-  onResolveTop: () => void
+  priorityPlayerId: string | null
+  passedIds: string[]
 }
 
 function describeTarget(stackItem: StackItem, players: Player[]): string | null {
@@ -25,7 +25,7 @@ function describeTarget(stackItem: StackItem, players: Player[]): string | null 
   return null
 }
 
-export function StackPanel({ stack, players, isHost, onResolveTop }: StackPanelProps) {
+export function StackPanel({ stack, players, priorityPlayerId, passedIds }: StackPanelProps) {
   if (stack.length === 0) {
     return (
       <div className="border-b border-slate-800 bg-slate-950/70 px-3 py-2">
@@ -38,20 +38,19 @@ export function StackPanel({ stack, players, isHost, onResolveTop }: StackPanelP
   }
 
   const ordered = [...stack].reverse()
+  const priorityPlayerName = priorityPlayerId
+    ? players.find(player => player.id === priorityPlayerId)?.name ?? null
+    : null
 
   return (
     <div className="border-b border-slate-800 bg-slate-950/70 px-3 py-2">
       <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-2">
         <div className="mb-2 flex items-center justify-between">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Stack</span>
-          {isHost && (
-            <button
-              onClick={onResolveTop}
-              className="rounded-md bg-violet-700 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-violet-600"
-            >
-              Resolve Top
-            </button>
-          )}
+          <div className="flex flex-wrap items-center justify-end gap-2 text-[11px] text-slate-400">
+            {priorityPlayerName && <span>Priority: {priorityPlayerName}</span>}
+            <span>Passed: {passedIds.length}</span>
+          </div>
         </div>
 
         <div className="flex max-h-28 flex-col gap-2 overflow-y-auto">

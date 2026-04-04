@@ -112,6 +112,8 @@ export interface GameState {
   currentPhase: TurnPhase
   combat: CombatState
   stack: StackItem[]
+  priorityPlayerId: string | null
+  priorityPassedIds: string[]
   round: number
   log: LogEntry[]
   actionSeq: number
@@ -171,6 +173,7 @@ export type ActionPayload =
   | { type: 'REMOVE_BLOCKER'; playerId: string; blockerId: string; attackerId: string }
   | { type: 'RESOLVE_COMBAT' }
   | { type: 'RESOLVE_STACK' }
+  | { type: 'PASS_PRIORITY'; playerId: string }
   | { type: 'SET_PLAYER_NAME'; playerId: string; name: string }
   | { type: 'UNDO' }
   | { type: 'GAME_START' }
