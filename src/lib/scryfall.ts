@@ -79,6 +79,14 @@ type ParsedDeckLine = {
   section: 'commander' | 'mainboard'
 }
 
+function isLikelyCommander(card: ScryfallCard): boolean {
+  const typeLine = card.type_line.toLowerCase()
+  const oracleText = (card.oracle_text ?? card.card_faces?.map(face => face.oracle_text ?? '').join('\n') ?? '').toLowerCase()
+
+  if (typeLine.includes('legendary') && typeLine.includes('creature')) return true
+  return oracleText.includes('can be your commander')
+}
+
 function sanitizeDeckCardName(raw: string): string {
   return raw
     .replace(/\s+\([^)]*\)\s*\d+[A-Za-z]*$/u, '')
@@ -136,19 +144,48 @@ export async function importDecklistText(raw: string): Promise<{
 
   const resolvedCards = await getCardsByNames(parsed.map(card => card.name))
   const unresolved = parsed.filter(card => !resolvedCards.has(card.name.toLowerCase()))
-  if (unresolved.length > 0) {
-    throw new Error(`Could not find: ${unresolved.slice(0, 3).map(card => card.name).join(', ')}`)
-  }
 
   const commanders = parsed
     .filter(card => card.section === 'commander')
+    .filter(card => resolvedCards.has(card.name.toLowerCase()))
     .map(card => scryfallCardToImportedDeckCard(resolvedCards.get(card.name.toLowerCase())!, card.quantity))
 
   const mainboard = parsed
     .filter(card => card.section === 'mainboard')
+    .filter(card => resolvedCards.has(card.name.toLowerCase()))
     .map(card => scryfallCardToImportedDeckCard(resolvedCards.get(card.name.toLowerCase())!, card.quantity))
 
-  const inferredCommander = commanders[0] ?? (mainboard.length === 100 ? mainboard[0] : null)
+  if (commanders.length === 0 && mainboard.length === 0) {
+    throw new Error(`Could not find any of these cards on Scryfall: ${unresolved.slice(0, 5).map(card => card.name).join(', ')}`)
+  }
+
+  let inferredCommander = commanders[0] ?? null
+
+  if (!inferredCommander) {
+    const commanderCandidates = parsed
+      .map(card => ({
+        parsed: card,
+        resolved: resolvedCards.get(card.name.toLowerCase()) ?? null,
+      }))
+      .filter((entry): entry is { parsed: ParsedDeckLine; resolved: ScryfallCard } => Boolean(entry.resolved))
+      .filter(entry => isLikelyCommander(entry.resolved))
+
+    const lastCandidate = commanderCandidates[commanderCandidates.length - 1]
+    if (lastCandidate) {
+      inferredCommander = scryfallCardToImportedDeckCard(lastCandidate.resolved, lastCandidate.parsed.quantity)
+    }
+  }
+
+  const warnings: string[] = []
+  if (unresolved.length > 0) {
+    warnings.push(`Skipped unresolved cards: ${unresolved.slice(0, 8).map(card => card.name).join(', ')}`)
+  }
+  if (!commanders.length && inferredCommander) {
+    warnings.push(`Inferred commander from decklist: ${inferredCommander.name}`)
+  }
+  if (!commanders.length && !inferredCommander) {
+    warnings.push('No commander section found, and no commander could be inferred')
+  }
 
   return {
     deck: {
@@ -161,6 +198,8 @@ export async function importDecklistText(raw: string): Promise<{
       cardCount: mainboard.reduce((sum, card) => sum + card.quantity, 0),
       commanders,
       mainboard,
+      unresolvedCards: unresolved.map(card => card.name),
+      importWarnings: warnings,
     },
     commander: inferredCommander
       ? {

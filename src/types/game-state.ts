@@ -29,6 +29,8 @@ export interface ImportedDeck {
   cardCount: number
   commanders: ImportedDeckCard[]
   mainboard: ImportedDeckCard[]
+  unresolvedCards?: string[]
+  importWarnings?: string[]
 }
 
 export interface PlayerCounters {

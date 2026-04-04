@@ -15,12 +15,14 @@ export function MoxfieldImport({ onImport, selectedDeck }: MoxfieldImportProps) 
   const [textValue, setTextValue] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [warning, setWarning] = useState<string | null>(null)
 
   async function handleUrlImport() {
     if (!urlValue.trim() || loading) return
 
     setLoading(true)
     setError(null)
+    setWarning(null)
 
     try {
       const payload = await importMoxfieldDeck(urlValue)
@@ -38,10 +40,12 @@ export function MoxfieldImport({ onImport, selectedDeck }: MoxfieldImportProps) 
 
     setLoading(true)
     setError(null)
+    setWarning(null)
 
     try {
       const payload = await importDecklistText(textValue)
       onImport(payload)
+      setWarning(payload.deck.importWarnings?.join(' ') ?? null)
       setTextValue('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to import decklist')
@@ -85,6 +89,7 @@ export function MoxfieldImport({ onImport, selectedDeck }: MoxfieldImportProps) 
       </div>
 
       {error && <p className="text-sm text-red-400">{error}</p>}
+      {warning && !error && <p className="text-sm text-amber-300">{warning}</p>}
 
       {selectedDeck && (
         <div className="rounded-xl border border-violet-700 bg-violet-900/20 p-3">
@@ -93,6 +98,16 @@ export function MoxfieldImport({ onImport, selectedDeck }: MoxfieldImportProps) 
             {selectedDeck.cardCount} cards
             {selectedDeck.commanders[0] ? ` • Commander: ${selectedDeck.commanders[0].name}` : ''}
           </div>
+          {selectedDeck.importWarnings && selectedDeck.importWarnings.length > 0 && (
+            <div className="mt-2 text-xs text-amber-200">
+              {selectedDeck.importWarnings.join(' ')}
+            </div>
+          )}
+          {selectedDeck.unresolvedCards && selectedDeck.unresolvedCards.length > 0 && (
+            <div className="mt-2 text-xs text-red-200">
+              Unresolved: {selectedDeck.unresolvedCards.slice(0, 8).join(', ')}
+            </div>
+          )}
           {selectedDeck.sourceUrl && (
             <a
               href={selectedDeck.sourceUrl}
