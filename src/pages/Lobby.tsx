@@ -17,32 +17,33 @@ export function Lobby() {
 
   const { state, isHost } = useGameStore()
   const { id: playerId, name, setName } = usePlayerStore()
-  const { sendAction } = useRoom(state.roomId || null)
+  // BUG FIX 2: get subscribed so we wait before sending PLAYER_JOIN
+  const { sendAction, subscribed } = useRoom(state.roomId || null)
 
   const [localName, setLocalName] = useState(name)
   const [joined, setJoined] = useState(false)
   const [showQr, setShowQr] = useState(false)
-  const [codeCopied, setCodeCopied] = useState(false)
-
-  function handleCopyCode() {
-    if (!code) return
-    navigator.clipboard.writeText(code).then(() => {
-      setCodeCopied(true)
-      setTimeout(() => setCodeCopied(false), 2000)
-    })
-  }
 
   const joinUrl = `${window.location.origin}/join/${code}`
   const myPlayer = state.players.find(p => p.id === playerId)
 
-  // Join the room as a player
+  // BUG FIX 2: Wait until channel is subscribed before sending PLAYER_JOIN,
+  // otherwise the message fires before Supabase is ready and gets dropped.
   useEffect(() => {
-    if (joined || !state.roomId) return
+    if (!subscribed || joined || !state.roomId) return
     const seat = state.players.length
-    const player = createPlayer(playerId, localName, seat)
+    const player = createPlayer(playerId, localName || `Player ${seat + 1}`, seat)
     sendAction({ type: 'PLAYER_JOIN', player })
     setJoined(true)
-  }, [state.roomId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [subscribed, state.roomId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // BUG FIX 3: Non-host players watch for game phase change and navigate
+  // to the game page when the host starts the game.
+  useEffect(() => {
+    if (state.phase === 'active') {
+      navigate(`/game/${code}`)
+    }
+  }, [state.phase, code, navigate])
 
   function handleNameChange() {
     if (!localName.trim()) return
@@ -57,7 +58,7 @@ export function Lobby() {
   function handleStartGame() {
     if (!isHost) return
     sendAction({ type: 'GAME_START' })
-    navigate(`/game/${code}`)
+    // Host navigation happens via the phase effect above (same as non-hosts)
   }
 
   return (
@@ -68,14 +69,7 @@ export function Lobby() {
           <h1 className="text-2xl font-bold">Waiting for players</h1>
           <div className="flex items-center gap-2 mt-1">
             <span className="text-slate-400 text-sm">Room code:</span>
-            <button
-              onClick={handleCopyCode}
-              className="font-mono font-bold text-lg tracking-widest text-violet-400 hover:text-violet-300 active:scale-95 transition-all"
-              title="Click to copy"
-            >
-              {code}
-            </button>
-            {codeCopied && <span className="text-xs text-green-400">Copied!</span>}
+            <span className="font-mono font-bold text-lg tracking-widest text-violet-400">{code}</span>
           </div>
         </div>
         <button
@@ -92,6 +86,13 @@ export function Lobby() {
         <div className="flex flex-col items-center gap-2 p-4 bg-white rounded-2xl">
           <QRCodeSVG value={joinUrl} size={180} />
           <p className="text-slate-800 text-sm font-medium break-all text-center">{joinUrl}</p>
+        </div>
+      )}
+
+      {/* Connection status */}
+      {!subscribed && (
+        <div className="flex items-center gap-2 text-sm text-yellow-400">
+          <span className="animate-pulse">●</span> Connecting…
         </div>
       )}
 
@@ -124,7 +125,7 @@ export function Lobby() {
         <h2 className="font-semibold text-slate-300">Players ({state.players.length})</h2>
         {state.players.map(p => (
           <div key={p.id} className="flex items-center gap-3 bg-slate-800/50 rounded-xl p-3 border border-slate-700">
-            <div className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" />
+            <div className={`w-2 h-2 rounded-full flex-shrink-0 ${p.isConnected ? 'bg-green-400' : 'bg-slate-600'}`} />
             <div className="flex-1 min-w-0">
               <div className="font-medium text-sm">{p.name || `Player ${p.seat + 1}`}</div>
               {p.commander && (
@@ -149,7 +150,7 @@ export function Lobby() {
         <Button
           size="lg"
           onClick={handleStartGame}
-          disabled={state.players.length < 2}
+          disabled={state.players.length < 2 || !subscribed}
           className="w-full"
         >
           Start Game →

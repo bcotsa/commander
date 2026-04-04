@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback, useState } from 'react'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import { persistState } from '@/lib/room'
@@ -15,19 +15,29 @@ export function useRoom(roomId: string | null) {
   const playerId = usePlayerStore(s => s.id)
   const showToast = useUiStore(s => s.showToast)
 
-  // Broadcast an action to the channel
+  // BUG FIX 1: Keep a ref to always-current state so broadcast handlers
+  // never use stale closure values.
+  const stateRef = useRef(state)
+  useEffect(() => { stateRef.current = state }, [state])
+
+  // Track subscription readiness so callers can delay actions until ready.
+  const [subscribed, setSubscribed] = useState(false)
+
+  // Keep isHost in a ref too so the broadcast handler always has the latest value.
+  const isHostRef = useRef(isHost)
+  useEffect(() => { isHostRef.current = isHost }, [isHost])
+
   const broadcastAction = useCallback(
     (action: ActionPayload) => {
       channelRef.current?.send({
         type: 'broadcast',
         event: 'ACTION',
-        payload: { event: 'ACTION', payload: action, senderId: playerId, seq: state.actionSeq + 1 },
+        payload: { event: 'ACTION', payload: action, senderId: playerId, seq: stateRef.current.actionSeq + 1 },
       })
     },
-    [playerId, state.actionSeq]
+    [playerId]
   )
 
-  // Host broadcasts full state to all clients
   const broadcastState = useCallback(
     (nextState: GameState) => {
       channelRef.current?.send({
@@ -35,27 +45,30 @@ export function useRoom(roomId: string | null) {
         event: 'STATE_SYNC',
         payload: { event: 'STATE_SYNC', payload: nextState, senderId: playerId, seq: nextState.actionSeq },
       })
-      if (roomId) persistState(roomId, nextState, playerId).catch(console.error)
+      const hostId = useGameStore.getState().hostId
+      if (roomId && hostId) persistState(roomId, nextState, hostId).catch(console.error)
     },
     [playerId, roomId]
   )
 
-  // Public dispatch: optimistic locally + broadcast
   const sendAction = useCallback(
     (action: ActionPayload) => {
-      dispatch(action) // optimistic
-      if (isHost) {
-        const nextState = gameReducer(state, action)
+      dispatch(action) // optimistic local update
+      if (isHostRef.current) {
+        // BUG FIX 1: use stateRef.current, not the stale closure value
+        const nextState = gameReducer(stateRef.current, action)
         broadcastState(nextState)
       } else {
         broadcastAction(action)
       }
     },
-    [dispatch, isHost, state, broadcastState, broadcastAction]
+    [dispatch, broadcastState, broadcastAction]
   )
 
   useEffect(() => {
     if (!roomId) return
+
+    setSubscribed(false)
 
     const channel = supabase.channel(`room:${roomId}`, {
       config: { broadcast: { self: false } },
@@ -63,24 +76,22 @@ export function useRoom(roomId: string | null) {
 
     channel
       .on('broadcast', { event: 'ACTION' }, ({ payload }: { payload: BroadcastMessage }) => {
-        if (isHost) {
-          // Host applies the action and re-broadcasts authoritative state
-          const action = payload.payload as ActionPayload
-          const nextState = gameReducer(state, action)
-          setState(nextState)
-          broadcastState(nextState)
+        if (!isHostRef.current) return
+        // BUG FIX 1: always use stateRef.current — never the stale closure
+        const action = payload.payload as ActionPayload
+        const nextState = gameReducer(stateRef.current, action)
+        setState(nextState)
+        broadcastState(nextState)
 
-          const winner = getWinner(nextState)
-          if (winner) {
-            const name = nextState.players.find(p => p.id === winner)?.name ?? 'Someone'
-            showToast(`${name} wins!`)
-          }
+        const winner = getWinner(nextState)
+        if (winner) {
+          const name = nextState.players.find(p => p.id === winner)?.name ?? 'Someone'
+          showToast(`🏆 ${name} wins!`)
         }
       })
       .on('broadcast', { event: 'STATE_SYNC' }, ({ payload }: { payload: BroadcastMessage }) => {
-        if (!isHost) {
-          setState(payload.payload as GameState)
-        }
+        if (isHostRef.current) return
+        setState(payload.payload as GameState)
       })
       .on('presence', { event: 'join' }, ({ newPresences }) => {
         newPresences.forEach((p) => {
@@ -97,17 +108,19 @@ export function useRoom(roomId: string | null) {
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           await channel.track({ player_id: playerId })
+          // BUG FIX 2: signal that the channel is ready before anyone sends actions
+          setSubscribed(true)
         }
       })
 
     channelRef.current = channel
 
     return () => {
+      setSubscribed(false)
       channel.unsubscribe()
       channelRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, isHost, playerId])
+  }, [roomId, playerId]) // intentionally omit isHost — we use isHostRef instead
 
-  return { sendAction }
+  return { sendAction, subscribed }
 }
