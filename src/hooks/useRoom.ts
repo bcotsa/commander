@@ -7,62 +7,51 @@ import { usePlayerStore } from '@/store/player-store'
 import { gameReducer } from '@/lib/game-reducer'
 import { getWinner } from '@/lib/game-engine'
 import { useUiStore } from '@/store/ui-store'
-import type { BroadcastMessage, ActionPayload, GameState } from '@/types/game-state'
+import type { ActionPayload, GameState } from '@/types/game-state'
 
+/**
+ * Core multiplayer hook. Manages Supabase realtime channel, dispatching,
+ * and state synchronization.
+ *
+ * KEY DESIGN: All state reads use `useGameStore.getState()` directly instead
+ * of React refs or closures. Zustand's getState() always returns the latest
+ * committed state, eliminating the stale-closure bugs that caused player
+ * data to be wiped when a second player joined.
+ */
 export function useRoom(roomId: string | null) {
   const channelRef = useRef<RealtimeChannel | null>(null)
-  const { state, setState, dispatch, isHost } = useGameStore()
   const playerId = usePlayerStore(s => s.id)
   const showToast = useUiStore(s => s.showToast)
-
-  // BUG FIX 1: Keep a ref to always-current state so broadcast handlers
-  // never use stale closure values.
-  const stateRef = useRef(state)
-  useEffect(() => { stateRef.current = state }, [state])
-
-  // Track subscription readiness so callers can delay actions until ready.
   const [subscribed, setSubscribed] = useState(false)
-
-  // Keep isHost in a ref too so the broadcast handler always has the latest value.
-  const isHostRef = useRef(isHost)
-  useEffect(() => { isHostRef.current = isHost }, [isHost])
-
-  const broadcastAction = useCallback(
-    (action: ActionPayload) => {
-      channelRef.current?.send({
-        type: 'broadcast',
-        event: 'ACTION',
-        payload: { event: 'ACTION', payload: action, senderId: playerId, seq: stateRef.current.actionSeq + 1 },
-      })
-    },
-    [playerId]
-  )
-
-  const broadcastState = useCallback(
-    (nextState: GameState) => {
-      channelRef.current?.send({
-        type: 'broadcast',
-        event: 'STATE_SYNC',
-        payload: { event: 'STATE_SYNC', payload: nextState, senderId: playerId, seq: nextState.actionSeq },
-      })
-      const hostId = useGameStore.getState().hostId
-      if (roomId && hostId) persistState(roomId, nextState, hostId).catch(console.error)
-    },
-    [playerId, roomId]
-  )
 
   const sendAction = useCallback(
     (action: ActionPayload) => {
-      dispatch(action) // optimistic local update
-      if (isHostRef.current) {
-        // BUG FIX 1: use stateRef.current, not the stale closure value
-        const nextState = gameReducer(stateRef.current, action)
-        broadcastState(nextState)
+      const store = useGameStore.getState()
+
+      if (store.isHost) {
+        // Host: compute new state once, update store, broadcast to clients
+        const nextState = gameReducer(store.state, action)
+        store.setState(nextState)
+
+        channelRef.current?.send({
+          type: 'broadcast',
+          event: 'STATE_SYNC',
+          payload: { event: 'STATE_SYNC', payload: nextState, senderId: playerId, seq: nextState.actionSeq },
+        })
+        if (roomId && store.hostId) {
+          persistState(roomId, nextState, store.hostId).catch(console.error)
+        }
       } else {
-        broadcastAction(action)
+        // Non-host: optimistic local update, then send action to host
+        store.dispatch(action)
+        channelRef.current?.send({
+          type: 'broadcast',
+          event: 'ACTION',
+          payload: { event: 'ACTION', payload: action, senderId: playerId, seq: store.state.actionSeq + 1 },
+        })
       }
     },
-    [dispatch, broadcastState, broadcastAction]
+    [playerId, roomId]
   )
 
   useEffect(() => {
@@ -75,13 +64,24 @@ export function useRoom(roomId: string | null) {
     })
 
     channel
-      .on('broadcast', { event: 'ACTION' }, ({ payload }: { payload: BroadcastMessage }) => {
-        if (!isHostRef.current) return
-        // BUG FIX 1: always use stateRef.current — never the stale closure
-        const action = payload.payload as ActionPayload
-        const nextState = gameReducer(stateRef.current, action)
-        setState(nextState)
-        broadcastState(nextState)
+      .on('broadcast', { event: 'ACTION' }, ({ payload }) => {
+        // Only the host processes incoming actions
+        const store = useGameStore.getState()
+        if (!store.isHost) return
+
+        const action = (payload as { payload: ActionPayload }).payload
+        const nextState = gameReducer(store.state, action)
+        store.setState(nextState)
+
+        // Broadcast authoritative state to all clients
+        channelRef.current?.send({
+          type: 'broadcast',
+          event: 'STATE_SYNC',
+          payload: { event: 'STATE_SYNC', payload: nextState, senderId: playerId, seq: nextState.actionSeq },
+        })
+        if (roomId && store.hostId) {
+          persistState(roomId, nextState, store.hostId).catch(console.error)
+        }
 
         const winner = getWinner(nextState)
         if (winner) {
@@ -89,26 +89,26 @@ export function useRoom(roomId: string | null) {
           showToast(`🏆 ${name} wins!`)
         }
       })
-      .on('broadcast', { event: 'STATE_SYNC' }, ({ payload }: { payload: BroadcastMessage }) => {
-        if (isHostRef.current) return
-        setState(payload.payload as GameState)
+      .on('broadcast', { event: 'STATE_SYNC' }, ({ payload }) => {
+        const store = useGameStore.getState()
+        if (store.isHost) return
+        store.setState((payload as { payload: GameState }).payload)
       })
       .on('presence', { event: 'join' }, ({ newPresences }) => {
         newPresences.forEach((p) => {
           const pid = (p as Record<string, unknown>)['player_id'] as string | undefined
-          if (pid) dispatch({ type: 'PLAYER_CONNECTED', playerId: pid, connected: true })
+          if (pid) useGameStore.getState().dispatch({ type: 'PLAYER_CONNECTED', playerId: pid, connected: true })
         })
       })
       .on('presence', { event: 'leave' }, ({ leftPresences }) => {
         leftPresences.forEach((p) => {
           const pid = (p as Record<string, unknown>)['player_id'] as string | undefined
-          if (pid) dispatch({ type: 'PLAYER_CONNECTED', playerId: pid, connected: false })
+          if (pid) useGameStore.getState().dispatch({ type: 'PLAYER_CONNECTED', playerId: pid, connected: false })
         })
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           await channel.track({ player_id: playerId })
-          // BUG FIX 2: signal that the channel is ready before anyone sends actions
           setSubscribed(true)
         }
       })
@@ -120,7 +120,7 @@ export function useRoom(roomId: string | null) {
       channel.unsubscribe()
       channelRef.current = null
     }
-  }, [roomId, playerId]) // intentionally omit isHost — we use isHostRef instead
+  }, [roomId, playerId, showToast])
 
   return { sendAction, subscribed }
 }
