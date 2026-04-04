@@ -4,12 +4,13 @@ import { QRCodeSVG } from 'qrcode.react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { CommanderSearch } from '@/components/lobby/CommanderSearch'
+import { MoxfieldImport } from '@/components/lobby/MoxfieldImport'
 import { ColorPips } from '@/components/ui/ColorPips'
 import { useGameStore } from '@/store/game-store'
 import { usePlayerStore } from '@/store/player-store'
 import { useRoom } from '@/hooks/useRoom'
 import { createPlayer } from '@/lib/game-reducer'
-import type { CommanderCard } from '@/types/game-state'
+import type { CommanderCard, ImportedDeck } from '@/types/game-state'
 
 export function Lobby() {
   const { code } = useParams<{ code: string }>()
@@ -61,6 +62,10 @@ export function Lobby() {
 
   function handleCommanderSelect(card: CommanderCard) {
     sendAction({ type: 'SET_COMMANDER', playerId, commander: card })
+  }
+
+  function handleDeckImport(payload: { deck: ImportedDeck; commander: CommanderCard | null }) {
+    sendAction({ type: 'SET_DECK', playerId, deck: payload.deck, commander: payload.commander })
   }
 
   function handleStartGame() {
@@ -128,6 +133,14 @@ export function Lobby() {
         </div>
 
         <div>
+          <p className="text-sm text-slate-400 mb-2">Deck</p>
+          <MoxfieldImport
+            onImport={handleDeckImport}
+            selectedDeck={myPlayer?.deck}
+          />
+        </div>
+
+        <div>
           <p className="text-sm text-slate-400 mb-2">Commander</p>
           <CommanderSearch
             onSelect={handleCommanderSelect}
@@ -148,6 +161,11 @@ export function Lobby() {
                 <div className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
                   {p.commander.name}
                   <ColorPips colors={p.commander.colorIdentity} />
+                </div>
+              )}
+              {p.deck && (
+                <div className="text-xs text-slate-500 mt-1 truncate">
+                  {p.deck.name} • {p.deck.cardCount} cards
                 </div>
               )}
             </div>

@@ -9,6 +9,28 @@ export interface CommanderCard {
   typeLine: string
 }
 
+export interface ImportedDeckCard {
+  scryfallId: string | null
+  name: string
+  quantity: number
+  imageUri: string
+  colorIdentity: ColorSymbol[]
+  manaCost: string | null
+  typeLine: string
+}
+
+export interface ImportedDeck {
+  source: 'moxfield'
+  sourceId: string
+  sourceUrl: string
+  name: string
+  format: string | null
+  lastSyncedAt: string
+  cardCount: number
+  commanders: ImportedDeckCard[]
+  mainboard: ImportedDeckCard[]
+}
+
 export interface PlayerCounters {
   poison: number
   experience: number
@@ -24,6 +46,7 @@ export interface Player {
   commanderDamage: Record<string, number> // keyed by opponent player id
   counters: PlayerCounters
   commander: CommanderCard | null
+  deck: ImportedDeck | null
   isEliminated: boolean
   hasMonarch: boolean
   hasInitiative: boolean
@@ -68,6 +91,7 @@ export type ActionPayload =
   | { type: 'PLAYER_ELIMINATE'; playerId: string }
   | { type: 'PLAYER_CONNECTED'; playerId: string; connected: boolean }
   | { type: 'SET_COMMANDER'; playerId: string; commander: CommanderCard }
+  | { type: 'SET_DECK'; playerId: string; deck: ImportedDeck; commander: CommanderCard | null }
   | { type: 'SET_PLAYER_NAME'; playerId: string; name: string }
   | { type: 'UNDO' }
   | { type: 'GAME_START' }

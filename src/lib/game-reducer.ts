@@ -27,6 +27,7 @@ export function createPlayer(id: string, name: string, seat: number): Player {
     commanderDamage: {},
     counters: { poison: 0, experience: 0, energy: 0, storm: 0 },
     commander: null,
+    deck: null,
     isEliminated: false,
     hasMonarch: false,
     hasInitiative: false,
@@ -259,6 +260,16 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         ...state,
         players: state.players.map(p =>
           p.id === action.playerId ? { ...p, commander: action.commander } : p
+        ),
+      }
+
+    case 'SET_DECK':
+      return {
+        ...state,
+        players: state.players.map(p =>
+          p.id === action.playerId
+            ? { ...p, deck: action.deck, commander: action.commander ?? p.commander }
+            : p
         ),
       }
 
