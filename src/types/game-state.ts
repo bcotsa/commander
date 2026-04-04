@@ -33,6 +33,25 @@ export interface ImportedDeck {
   importWarnings?: string[]
 }
 
+export interface GameCard {
+  instanceId: string
+  scryfallId: string | null
+  name: string
+  imageUri: string
+  colorIdentity: ColorSymbol[]
+  manaCost: string | null
+  typeLine: string
+}
+
+export interface PlayerZones {
+  library: GameCard[]
+  hand: GameCard[]
+  battlefield: GameCard[]
+  graveyard: GameCard[]
+  exile: GameCard[]
+  commandZone: GameCard[]
+}
+
 export interface PlayerCounters {
   poison: number
   experience: number
@@ -49,6 +68,7 @@ export interface Player {
   counters: PlayerCounters
   commander: CommanderCard | null
   deck: ImportedDeck | null
+  zones: PlayerZones
   isEliminated: boolean
   hasMonarch: boolean
   hasInitiative: boolean

@@ -15,6 +15,8 @@ export function PlayerTile({
   player, isCurrentTurn, rotated, onLifeDelta, onOpenDamage, onOpenCounters
 }: PlayerTileProps) {
   const borderColor = isCurrentTurn ? 'border-violet-500' : 'border-slate-700'
+  const { library, hand, battlefield, graveyard, exile, commandZone } = player.zones
+  const visibleHand = hand.slice(0, 7)
 
   return (
     <div
@@ -59,8 +61,56 @@ export function PlayerTile({
         />
       </div>
 
+      {/* Zones */}
+      <div className="px-2 py-2 border-t border-slate-700/50 bg-slate-950/70">
+        <div className="grid grid-cols-3 gap-2 text-[11px] text-slate-300">
+          <div className="rounded-lg bg-slate-800/90 p-2">
+            <div className="text-slate-500 uppercase tracking-wide">Library</div>
+            <div className="mt-1 text-sm font-semibold">{library.length}</div>
+          </div>
+          <div className="rounded-lg bg-slate-800/90 p-2">
+            <div className="text-slate-500 uppercase tracking-wide">Command</div>
+            <div className="mt-1 text-sm font-semibold">{commandZone.length}</div>
+            {commandZone[0] && <div className="mt-1 truncate">{commandZone[0].name}</div>}
+          </div>
+          <div className="rounded-lg bg-slate-800/90 p-2">
+            <div className="text-slate-500 uppercase tracking-wide">Battlefield</div>
+            <div className="mt-1 text-sm font-semibold">{battlefield.length}</div>
+          </div>
+          <div className="rounded-lg bg-slate-800/90 p-2">
+            <div className="text-slate-500 uppercase tracking-wide">Graveyard</div>
+            <div className="mt-1 text-sm font-semibold">{graveyard.length}</div>
+          </div>
+          <div className="rounded-lg bg-slate-800/90 p-2">
+            <div className="text-slate-500 uppercase tracking-wide">Exile</div>
+            <div className="mt-1 text-sm font-semibold">{exile.length}</div>
+          </div>
+          <div className="rounded-lg bg-slate-800/90 p-2">
+            <div className="text-slate-500 uppercase tracking-wide">Hand</div>
+            <div className="mt-1 text-sm font-semibold">{hand.length}</div>
+          </div>
+        </div>
+
+        <div className="mt-2">
+          <div className="mb-1 text-[11px] uppercase tracking-wide text-slate-500">Opening Hand</div>
+          <div className="grid grid-cols-2 gap-1.5">
+            {visibleHand.map(card => (
+              <div key={card.instanceId} className="rounded-lg bg-slate-800/90 px-2 py-1.5 text-xs text-slate-200">
+                <div className="truncate font-medium">{card.name}</div>
+                <div className="truncate text-[10px] text-slate-500">{card.typeLine || 'Card'}</div>
+              </div>
+            ))}
+            {visibleHand.length === 0 && (
+              <div className="col-span-2 rounded-lg border border-dashed border-slate-700 px-2 py-3 text-xs text-slate-500">
+                No cards drawn
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Status badges */}
-      <div className="flex gap-1 px-2 py-1">
+      <div className="flex flex-wrap gap-1 px-2 py-1">
         {player.hasMonarch && (
           <span className="text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-600 px-1.5 py-0.5 rounded-full">👑 Monarch</span>
         )}

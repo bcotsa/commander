@@ -1,4 +1,4 @@
-import type { GameState, ActionPayload, Player, LogEntry } from '@/types/game-state'
+import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeckCard, PlayerZones } from '@/types/game-state'
 import { checkEliminations } from './game-engine'
 
 const MAX_LOG = 50
@@ -28,10 +28,96 @@ export function createPlayer(id: string, name: string, seat: number): Player {
     counters: { poison: 0, experience: 0, energy: 0, storm: 0 },
     commander: null,
     deck: null,
+    zones: { library: [], hand: [], battlefield: [], graveyard: [], exile: [], commandZone: [] },
     isEliminated: false,
     hasMonarch: false,
     hasInitiative: false,
     isConnected: true,
+  }
+}
+
+function importedCardToGameCards(card: ImportedDeckCard): GameCard[] {
+  return Array.from({ length: card.quantity }, (_, index) => ({
+    instanceId: `${card.scryfallId ?? card.name}-${index}-${crypto.randomUUID()}`,
+    scryfallId: card.scryfallId,
+    name: card.name,
+    imageUri: card.imageUri,
+    colorIdentity: card.colorIdentity,
+    manaCost: card.manaCost,
+    typeLine: card.typeLine,
+  }))
+}
+
+function commanderToGameCard(player: Player): GameCard | null {
+  if (!player.commander) return null
+
+  return {
+    instanceId: `${player.commander.scryfallId || player.commander.name}-commander-${crypto.randomUUID()}`,
+    scryfallId: player.commander.scryfallId || null,
+    name: player.commander.name,
+    imageUri: player.commander.imageUri,
+    colorIdentity: player.commander.colorIdentity,
+    manaCost: player.commander.manaCost,
+    typeLine: player.commander.typeLine,
+  }
+}
+
+function shuffleCards<T>(cards: T[]): T[] {
+  const next = [...cards]
+  for (let i = next.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[next[i], next[j]] = [next[j], next[i]]
+  }
+  return next
+}
+
+function buildPlayerZones(player: Player): PlayerZones {
+  if (!player.deck) {
+    return { library: [], hand: [], battlefield: [], graveyard: [], exile: [], commandZone: [] }
+  }
+
+  let library = player.deck.mainboard.flatMap(importedCardToGameCards)
+  const commandZone: GameCard[] = []
+
+  if (player.deck.commanders.length > 0) {
+    for (const commander of player.deck.commanders) {
+      commandZone.push(...importedCardToGameCards({ ...commander, quantity: 1 }))
+    }
+  } else {
+    const commanderCard = commanderToGameCard(player)
+    if (commanderCard) {
+      commandZone.push(commanderCard)
+      const matchIndex = library.findIndex(card => card.name.toLowerCase() === commanderCard.name.toLowerCase())
+      if (matchIndex >= 0) {
+        library.splice(matchIndex, 1)
+      }
+    }
+  }
+
+  library = shuffleCards(library)
+  const hand = library.slice(0, 7)
+  const remainingLibrary = library.slice(7)
+
+  return {
+    library: remainingLibrary,
+    hand,
+    battlefield: [],
+    graveyard: [],
+    exile: [],
+    commandZone,
+  }
+}
+
+function initializePlayerForGame(player: Player): Player {
+  return {
+    ...player,
+    life: 40,
+    commanderDamage: {},
+    counters: { poison: 0, experience: 0, energy: 0, storm: 0 },
+    isEliminated: false,
+    hasMonarch: false,
+    hasInitiative: false,
+    zones: buildPlayerZones(player),
   }
 }
 
@@ -285,6 +371,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       const next: GameState = {
         ...state,
         phase: 'active',
+        players: state.players.map(initializePlayerForGame),
         actionSeq: state.actionSeq + 1,
         log: appendLog(state.log, {
           timestamp: new Date().toISOString(),
@@ -303,15 +390,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       const reset: GameState = {
         ...state,
         phase: 'active',
-        players: state.players.map(p => ({
-          ...p,
-          life: 40,
-          commanderDamage: {},
-          counters: { poison: 0, experience: 0, energy: 0, storm: 0 },
-          isEliminated: false,
-          hasMonarch: false,
-          hasInitiative: false,
-        })),
+        players: state.players.map(initializePlayerForGame),
         currentTurnIndex: 0,
         round: 1,
         log: [],
