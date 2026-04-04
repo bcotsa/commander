@@ -23,6 +23,14 @@ export function Lobby() {
   const [localName, setLocalName] = useState(name)
   const [joined, setJoined] = useState(false)
   const [showQr, setShowQr] = useState(false)
+  const [codeCopied, setCodeCopied] = useState(false)
+
+  function copyCode() {
+    navigator.clipboard.writeText(code ?? '').then(() => {
+      setCodeCopied(true)
+      setTimeout(() => setCodeCopied(false), 2000)
+    })
+  }
 
   const joinUrl = `${window.location.origin}/join/${code}`
   const myPlayer = state.players.find(p => p.id === playerId)
@@ -69,7 +77,15 @@ export function Lobby() {
           <h1 className="text-2xl font-bold">Waiting for players</h1>
           <div className="flex items-center gap-2 mt-1">
             <span className="text-slate-400 text-sm">Room code:</span>
-            <span className="font-mono font-bold text-lg tracking-widest text-violet-400">{code}</span>
+            <button
+              onClick={copyCode}
+              className="flex items-center gap-1.5 font-mono font-bold text-lg tracking-widest text-violet-400 hover:text-violet-300 transition-colors"
+            >
+              {code}
+              <span className="text-xs font-normal tracking-normal text-slate-500">
+                {codeCopied ? '✓ copied' : '📋'}
+              </span>
+            </button>
           </div>
         </div>
         <button
