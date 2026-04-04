@@ -20,7 +20,7 @@ function CardThumb({ card, selected, onClick }: { card: GameCard; selected?: boo
   if (!card.imageUri) return <button type="button" onClick={onClick} className="w-20 flex-shrink-0 text-left">{inner}</button>
 
   return (
-    <button type="button" onClick={onClick} className="w-20 flex-shrink-0 text-left">
+    <button type="button" onClick={onClick} className="relative w-20 flex-shrink-0 text-left">
       <CardPreview imageUri={card.imageUri} name={card.name}>
         {inner}
       </CardPreview>
@@ -34,24 +34,28 @@ function ZoneRow({
   empty,
   selectedCardId,
   onSelect,
+  renderCardActions,
 }: {
   title: string
   cards: GameCard[]
   empty: string
   selectedCardId: string | null
   onSelect: (card: GameCard) => void
+  renderCardActions?: (card: GameCard) => React.ReactNode
 }) {
   return (
     <div className="mt-3">
       <div className="mb-1 text-[11px] uppercase tracking-wide text-slate-500">{title}</div>
       <div className="flex gap-2 overflow-x-auto pb-1">
         {cards.map(card => (
-          <CardThumb
-            key={card.instanceId}
-            card={card}
-            selected={selectedCardId === card.instanceId}
-            onClick={() => onSelect(card)}
-          />
+          <div key={card.instanceId} className="relative pt-14">
+            {selectedCardId === card.instanceId && renderCardActions?.(card)}
+            <CardThumb
+              card={card}
+              selected={selectedCardId === card.instanceId}
+              onClick={() => onSelect(card)}
+            />
+          </div>
         ))}
         {cards.length === 0 && (
           <div className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-xs text-slate-500">
@@ -197,6 +201,112 @@ export function PlayerTile({
   const selectedIsLand = selected ? selected.card.typeLine.toLowerCase().includes('land') : false
   const selectedIsPermanent = selected ? !selected.card.typeLine.toLowerCase().includes('instant') && !selected.card.typeLine.toLowerCase().includes('sorcery') : false
 
+  function renderSelectedCardActions(card: GameCard) {
+    if (!selected || selected.card.instanceId !== card.instanceId) return null
+
+    return (
+      <div className="absolute left-0 right-0 top-0 z-10 rounded-xl border border-violet-800 bg-slate-950/95 p-2 shadow-2xl">
+        <div className="mb-1 truncate text-[10px] font-medium text-violet-200">{card.name}</div>
+        <div className="flex flex-wrap gap-1">
+          {selected.zone === 'hand' && selectedIsLand && (
+            <button
+              onClick={() => {
+                onPlayLand(card.instanceId)
+                setSelected(null)
+              }}
+              className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+            >
+              Play Land
+            </button>
+          )}
+          {selected.zone === 'hand' && !selectedIsLand && selectedIsPermanent && (
+            <button
+              onClick={() => {
+                onCastPermanent(card.instanceId)
+                setSelected(null)
+              }}
+              className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+            >
+              Cast
+            </button>
+          )}
+          {selected.zone === 'commandZone' && (
+            <button
+              onClick={() => {
+                onCastCommander(card.instanceId)
+                setSelected(null)
+              }}
+              className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+            >
+              Cast Cmdr
+            </button>
+          )}
+          {(selected.zone === 'battlefield' || selected.zone === 'lands') && (
+            <button
+              onClick={() => {
+                onToggleTapped(card.instanceId)
+                setSelected(null)
+              }}
+              className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+            >
+              {card.tapped ? 'Untap' : 'Tap'}
+            </button>
+          )}
+          {selected.zone !== 'library' && selected.zone !== 'battlefield' && selected.zone !== 'lands' && (
+            <button
+              onClick={() => {
+                onMoveCard(selected.zone, 'battlefield', card.instanceId)
+                setSelected(null)
+              }}
+              className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+            >
+              To Field
+            </button>
+          )}
+          {selected.zone !== 'hand' && (
+            <button
+              onClick={() => {
+                onMoveCard(selected.zone, 'hand', card.instanceId)
+                setSelected(null)
+              }}
+              className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+            >
+              To Hand
+            </button>
+          )}
+          {selected.zone !== 'graveyard' && (
+            <button
+              onClick={() => {
+                onMoveCard(selected.zone, 'graveyard', card.instanceId)
+                setSelected(null)
+              }}
+              className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+            >
+              Gy
+            </button>
+          )}
+          {selected.zone !== 'exile' && (
+            <button
+              onClick={() => {
+                onMoveCard(selected.zone, 'exile', card.instanceId)
+                setSelected(null)
+              }}
+              className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+            >
+              Exile
+            </button>
+          )}
+          <button
+            onClick={() => setSelected(null)}
+            className="rounded-md border border-slate-700 px-2 py-1 text-[10px] font-medium text-slate-300 transition-colors hover:bg-slate-800"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div
       className={`relative flex h-full min-h-0 flex-col border-2 ${borderColor} rounded-2xl overflow-hidden bg-slate-900 transition-colors`}
@@ -276,108 +386,6 @@ export function PlayerTile({
             </div>
           </div>
 
-          {selected && (
-            <div className="mt-3 rounded-xl border border-violet-800 bg-violet-950/30 p-2">
-              <div className="text-xs font-medium text-violet-200">{selected.card.name}</div>
-              <div className="mt-1 flex flex-wrap gap-1.5">
-                {selected.zone === 'hand' && selectedIsLand && (
-                  <button
-                    onClick={() => {
-                      onPlayLand(selected.card.instanceId)
-                      setSelected(null)
-                    }}
-                    className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
-                  >
-                    Play Land
-                  </button>
-                )}
-                {selected.zone === 'hand' && !selectedIsLand && selectedIsPermanent && (
-                  <button
-                    onClick={() => {
-                      onCastPermanent(selected.card.instanceId)
-                      setSelected(null)
-                    }}
-                    className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
-                  >
-                    Cast Permanent
-                  </button>
-                )}
-                {selected.zone === 'commandZone' && (
-                  <button
-                    onClick={() => {
-                      onCastCommander(selected.card.instanceId)
-                      setSelected(null)
-                    }}
-                    className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
-                  >
-                    Cast Commander
-                  </button>
-                )}
-                {selected.zone === 'battlefield' || selected.zone === 'lands' ? (
-                  <button
-                    onClick={() => {
-                      onToggleTapped(selected.card.instanceId)
-                      setSelected(null)
-                    }}
-                    className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
-                  >
-                    {selected.card.tapped ? 'Untap' : 'Tap'}
-                  </button>
-                ) : null}
-                {selected.zone !== 'library' && selected.zone !== 'battlefield' && selected.zone !== 'lands' && (
-                  <button
-                    onClick={() => {
-                      onMoveCard(selected.zone, 'battlefield', selected.card.instanceId)
-                      setSelected(null)
-                    }}
-                    className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
-                  >
-                    Move to Battlefield
-                  </button>
-                )}
-                {selected.zone !== 'hand' && (
-                  <button
-                    onClick={() => {
-                      onMoveCard(selected.zone, 'hand', selected.card.instanceId)
-                      setSelected(null)
-                    }}
-                    className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
-                  >
-                    Move to Hand
-                  </button>
-                )}
-                {selected.zone !== 'graveyard' && (
-                  <button
-                    onClick={() => {
-                      onMoveCard(selected.zone, 'graveyard', selected.card.instanceId)
-                      setSelected(null)
-                    }}
-                    className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
-                  >
-                    Move to Graveyard
-                  </button>
-                )}
-                {selected.zone !== 'exile' && (
-                  <button
-                    onClick={() => {
-                      onMoveCard(selected.zone, 'exile', selected.card.instanceId)
-                      setSelected(null)
-                    }}
-                    className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
-                  >
-                    Move to Exile
-                  </button>
-                )}
-                <button
-                  onClick={() => setSelected(null)}
-                  className="rounded-md border border-slate-700 px-2 py-1 text-[10px] font-medium text-slate-300 transition-colors hover:bg-slate-800"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          )}
-
           <div className="mt-3 grid grid-cols-3 gap-2">
             <div className="rounded-xl border border-violet-800/70 bg-violet-950/20 p-2">
               <div className="mb-1 flex items-center justify-between">
@@ -387,7 +395,8 @@ export function PlayerTile({
               <div className="flex gap-2 overflow-x-auto pb-1">
                 {commandZone.length > 0 ? (
                   commandZone.map(card => (
-                    <div key={card.instanceId} className="w-16 flex-shrink-0">
+                    <div key={card.instanceId} className="relative w-16 flex-shrink-0 pt-14">
+                      {selected?.card.instanceId === card.instanceId && renderSelectedCardActions(card)}
                       <CardThumb
                         card={card}
                         selected={selected?.card.instanceId === card.instanceId}
@@ -419,11 +428,12 @@ export function PlayerTile({
           </div>
 
           <ZoneRow
-            title="Hand"
-            cards={hand}
-            empty="No cards in hand"
+            title="Battlefield"
+            cards={battlefield}
+            empty="No permanents on battlefield"
             selectedCardId={selected?.card.instanceId ?? null}
-            onSelect={(card) => setSelected({ zone: 'hand', card })}
+            onSelect={(card) => setSelected({ zone: 'battlefield', card })}
+            renderCardActions={renderSelectedCardActions}
           />
 
           <ZoneRow
@@ -432,14 +442,16 @@ export function PlayerTile({
             empty="No lands in play"
             selectedCardId={selected?.card.instanceId ?? null}
             onSelect={(card) => setSelected({ zone: 'lands', card })}
+            renderCardActions={renderSelectedCardActions}
           />
 
           <ZoneRow
-            title="Battlefield"
-            cards={battlefield}
-            empty="No permanents on battlefield"
+            title="Hand"
+            cards={hand}
+            empty="No cards in hand"
             selectedCardId={selected?.card.instanceId ?? null}
-            onSelect={(card) => setSelected({ zone: 'battlefield', card })}
+            onSelect={(card) => setSelected({ zone: 'hand', card })}
+            renderCardActions={renderSelectedCardActions}
           />
         </div>
       </div>
