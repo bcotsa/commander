@@ -56,8 +56,8 @@ function ZoneRow({
   renderCardActions?: (card: GameCard) => React.ReactNode
 }) {
   return (
-    <div className="mt-3">
-      <div className="mb-1 text-[11px] uppercase tracking-wide text-slate-500">{title}</div>
+    <div className="mt-2">
+      <div className="mb-0 text-[11px] uppercase tracking-wide leading-none text-slate-500">{title}</div>
       <div className="flex gap-2 overflow-x-auto pb-1">
         {cards.map(card => (
           <div key={card.instanceId} className="relative pt-14">
@@ -455,10 +455,10 @@ export function PlayerTile({
             </div>
           </div>
 
-          <div className="mt-3 grid grid-cols-3 gap-2">
+          <div className="mt-2 grid grid-cols-3 gap-2">
             <div className="rounded-xl border border-violet-800/70 bg-violet-950/20 p-2">
-              <div className="mb-1 flex items-center justify-between">
-                <span className="text-[11px] uppercase tracking-wide text-violet-200">Command</span>
+              <div className="mb-0 flex items-center justify-between">
+                <span className="text-[11px] uppercase tracking-wide leading-none text-violet-200">Command</span>
                 <span className="text-sm font-semibold text-white">{commandZone.length}</span>
               </div>
               <div className="flex gap-2 overflow-x-auto pb-1">

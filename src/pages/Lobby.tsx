@@ -8,8 +8,11 @@ import { MoxfieldImport } from '@/components/lobby/MoxfieldImport'
 import { ColorPips } from '@/components/ui/ColorPips'
 import { useGameStore } from '@/store/game-store'
 import { usePlayerStore } from '@/store/player-store'
+import { useUiStore } from '@/store/ui-store'
 import { useRoom } from '@/hooks/useRoom'
 import { createPlayer } from '@/lib/game-reducer'
+import { importDecklistText } from '@/lib/scryfall'
+import { BLIGHT_TEST_DECK, SQUIRREL_TEST_DECK, TEST_FAKE_PLAYER_ID } from '@/lib/test-decks'
 import type { CommanderCard } from '@/types/game-state'
 
 export function Lobby() {
@@ -18,6 +21,7 @@ export function Lobby() {
 
   const { state, isHost } = useGameStore()
   const { id: playerId, name, setName } = usePlayerStore()
+  const showToast = useUiStore(s => s.showToast)
   // BUG FIX 2: get subscribed so we wait before sending PLAYER_JOIN
   const { sendAction, requestDeckImport, subscribed } = useRoom(state.roomId || null)
 
@@ -25,6 +29,7 @@ export function Lobby() {
   const [joined, setJoined] = useState(false)
   const [showQr, setShowQr] = useState(false)
   const [codeCopied, setCodeCopied] = useState(false)
+  const [loadingTestMatch, setLoadingTestMatch] = useState(false)
 
   function copyCode() {
     navigator.clipboard.writeText(code ?? '').then(() => {
@@ -68,6 +73,39 @@ export function Lobby() {
     if (!isHost) return
     sendAction({ type: 'GAME_START' })
     // Host navigation happens via the phase effect above (same as non-hosts)
+  }
+
+  async function handleLoadTestMatch() {
+    if (!isHost || loadingTestMatch) return
+
+    const realOtherPlayers = state.players.filter(p => p.id !== playerId && p.id !== TEST_FAKE_PLAYER_ID)
+    if (realOtherPlayers.length > 0) {
+      showToast('Test match only works when you are the only real player in the room.')
+      return
+    }
+
+    setLoadingTestMatch(true)
+
+    try {
+      const fakeExists = state.players.some(p => p.id === TEST_FAKE_PLAYER_ID)
+      if (!fakeExists) {
+        const fakePlayer = createPlayer(TEST_FAKE_PLAYER_ID, 'Test Opponent', 1)
+        sendAction({ type: 'PLAYER_JOIN', player: fakePlayer })
+      }
+
+      const [hostDeck, fakeDeck] = await Promise.all([
+        importDecklistText(SQUIRREL_TEST_DECK),
+        importDecklistText(BLIGHT_TEST_DECK),
+      ])
+
+      sendAction({ type: 'SET_DECK', playerId, deck: hostDeck.deck, commander: hostDeck.commander })
+      sendAction({ type: 'SET_DECK', playerId: TEST_FAKE_PLAYER_ID, deck: fakeDeck.deck, commander: fakeDeck.commander })
+      sendAction({ type: 'GAME_START' })
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Failed to load test match')
+    } finally {
+      setLoadingTestMatch(false)
+    }
   }
 
   return (
@@ -135,6 +173,24 @@ export function Lobby() {
             onImportDecklist={(input) => requestDeckImport({ source: 'decklist', input })}
             selectedDeck={myPlayer?.deck}
           />
+        </div>
+
+        <div className="rounded-xl border border-dashed border-slate-600 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-slate-200">Test Flow</p>
+              <p className="mt-1 text-xs text-slate-400">
+                Loads two hardcoded decks, creates a fake opponent, and auto-starts the game.
+              </p>
+            </div>
+            <Button
+              variant="secondary"
+              onClick={() => void handleLoadTestMatch()}
+              disabled={!isHost || loadingTestMatch || !subscribed}
+            >
+              {loadingTestMatch ? 'Loading…' : 'Load Test Match'}
+            </Button>
+          </div>
         </div>
 
         <div>
