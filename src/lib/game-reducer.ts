@@ -4,6 +4,7 @@ import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getLandManaOptions,
 
 const MAX_LOG = 50
 const TURN_PHASES: TurnPhase[] = ['untap', 'upkeep', 'draw', 'main1', 'combat', 'main2', 'end']
+const AUTO_ADVANCE_PHASES = new Set<TurnPhase>(['untap', 'upkeep', 'draw'])
 
 export function createInitialGameState(roomCode: string, roomId = ''): GameState {
   return {
@@ -258,6 +259,24 @@ function applyPhaseEntry(state: GameState, phase: TurnPhase, turnIndex = state.c
   }
 }
 
+function advanceThroughAutomaticPhases(state: GameState): GameState {
+  let nextState = state
+
+  while (AUTO_ADVANCE_PHASES.has(nextState.currentPhase)) {
+    nextState = applyPhaseEntry(nextState, nextState.currentPhase, nextState.currentTurnIndex)
+    const currentIndex = TURN_PHASES.indexOf(nextState.currentPhase)
+    const followingPhase = TURN_PHASES[currentIndex + 1]
+    if (!followingPhase) break
+    nextState = {
+      ...nextState,
+      currentPhase: followingPhase,
+      combat: followingPhase === 'combat' ? nextState.combat : { attackers: [] },
+    }
+  }
+
+  return nextState
+}
+
 function describe(state: GameState, action: ActionPayload): string {
   const player = (id: string) => state.players.find(p => p.id === id)?.name ?? id
   switch (action.type) {
@@ -485,7 +504,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         actionSeq: state.actionSeq + 1,
       }
 
-      nextState = applyPhaseEntry(nextState, nextPhase, nextTurnIndex)
+      nextState = advanceThroughAutomaticPhases(nextState)
 
       return {
         ...nextState,
@@ -1249,7 +1268,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       }
 
     case 'GAME_START': {
-      const next: GameState = {
+      const next: GameState = advanceThroughAutomaticPhases({
         ...state,
         phase: 'active',
         players: state.players.map(initializePlayerForGame),
@@ -1263,13 +1282,13 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           action,
           undoable: false,
         }),
-      }
+      })
       setCheckpoint(state.roomId, next)
       return next
     }
 
     case 'RESET_GAME': {
-      const reset: GameState = {
+      const reset: GameState = advanceThroughAutomaticPhases({
         ...state,
         phase: 'active',
         players: state.players.map(initializePlayerForGame),
@@ -1278,7 +1297,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         round: 1,
         log: [],
         actionSeq: state.actionSeq + 1,
-      }
+      })
       setCheckpoint(state.roomId, reset)
       return reset
     }
