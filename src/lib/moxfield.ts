@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import type { CommanderCard, ImportedDeck } from '@/types/game-state'
+import { FunctionsHttpError } from '@supabase/supabase-js'
 
 export async function importMoxfieldDeck(input: string): Promise<{
   deck: ImportedDeck
@@ -16,6 +17,14 @@ export async function importMoxfieldDeck(input: string): Promise<{
   })
 
   if (error) {
+    if (error instanceof FunctionsHttpError) {
+      try {
+        const payload = await error.context.json() as { error?: string }
+        throw new Error(payload.error || 'Unable to import Moxfield deck')
+      } catch {
+        throw new Error('Unable to import Moxfield deck')
+      }
+    }
     throw new Error(error.message || 'Unable to import Moxfield deck')
   }
 

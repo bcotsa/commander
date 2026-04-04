@@ -150,12 +150,12 @@ async function fetchDeckById(deckId: string): Promise<MoxfieldDeckResponse> {
       const res = await fetch(`${base}/decks/all/${deckId}`, {
         headers: {
           accept: 'application/json',
-          'user-agent': 'Commander Deck Import',
         },
       })
 
       if (!res.ok) {
-        lastError = new Error(`Moxfield returned ${res.status}`)
+        const detail = await res.text().catch(() => '')
+        lastError = new Error(detail || `Moxfield returned ${res.status}`)
         continue
       }
 
