@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Home } from '@/pages/Home'
 import { Lobby } from '@/pages/Lobby'
 import { Game } from '@/pages/Game'
+import { RELEASE_LABEL } from '@/lib/release'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,6 +21,9 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
+        <div className="pointer-events-none fixed right-3 top-3 z-[100] rounded-full border border-slate-700 bg-slate-950/90 px-2.5 py-1 text-[11px] font-medium text-slate-300 shadow-lg">
+          {RELEASE_LABEL}
+        </div>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/lobby/:code" element={<Lobby />} />
