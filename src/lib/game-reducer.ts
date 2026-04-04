@@ -1,4 +1,4 @@
-import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeckCard, PlayerZones, TurnPhase } from '@/types/game-state'
+import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeckCard, PlayerZones, TurnPhase, StackItem } from '@/types/game-state'
 import { checkEliminations } from './game-engine'
 import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getLandManaOptions, getSimpleSpellDefinition } from './card-rules'
 
@@ -16,6 +16,7 @@ export function createInitialGameState(roomCode: string, roomId = ''): GameState
     currentTurnIndex: 0,
     currentPhase: 'untap',
     combat: { attackers: [] },
+    stack: [],
     round: 1,
     log: [],
     actionSeq: 0,
@@ -212,6 +213,39 @@ function nextLivingTurnIndex(state: GameState): number {
   return state.currentTurnIndex
 }
 
+function describeTarget(state: GameState, targetCardId?: string, targetPlayerId?: string): string {
+  if (targetPlayerId) {
+    return state.players.find(player => player.id === targetPlayerId)?.name ?? 'a player'
+  }
+  if (targetCardId) {
+    for (const player of state.players) {
+      const card =
+        player.zones.battlefield.find(entry => entry.instanceId === targetCardId) ??
+        player.zones.lands.find(entry => entry.instanceId === targetCardId) ??
+        player.zones.graveyard.find(entry => entry.instanceId === targetCardId)
+      if (card) return card.name
+    }
+  }
+  return ''
+}
+
+function pushStackItem(
+  state: GameState,
+  item: Omit<StackItem, 'id'>
+): GameState {
+  return {
+    ...state,
+    stack: [
+      ...state.stack,
+      {
+        ...item,
+        id: crypto.randomUUID(),
+      },
+    ],
+    actionSeq: state.actionSeq + 1,
+  }
+}
+
 function applyPhaseEntry(state: GameState, phase: TurnPhase, turnIndex = state.currentTurnIndex): GameState {
   const currentPlayerId = state.turnOrder[turnIndex]
   if (!currentPlayerId) return state
@@ -277,6 +311,181 @@ function advanceThroughAutomaticPhases(state: GameState): GameState {
   return nextState
 }
 
+function resolveStackTop(state: GameState): GameState {
+  const stackItem = state.stack[state.stack.length - 1]
+  if (!stackItem) return state
+
+  let players = state.players.map(player => ({
+    ...player,
+    zones: {
+      ...player.zones,
+      battlefield: player.zones.battlefield.map(card => ({ ...card })),
+      lands: player.zones.lands.map(card => ({ ...card })),
+      graveyard: player.zones.graveyard.map(card => ({ ...card })),
+      hand: player.zones.hand.map(card => ({ ...card })),
+    },
+  }))
+
+  const targetPlayer = stackItem.targetPlayerId
+    ? players.find(player => player.id === stackItem.targetPlayerId) ?? null
+    : null
+  const targetBattlefieldOwner = stackItem.targetCardId
+    ? players.find(player =>
+        player.zones.battlefield.some(entry => entry.instanceId === stackItem.targetCardId) ||
+        player.zones.lands.some(entry => entry.instanceId === stackItem.targetCardId)
+      ) ?? null
+    : null
+
+  if (stackItem.kind === 'commander') {
+    players = players.map(player =>
+      player.id === stackItem.casterId
+        ? {
+            ...player,
+            zones: {
+              ...player.zones,
+              battlefield: [...player.zones.battlefield, entersBattlefield(stackItem.card)],
+            },
+          }
+        : player
+    )
+  } else if (stackItem.kind === 'permanent') {
+    players = players.map(player =>
+      player.id === stackItem.casterId
+        ? {
+            ...player,
+            zones: {
+              ...player.zones,
+              battlefield: [...player.zones.battlefield, entersBattlefield(stackItem.card)],
+            },
+          }
+        : player
+    )
+  } else {
+    const definition = getSimpleSpellDefinition(stackItem.card)
+    if (definition) {
+      const addSpellToCasterGraveyard = (allPlayers: Player[]) =>
+        allPlayers.map(player =>
+          player.id === stackItem.casterId
+            ? {
+                ...player,
+                zones: {
+                  ...player.zones,
+                  graveyard: [...player.zones.graveyard, { ...stackItem.card, tapped: false, markedDamage: 0 }],
+                },
+              }
+            : player
+        )
+
+      switch (definition.kind) {
+        case 'draw_cards':
+          players = addSpellToCasterGraveyard(players).map(player =>
+            player.id === stackItem.casterId
+              ? {
+                  ...player,
+                  life: player.life - (definition.loseLife ?? 0),
+                  zones: {
+                    ...player.zones,
+                    library: player.zones.library.slice(Math.min(definition.amount, player.zones.library.length)),
+                    hand: [...player.zones.hand, ...player.zones.library.slice(0, definition.amount)],
+                  },
+                }
+              : player
+          )
+          break
+        case 'destroy_target_creature':
+        case 'destroy_target_nonland_permanent':
+        case 'destroy_target_permanent':
+          players = addSpellToCasterGraveyard(players).map(player =>
+            player.id === targetBattlefieldOwner?.id && stackItem.targetCardId
+              ? moveBattlefieldCardToGraveyard(player, stackItem.targetCardId)
+              : player
+          )
+          break
+        case 'damage_target_creature':
+        case 'damage_target_creature_or_player':
+          players = addSpellToCasterGraveyard(players).map(player => {
+            if (definition.kind === 'damage_target_creature_or_player' && player.id === targetPlayer?.id) {
+              return { ...player, life: player.life - definition.amount }
+            }
+            if (player.id !== targetBattlefieldOwner?.id || !stackItem.targetCardId) return player
+
+            const updatedBattlefield = player.zones.battlefield.map(entry =>
+              entry.instanceId === stackItem.targetCardId ? { ...entry, markedDamage: entry.markedDamage + definition.amount } : entry
+            )
+
+            return {
+              ...player,
+              zones: {
+                ...player.zones,
+                battlefield: updatedBattlefield.filter(entry => !(isCreatureCard(entry) && entry.toughness !== null && entry.markedDamage >= entry.toughness)),
+                graveyard: [
+                  ...player.zones.graveyard,
+                  ...updatedBattlefield
+                    .filter(entry => isCreatureCard(entry) && entry.toughness !== null && entry.markedDamage >= entry.toughness)
+                    .map(entry => ({ ...entry, tapped: false, markedDamage: 0 })),
+                ],
+              },
+            }
+          })
+          break
+        case 'mass_damage_creatures': {
+          const amount = definition.amount === 'creature_count'
+            ? players.reduce((sum, player) => sum + player.zones.battlefield.filter(isCreatureCard).length, 0)
+            : definition.amount
+
+          players = addSpellToCasterGraveyard(players).map(player => {
+            const updatedBattlefield = player.zones.battlefield.map(entry =>
+              isCreatureCard(entry) ? { ...entry, markedDamage: entry.markedDamage + amount } : entry
+            )
+            return {
+              ...player,
+              zones: {
+                ...player.zones,
+                battlefield: updatedBattlefield.filter(entry => !(isCreatureCard(entry) && entry.toughness !== null && entry.markedDamage >= entry.toughness)),
+                graveyard: [
+                  ...player.zones.graveyard,
+                  ...updatedBattlefield
+                    .filter(entry => isCreatureCard(entry) && entry.toughness !== null && entry.markedDamage >= entry.toughness)
+                    .map(entry => ({ ...entry, tapped: false, markedDamage: 0 })),
+                ],
+              },
+            }
+          })
+          break
+        }
+        case 'return_graveyard_creature_to_battlefield':
+        case 'return_graveyard_creature_to_hand':
+          players = addSpellToCasterGraveyard(players).map(player => {
+            if (player.id !== stackItem.casterId || !stackItem.targetCardId) return player
+            const target = player.zones.graveyard.find(entry => entry.instanceId === stackItem.targetCardId)
+            if (!target) return player
+            const destination = definition.kind === 'return_graveyard_creature_to_battlefield' ? 'battlefield' : 'hand'
+            return {
+              ...player,
+              zones: {
+                ...player.zones,
+                graveyard: player.zones.graveyard.filter(entry => entry.instanceId !== stackItem.targetCardId),
+                [destination]: [
+                  ...player.zones[destination],
+                  destination === 'battlefield' ? entersBattlefield(target) : { ...target },
+                ],
+              },
+            }
+          })
+          break
+      }
+    }
+  }
+
+  const next = {
+    ...state,
+    players,
+    stack: state.stack.slice(0, -1),
+    actionSeq: state.actionSeq + 1,
+  }
+  return checkEliminations(next)
+}
+
 function describe(state: GameState, action: ActionPayload): string {
   const player = (id: string) => state.players.find(p => p.id === id)?.name ?? id
   switch (action.type) {
@@ -319,15 +528,16 @@ function describe(state: GameState, action: ActionPayload): string {
     }
     case 'CAST_COMMANDER': {
       const card = state.players.find(p => p.id === action.playerId)?.zones.commandZone.find(c => c.instanceId === action.cardId)
-      return `${player(action.playerId)} cast ${card?.name ?? 'their commander'}`
+      return `${player(action.playerId)} cast ${card?.name ?? 'their commander'} to the stack`
     }
     case 'CAST_PERMANENT': {
       const card = state.players.find(p => p.id === action.playerId)?.zones.hand.find(c => c.instanceId === action.cardId)
-      return `${player(action.playerId)} cast ${card?.name ?? 'a permanent'}`
+      return `${player(action.playerId)} cast ${card?.name ?? 'a permanent'} to the stack`
     }
     case 'CAST_SPELL': {
       const card = state.players.find(p => p.id === action.playerId)?.zones.hand.find(c => c.instanceId === action.cardId)
-      return `${player(action.playerId)} cast ${card?.name ?? 'a spell'}`
+      const target = describeTarget(state, action.targetCardId, action.targetPlayerId)
+      return `${player(action.playerId)} cast ${card?.name ?? 'a spell'}${target ? ` targeting ${target}` : ''}`
     }
     case 'DECLARE_ATTACKER': {
       const card = state.players.find(p => p.id === action.playerId)?.zones.battlefield.find(c => c.instanceId === action.cardId)
@@ -340,6 +550,10 @@ function describe(state: GameState, action: ActionPayload): string {
     }
     case 'RESOLVE_COMBAT':
       return 'Combat resolved'
+    case 'RESOLVE_STACK': {
+      const top = state.stack[state.stack.length - 1]
+      return `Resolved ${top?.card.name ?? 'top of stack'}`
+    }
     case 'PLAYER_ELIMINATE':
       return `${player(action.playerId)} was eliminated`
     case 'GAME_START':
@@ -479,6 +693,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
     }
 
     case 'NEXT_STEP': {
+      if (state.stack.length > 0) return state
       const currentIndex = TURN_PHASES.indexOf(state.currentPhase)
       let nextState = state
       let nextPhase: TurnPhase
@@ -700,6 +915,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       const currentPlayerId = state.turnOrder[state.currentTurnIndex]
       if (currentPlayerId !== action.playerId || !isMainPhase(state.currentPhase)) return state
 
+      let nextState = state
       let changed = false
       const players = state.players.map(player => {
         if (player.id !== action.playerId) return player
@@ -715,16 +931,29 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
             ...player.zones,
             lands: payment.lands,
             commandZone: player.zones.commandZone.filter(c => c.instanceId !== action.cardId),
-            battlefield: [...player.zones.battlefield, entersBattlefield(card)],
           },
         }
       })
       if (!changed) return state
 
+      nextState = pushStackItem(
+        {
+          ...state,
+          players,
+        },
+        {
+          card: state.players.find(p => p.id === action.playerId)?.zones.commandZone.find(c => c.instanceId === action.cardId)!,
+          casterId: action.playerId,
+          casterName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          source: 'commandZone',
+          kind: 'commander',
+        }
+      )
+
       return {
-        ...state,
-        players,
-        actionSeq: state.actionSeq + 1,
+        ...nextState,
+        stack: nextState.stack,
+        players: nextState.players,
         log: appendLog(state.log, {
           timestamp: new Date().toISOString(),
           playerId: action.playerId,
@@ -740,6 +969,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       const currentPlayerId = state.turnOrder[state.currentTurnIndex]
       if (currentPlayerId !== action.playerId || !isMainPhase(state.currentPhase)) return state
 
+      const originalCard = state.players.find(p => p.id === action.playerId)?.zones.hand.find(c => c.instanceId === action.cardId)
       let changed = false
       const players = state.players.map(player => {
         if (player.id !== action.playerId) return player
@@ -755,16 +985,27 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
             ...player.zones,
             lands: payment.lands,
             hand: player.zones.hand.filter(c => c.instanceId !== action.cardId),
-            battlefield: [...player.zones.battlefield, entersBattlefield(card)],
           },
         }
       })
       if (!changed) return state
 
+      const nextState = pushStackItem(
+        {
+          ...state,
+          players,
+        },
+        {
+          card: originalCard!,
+          casterId: action.playerId,
+          casterName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          source: 'hand',
+          kind: 'permanent',
+        }
+      )
+
       return {
-        ...state,
-        players,
-        actionSeq: state.actionSeq + 1,
+        ...nextState,
         log: appendLog(state.log, {
           timestamp: new Date().toISOString(),
           playerId: action.playerId,
@@ -828,7 +1069,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         if (!targetCard || !isCreatureCard(targetCard)) return state
       }
 
-      let players = state.players.map(player => {
+      const players = state.players.map(player => {
         if (player.id !== action.playerId) return player
         const payment = autoPayManaCost(player.manaPool, player.zones.lands, card.manaCost, player)
         if (!payment) return player
@@ -843,125 +1084,24 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         }
       })
 
-      const addSpellToCasterGraveyard = (allPlayers: Player[]) =>
-        allPlayers.map(player =>
-          player.id === action.playerId
-            ? {
-                ...player,
-                zones: {
-                  ...player.zones,
-                  graveyard: [...player.zones.graveyard, { ...card, tapped: false, markedDamage: 0 }],
-                },
-              }
-            : player
-        )
-
-      switch (definition.kind) {
-        case 'draw_cards': {
-          players = addSpellToCasterGraveyard(players).map(player =>
-            player.id === action.playerId
-              ? {
-                  ...player,
-                  life: player.life - (definition.loseLife ?? 0),
-                  zones: {
-                    ...player.zones,
-                    library: player.zones.library.slice(Math.min(definition.amount, player.zones.library.length)),
-                    hand: [...player.zones.hand, ...player.zones.library.slice(0, definition.amount)],
-                  },
-                }
-              : player
-          )
-          break
+      const nextState = pushStackItem(
+        {
+          ...state,
+          players,
+        },
+        {
+          card,
+          casterId: action.playerId,
+          casterName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          source: 'hand',
+          kind: 'spell',
+          targetCardId: action.targetCardId,
+          targetPlayerId: action.targetPlayerId,
         }
-        case 'destroy_target_creature':
-        case 'destroy_target_nonland_permanent':
-        case 'destroy_target_permanent': {
-          players = addSpellToCasterGraveyard(players).map(player =>
-            player.id === targetBattlefieldOwner?.id ? moveBattlefieldCardToGraveyard(player, action.targetCardId!) : player
-          )
-          break
-        }
-        case 'damage_target_creature':
-        case 'damage_target_creature_or_player': {
-          players = addSpellToCasterGraveyard(players).map(player => {
-            if (definition.kind === 'damage_target_creature_or_player' && player.id === action.targetPlayerId) {
-              return { ...player, life: player.life - definition.amount }
-            }
-            if (player.id !== targetBattlefieldOwner?.id || !action.targetCardId) return player
+      )
 
-            const updatedBattlefield = player.zones.battlefield.map(entry =>
-              entry.instanceId === action.targetCardId ? { ...entry, markedDamage: entry.markedDamage + definition.amount } : entry
-            )
-
-            return {
-              ...player,
-              zones: {
-                ...player.zones,
-                battlefield: updatedBattlefield.filter(entry => !(isCreatureCard(entry) && entry.toughness !== null && entry.markedDamage >= entry.toughness)),
-                graveyard: [
-                  ...player.zones.graveyard,
-                  ...updatedBattlefield
-                    .filter(entry => isCreatureCard(entry) && entry.toughness !== null && entry.markedDamage >= entry.toughness)
-                    .map(entry => ({ ...entry, tapped: false, markedDamage: 0 })),
-                ],
-              },
-            }
-          })
-          break
-        }
-        case 'mass_damage_creatures': {
-          const amount = definition.amount === 'creature_count'
-            ? players.reduce((sum, player) => sum + player.zones.battlefield.filter(isCreatureCard).length, 0)
-            : definition.amount
-
-          players = addSpellToCasterGraveyard(players).map(player => {
-            const updatedBattlefield = player.zones.battlefield.map(entry =>
-              isCreatureCard(entry) ? { ...entry, markedDamage: entry.markedDamage + amount } : entry
-            )
-
-            return {
-              ...player,
-              zones: {
-                ...player.zones,
-                battlefield: updatedBattlefield.filter(entry => !(isCreatureCard(entry) && entry.toughness !== null && entry.markedDamage >= entry.toughness)),
-                graveyard: [
-                  ...player.zones.graveyard,
-                  ...updatedBattlefield
-                    .filter(entry => isCreatureCard(entry) && entry.toughness !== null && entry.markedDamage >= entry.toughness)
-                    .map(entry => ({ ...entry, tapped: false, markedDamage: 0 })),
-                ],
-              },
-            }
-          })
-          break
-        }
-        case 'return_graveyard_creature_to_battlefield':
-        case 'return_graveyard_creature_to_hand': {
-          players = addSpellToCasterGraveyard(players).map(player => {
-            if (player.id !== action.playerId || !action.targetCardId) return player
-            const target = player.zones.graveyard.find(entry => entry.instanceId === action.targetCardId)
-            if (!target) return player
-            const destination = definition.kind === 'return_graveyard_creature_to_battlefield' ? 'battlefield' : 'hand'
-            return {
-              ...player,
-              zones: {
-                ...player.zones,
-                graveyard: player.zones.graveyard.filter(entry => entry.instanceId !== action.targetCardId),
-                [destination]: [
-                  ...player.zones[destination],
-                  destination === 'battlefield' ? entersBattlefield(target) : { ...target },
-                ],
-              },
-            }
-          })
-          break
-        }
-      }
-
-      const next = { ...state, players, actionSeq: state.actionSeq + 1 }
-      const withElim = checkEliminations(next)
       return {
-        ...withElim,
+        ...nextState,
         log: appendLog(state.log, {
           timestamp: new Date().toISOString(),
           playerId: action.playerId,
@@ -1200,6 +1340,22 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       }
     }
 
+    case 'RESOLVE_STACK': {
+      if (state.stack.length === 0) return state
+      const next = resolveStackTop(state)
+      return {
+        ...next,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: '',
+          playerName: '',
+          description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }
+    }
+
     case 'PLAYER_JOIN': {
       const exists = state.players.some(p => p.id === action.player.id)
       if (exists) {
@@ -1273,6 +1429,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         phase: 'active',
         players: state.players.map(initializePlayerForGame),
         currentPhase: 'untap',
+        stack: [],
         actionSeq: state.actionSeq + 1,
         log: appendLog(state.log, {
           timestamp: new Date().toISOString(),
@@ -1294,6 +1451,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         players: state.players.map(initializePlayerForGame),
         currentTurnIndex: 0,
         currentPhase: 'untap',
+        stack: [],
         round: 1,
         log: [],
         actionSeq: state.actionSeq + 1,

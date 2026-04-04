@@ -111,6 +111,7 @@ export interface GameState {
   currentTurnIndex: number
   currentPhase: TurnPhase
   combat: CombatState
+  stack: StackItem[]
   round: number
   log: LogEntry[]
   actionSeq: number
@@ -127,6 +128,17 @@ export interface CombatAttack {
 
 export interface CombatState {
   attackers: CombatAttack[]
+}
+
+export interface StackItem {
+  id: string
+  card: GameCard
+  casterId: string
+  casterName: string
+  source: 'hand' | 'commandZone'
+  kind: 'commander' | 'permanent' | 'spell'
+  targetCardId?: string
+  targetPlayerId?: string
 }
 
 // Discriminated union of all possible game actions
@@ -158,6 +170,7 @@ export type ActionPayload =
   | { type: 'ASSIGN_BLOCKER'; playerId: string; blockerId: string; attackerId: string }
   | { type: 'REMOVE_BLOCKER'; playerId: string; blockerId: string; attackerId: string }
   | { type: 'RESOLVE_COMBAT' }
+  | { type: 'RESOLVE_STACK' }
   | { type: 'SET_PLAYER_NAME'; playerId: string; name: string }
   | { type: 'UNDO' }
   | { type: 'GAME_START' }

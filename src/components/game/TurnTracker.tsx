@@ -5,8 +5,10 @@ interface TurnTrackerProps {
   turnOrder: string[]
   currentTurnIndex: number
   currentPhase: TurnPhase
+  stackCount: number
   round: number
   onNextStep: () => void
+  onResolveStack: () => void
   onResolveCombat: () => void
   isHost: boolean
 }
@@ -22,7 +24,7 @@ const PHASE_LABELS: Record<TurnPhase, string> = {
 }
 const PHASE_ORDER: TurnPhase[] = ['untap', 'upkeep', 'draw', 'main1', 'combat', 'main2', 'end']
 
-export function TurnTracker({ players, turnOrder, currentTurnIndex, currentPhase, round, onNextStep, onResolveCombat, isHost }: TurnTrackerProps) {
+export function TurnTracker({ players, turnOrder, currentTurnIndex, currentPhase, stackCount, round, onNextStep, onResolveStack, onResolveCombat, isHost }: TurnTrackerProps) {
   const playerMap = Object.fromEntries(players.map(p => [p.id, p]))
 
   return (
@@ -71,7 +73,14 @@ export function TurnTracker({ players, turnOrder, currentTurnIndex, currentPhase
         </div>
 
         {isHost && (
-          currentPhase === 'combat' ? (
+          stackCount > 0 ? (
+            <button
+              onClick={onResolveStack}
+              className="flex-shrink-0 text-xs bg-violet-700 hover:bg-violet-600 text-white px-3 py-1.5 rounded-full transition-colors"
+            >
+              Resolve Top
+            </button>
+          ) : currentPhase === 'combat' ? (
             <button
               onClick={onResolveCombat}
               className="flex-shrink-0 text-xs bg-red-700 hover:bg-red-600 text-white px-3 py-1.5 rounded-full transition-colors"

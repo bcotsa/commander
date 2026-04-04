@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { PlayerGrid } from '@/components/game/PlayerGrid'
+import { StackPanel } from '@/components/game/StackPanel'
 import { TurnTracker } from '@/components/game/TurnTracker'
 import { CommanderDamageModal } from '@/components/modals/CommanderDamageModal'
 import { CountersModal } from '@/components/modals/CountersModal'
@@ -51,10 +52,19 @@ export function Game() {
         turnOrder={state.turnOrder}
         currentTurnIndex={state.currentTurnIndex}
         currentPhase={state.currentPhase}
+        stackCount={state.stack.length}
         round={state.round}
         onNextStep={() => sendAction({ type: 'NEXT_STEP' })}
+        onResolveStack={() => sendAction({ type: 'RESOLVE_STACK' })}
         onResolveCombat={() => sendAction({ type: 'RESOLVE_COMBAT' })}
         isHost={isHost}
+      />
+
+      <StackPanel
+        stack={state.stack}
+        players={state.players}
+        isHost={isHost}
+        onResolveTop={() => sendAction({ type: 'RESOLVE_STACK' })}
       />
 
       {/* Player grid — fills remaining space */}
