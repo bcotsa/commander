@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ColorPips } from '@/components/ui/ColorPips'
 import { CardPreview } from '@/components/ui/CardPreview'
-import type { Player, GameCard, ZoneName, TurnPhase, CombatState } from '@/types/game-state'
+import type { Player, GameCard, ZoneName, TurnPhase, CombatState, ColorSymbol } from '@/types/game-state'
+import { canPayManaCost, formatManaPool, getLandManaOptions, getSimpleSpellDefinition } from '@/lib/card-rules'
 
 function CardThumb({
   card,
@@ -209,9 +210,11 @@ interface PlayerTileProps {
   onDrawCard: () => void
   onMoveCard: (from: ZoneName, to: ZoneName, cardId: string) => void
   onToggleTapped: (cardId: string) => void
+  onAddMana: (cardId: string, color: ColorSymbol) => void
   onPlayLand: (cardId: string) => void
   onCastCommander: (cardId: string) => void
   onCastPermanent: (cardId: string) => void
+  onCastSpell: (cardId: string, targetCardId?: string, targetPlayerId?: string) => void
   onDeclareAttacker: (cardId: string, defendingPlayerId: string) => void
   onRemoveAttacker: (cardId: string) => void
   onAssignBlocker: (blockerId: string, attackerId: string) => void
@@ -221,7 +224,7 @@ interface PlayerTileProps {
 }
 
 export function PlayerTile({
-  player, allPlayers, isCurrentTurn, currentTurnPlayerId, currentPhase, combat, rotated, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onPlayLand, onCastCommander, onCastPermanent, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker, onOpenDamage, onOpenCounters
+  player, allPlayers, isCurrentTurn, currentTurnPlayerId, currentPhase, combat, rotated, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onAddMana, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker, onOpenDamage, onOpenCounters
 }: PlayerTileProps) {
   const borderColor = isCurrentTurn ? 'border-violet-500' : 'border-slate-700'
   const { library, hand, lands, battlefield, graveyard, exile, commandZone } = player.zones
@@ -233,8 +236,31 @@ export function PlayerTile({
   const selectedIsLand = selected ? selected.card.typeLine.toLowerCase().includes('land') : false
   const selectedIsPermanent = selected ? !selected.card.typeLine.toLowerCase().includes('instant') && !selected.card.typeLine.toLowerCase().includes('sorcery') : false
   const selectedIsCreature = selected ? selected.card.typeLine.toLowerCase().includes('creature') && selected.card.power !== null && selected.card.toughness !== null : false
+  const selectedSpell = selected ? getSimpleSpellDefinition(selected.card) : null
+  const selectedCanPay = selected ? canPayManaCost(player.manaPool, selected.card.manaCost) : false
+  const landManaOptions = selected?.zone === 'lands' ? getLandManaOptions(selected.card, player) : []
   const activeAttack = selected ? combat.attackers.find(a => a.attackerId === selected.card.instanceId) : null
   const defendableAttacks = combat.attackers.filter(a => a.defendingPlayerId === player.id)
+  const spellCardTargets = selectedSpell && selected
+    ? allPlayers.flatMap(otherPlayer => otherPlayer.zones.battlefield.filter(card => {
+        if (selectedSpell.target === 'battlefield_creature' || selectedSpell.target === 'creature_or_player') {
+          return card.typeLine.toLowerCase().includes('creature')
+        }
+        if (selectedSpell.target === 'battlefield_nonland_permanent') {
+          return !card.typeLine.toLowerCase().includes('land')
+        }
+        if (selectedSpell.target === 'battlefield_permanent') {
+          return true
+        }
+        return false
+      }).map(card => ({ player: otherPlayer, card })))
+    : []
+  const spellLandTargets = selectedSpell?.target === 'battlefield_permanent'
+    ? allPlayers.flatMap(otherPlayer => otherPlayer.zones.lands.map(card => ({ player: otherPlayer, card })))
+    : []
+  const ownGraveyardCreatureTargets = selectedSpell?.target === 'own_graveyard_creature'
+    ? graveyard.filter(card => card.typeLine.toLowerCase().includes('creature'))
+    : []
 
   function registerCardRef(cardId: string, node: HTMLButtonElement | null) {
     cardButtonRefs.current[cardId] = node
@@ -287,6 +313,18 @@ export function PlayerTile({
       >
         <div className="mb-1 truncate text-[10px] font-medium text-violet-200">{card.name}</div>
         <div className="flex flex-wrap gap-1">
+          {selected.zone === 'lands' && !card.tapped && landManaOptions.map(color => (
+            <button
+              key={color}
+              onClick={() => {
+                onAddMana(card.instanceId, color)
+                setSelected(null)
+              }}
+              className="rounded-md bg-emerald-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-emerald-600"
+            >
+              Tap {color}
+            </button>
+          ))}
           {selected.zone === 'hand' && selectedIsLand && (
             <button
               onClick={() => {
@@ -304,10 +342,70 @@ export function PlayerTile({
                 onCastPermanent(card.instanceId)
                 setSelected(null)
               }}
-              className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+              disabled={!selectedCanPay}
+              className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors enabled:hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Cast
             </button>
+          )}
+          {selected.zone === 'hand' && !selectedIsLand && !selectedIsPermanent && selectedSpell?.target === 'none' && (
+            <button
+              onClick={() => {
+                onCastSpell(card.instanceId)
+                setSelected(null)
+              }}
+              disabled={!selectedCanPay}
+              className="rounded-md bg-sky-700 px-2 py-1 text-[10px] font-medium text-white transition-colors enabled:hover:bg-sky-600 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Cast Spell
+            </button>
+          )}
+          {selected.zone === 'hand' && !selectedIsLand && !selectedIsPermanent && selectedSpell?.target === 'creature_or_player' &&
+            allPlayers.filter(otherPlayer => !otherPlayer.isEliminated).map(otherPlayer => (
+              <button
+                key={`player-${otherPlayer.id}`}
+                onClick={() => {
+                  onCastSpell(card.instanceId, undefined, otherPlayer.id)
+                  setSelected(null)
+                }}
+                disabled={!selectedCanPay}
+                className="rounded-md bg-sky-700 px-2 py-1 text-[10px] font-medium text-white transition-colors enabled:hover:bg-sky-600 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Hit {otherPlayer.name || `P${otherPlayer.seat + 1}`}
+              </button>
+            ))}
+          {selected.zone === 'hand' && !selectedIsLand && !selectedIsPermanent && (selectedSpell?.target === 'battlefield_creature' || selectedSpell?.target === 'creature_or_player' || selectedSpell?.target === 'battlefield_nonland_permanent' || selectedSpell?.target === 'battlefield_permanent') &&
+            [...spellCardTargets, ...spellLandTargets].map(({ player: targetPlayer, card: targetCard }) => (
+              <button
+                key={targetCard.instanceId}
+                onClick={() => {
+                  onCastSpell(card.instanceId, targetCard.instanceId)
+                  setSelected(null)
+                }}
+                disabled={!selectedCanPay}
+                className="rounded-md bg-sky-700 px-2 py-1 text-[10px] font-medium text-white transition-colors enabled:hover:bg-sky-600 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {targetPlayer.name || `P${targetPlayer.seat + 1}`}: {targetCard.name}
+              </button>
+            ))}
+          {selected.zone === 'hand' && !selectedIsLand && !selectedIsPermanent && selectedSpell?.target === 'own_graveyard_creature' &&
+            ownGraveyardCreatureTargets.map(targetCard => (
+              <button
+                key={targetCard.instanceId}
+                onClick={() => {
+                  onCastSpell(card.instanceId, targetCard.instanceId)
+                  setSelected(null)
+                }}
+                disabled={!selectedCanPay}
+                className="rounded-md bg-sky-700 px-2 py-1 text-[10px] font-medium text-white transition-colors enabled:hover:bg-sky-600 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Return {targetCard.name}
+              </button>
+            ))}
+          {selected.zone === 'hand' && !selectedIsLand && !selectedIsPermanent && !selectedSpell && (
+            <span className="rounded-md border border-slate-700 px-2 py-1 text-[10px] text-slate-400">
+              Spell not supported yet
+            </span>
           )}
           {selected.zone === 'commandZone' && (
             <button
@@ -315,7 +413,8 @@ export function PlayerTile({
                 onCastCommander(card.instanceId)
                 setSelected(null)
               }}
-              className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+              disabled={!selectedCanPay}
+              className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors enabled:hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Cast Cmdr
             </button>
@@ -378,7 +477,7 @@ export function PlayerTile({
               {card.tapped ? 'Untap' : 'Tap'}
             </button>
           )}
-          {selected.zone !== 'library' && selected.zone !== 'battlefield' && selected.zone !== 'lands' && (
+          {selected.zone !== 'library' && selected.zone !== 'battlefield' && selected.zone !== 'lands' && (selected.zone !== 'hand' || selectedIsPermanent || selectedIsLand) && (
             <button
               onClick={() => {
                 onMoveCard(selected.zone, 'battlefield', card.instanceId)
@@ -472,6 +571,9 @@ export function PlayerTile({
           {player.commander && (
             <span className="text-xs text-slate-400 truncate">{player.commander.name}</span>
           )}
+          <span className="text-[10px] text-emerald-300 truncate">
+            Mana: {formatManaPool(player.manaPool)}
+          </span>
           {isCurrentTurn && (
             <span className="text-[10px] text-slate-500">
               {currentPhase.toUpperCase()} • Lands played: {player.landsPlayedThisTurn}/1

@@ -1,4 +1,5 @@
 export type ColorSymbol = 'W' | 'U' | 'B' | 'R' | 'G' | 'C'
+export type ManaPool = Record<ColorSymbol, number>
 
 export interface CommanderCard {
   scryfallId: string
@@ -16,6 +17,7 @@ export interface ImportedDeckCard {
   imageUri: string
   colorIdentity: ColorSymbol[]
   manaCost: string | null
+  oracleText: string | null
   typeLine: string
   power: number | null
   toughness: number | null
@@ -42,6 +44,7 @@ export interface GameCard {
   imageUri: string
   colorIdentity: ColorSymbol[]
   manaCost: string | null
+  oracleText: string | null
   typeLine: string
   power: number | null
   toughness: number | null
@@ -78,6 +81,7 @@ export interface Player {
   life: number
   commanderDamage: Record<string, number> // keyed by opponent player id
   counters: PlayerCounters
+  manaPool: ManaPool
   commander: CommanderCard | null
   deck: ImportedDeck | null
   zones: PlayerZones
@@ -144,9 +148,11 @@ export type ActionPayload =
   | { type: 'DRAW_CARD'; playerId: string; count?: number }
   | { type: 'MOVE_CARD'; playerId: string; from: ZoneName; to: ZoneName; cardId: string }
   | { type: 'TOGGLE_CARD_TAPPED'; playerId: string; cardId: string }
+  | { type: 'ADD_MANA'; playerId: string; cardId: string; color: ColorSymbol }
   | { type: 'PLAY_LAND'; playerId: string; cardId: string }
   | { type: 'CAST_COMMANDER'; playerId: string; cardId: string }
   | { type: 'CAST_PERMANENT'; playerId: string; cardId: string }
+  | { type: 'CAST_SPELL'; playerId: string; cardId: string; targetCardId?: string; targetPlayerId?: string }
   | { type: 'DECLARE_ATTACKER'; playerId: string; cardId: string; defendingPlayerId: string }
   | { type: 'REMOVE_ATTACKER'; playerId: string; cardId: string }
   | { type: 'ASSIGN_BLOCKER'; playerId: string; blockerId: string; attackerId: string }

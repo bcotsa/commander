@@ -144,6 +144,7 @@ export function scryfallCardToImportedDeckCard(card: ScryfallCard, quantity: num
     imageUri,
     colorIdentity: card.color_identity as ColorSymbol[],
     manaCost: card.mana_cost ?? card.card_faces?.[0]?.mana_cost ?? null,
+    oracleText: card.oracle_text ?? card.card_faces?.map(face => face.oracle_text ?? '').join('\n') ?? null,
     typeLine: card.type_line,
     power: parseCardStat(card.power ?? card.card_faces?.[0]?.power),
     toughness: parseCardStat(card.toughness ?? card.card_faces?.[0]?.toughness),

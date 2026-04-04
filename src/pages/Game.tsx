@@ -68,9 +68,11 @@ export function Game() {
           onDrawCard={(pid) => sendAction({ type: 'DRAW_CARD', playerId: pid })}
           onMoveCard={(pid, from, to, cardId) => sendAction({ type: 'MOVE_CARD', playerId: pid, from, to, cardId })}
           onToggleTapped={(pid, cardId) => sendAction({ type: 'TOGGLE_CARD_TAPPED', playerId: pid, cardId })}
+          onAddMana={(pid, cardId, color) => sendAction({ type: 'ADD_MANA', playerId: pid, cardId, color })}
           onPlayLand={(pid, cardId) => sendAction({ type: 'PLAY_LAND', playerId: pid, cardId })}
           onCastCommander={(pid, cardId) => sendAction({ type: 'CAST_COMMANDER', playerId: pid, cardId })}
           onCastPermanent={(pid, cardId) => sendAction({ type: 'CAST_PERMANENT', playerId: pid, cardId })}
+          onCastSpell={(pid, cardId, targetCardId, targetPlayerId) => sendAction({ type: 'CAST_SPELL', playerId: pid, cardId, targetCardId, targetPlayerId })}
           onDeclareAttacker={(pid, cardId, defendingPlayerId) => sendAction({ type: 'DECLARE_ATTACKER', playerId: pid, cardId, defendingPlayerId })}
           onRemoveAttacker={(pid, cardId) => sendAction({ type: 'REMOVE_ATTACKER', playerId: pid, cardId })}
           onAssignBlocker={(pid, blockerId, attackerId) => sendAction({ type: 'ASSIGN_BLOCKER', playerId: pid, blockerId, attackerId })}

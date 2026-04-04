@@ -11,9 +11,11 @@ interface PlayerGridProps {
   onDrawCard: (playerId: string) => void
   onMoveCard: (playerId: string, from: import('@/types/game-state').ZoneName, to: import('@/types/game-state').ZoneName, cardId: string) => void
   onToggleTapped: (playerId: string, cardId: string) => void
+  onAddMana: (playerId: string, cardId: string, color: import('@/types/game-state').ColorSymbol) => void
   onPlayLand: (playerId: string, cardId: string) => void
   onCastCommander: (playerId: string, cardId: string) => void
   onCastPermanent: (playerId: string, cardId: string) => void
+  onCastSpell: (playerId: string, cardId: string, targetCardId?: string, targetPlayerId?: string) => void
   onDeclareAttacker: (playerId: string, cardId: string, defendingPlayerId: string) => void
   onRemoveAttacker: (playerId: string, cardId: string) => void
   onAssignBlocker: (playerId: string, blockerId: string, attackerId: string) => void
@@ -30,7 +32,7 @@ const GRID_CLASSES: Record<number, string> = {
   6: 'grid-cols-2',
 }
 
-export function PlayerGrid({ players, currentTurnPlayerId, currentPhase, combat, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onPlayLand, onCastCommander, onCastPermanent, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker }: PlayerGridProps) {
+export function PlayerGrid({ players, currentTurnPlayerId, currentPhase, combat, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onAddMana, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker }: PlayerGridProps) {
   const openModal = useUiStore(s => s.openModal)
   const count = players.length
 
@@ -53,9 +55,11 @@ export function PlayerGrid({ players, currentTurnPlayerId, currentPhase, combat,
             onDrawCard={() => onDrawCard(player.id)}
             onMoveCard={(from, to, cardId) => onMoveCard(player.id, from, to, cardId)}
             onToggleTapped={(cardId) => onToggleTapped(player.id, cardId)}
+            onAddMana={(cardId, color) => onAddMana(player.id, cardId, color)}
             onPlayLand={(cardId) => onPlayLand(player.id, cardId)}
             onCastCommander={(cardId) => onCastCommander(player.id, cardId)}
             onCastPermanent={(cardId) => onCastPermanent(player.id, cardId)}
+            onCastSpell={(cardId, targetCardId, targetPlayerId) => onCastSpell(player.id, cardId, targetCardId, targetPlayerId)}
             onDeclareAttacker={(cardId, defendingPlayerId) => onDeclareAttacker(player.id, cardId, defendingPlayerId)}
             onRemoveAttacker={(cardId) => onRemoveAttacker(player.id, cardId)}
             onAssignBlocker={(blockerId, attackerId) => onAssignBlocker(player.id, blockerId, attackerId)}
