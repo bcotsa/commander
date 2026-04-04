@@ -27,28 +27,61 @@ export async function getCardByName(name: string): Promise<ScryfallCard | null> 
   return res.json()
 }
 
-export async function getCardsByNames(names: string[]): Promise<Map<string, ScryfallCard>> {
+export interface CardLookupResult {
+  cards: Map<string, ScryfallCard>
+  errors: string[]
+}
+
+export async function getCardsByNames(names: string[]): Promise<CardLookupResult> {
   const uniqueNames = [...new Set(names.map(name => name.trim()).filter(Boolean))]
   const cards = new Map<string, ScryfallCard>()
+  const errors: string[] = []
 
   // Scryfall's Collection endpoint accepts up to 75 identifiers per request.
-  // This replaces 85+ individual fetches with 2 batched requests.
   const BATCH_SIZE = 75
   for (let i = 0; i < uniqueNames.length; i += BATCH_SIZE) {
     const batch = uniqueNames.slice(i, i + BATCH_SIZE)
     const identifiers = batch.map(name => ({ name }))
+    const batchLabel = `batch ${Math.floor(i / BATCH_SIZE) + 1}`
 
-    const res = await fetch(`${BASE}/cards/collection`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ identifiers }),
-    })
+    let res: Response | null = null
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        res = await fetch(`${BASE}/cards/collection`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifiers }),
+        })
+        if (res.ok) break
+        if (res.status === 429) {
+          // Rate limited — wait and retry
+          await new Promise(r => setTimeout(r, 1000))
+          res = null
+          continue
+        }
+        errors.push(`Scryfall returned ${res.status} for ${batchLabel} (${batch.length} cards)`)
+        res = null
+        break
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'unknown error'
+        if (attempt === 0) {
+          await new Promise(r => setTimeout(r, 500))
+          continue
+        }
+        errors.push(`Network error looking up ${batchLabel}: ${msg}`)
+        res = null
+      }
+    }
 
-    if (!res.ok) continue
-
-    const data = await res.json() as { data: ScryfallCard[]; not_found: unknown[] }
-    for (const card of data.data) {
-      cards.set(card.name.toLowerCase(), card)
+    if (res?.ok) {
+      try {
+        const data = await res.json() as { data: ScryfallCard[]; not_found: { name?: string }[] }
+        for (const card of data.data) {
+          cards.set(card.name.toLowerCase(), card)
+        }
+      } catch {
+        errors.push(`Failed to parse Scryfall response for ${batchLabel}`)
+      }
     }
 
     // Respect Scryfall's rate limit between batches
@@ -57,7 +90,7 @@ export async function getCardsByNames(names: string[]): Promise<Map<string, Scry
     }
   }
 
-  return cards
+  return { cards, errors }
 }
 
 export function scryfallCardToCommander(card: ScryfallCard): CommanderCard {
@@ -163,7 +196,7 @@ export async function importDecklistText(raw: string): Promise<{
     throw new Error('No cards found in the pasted decklist')
   }
 
-  const resolvedCards = await getCardsByNames(parsed.map(card => card.name))
+  const { cards: resolvedCards, errors: lookupErrors } = await getCardsByNames(parsed.map(card => card.name))
   const unresolved = parsed.filter(card => !resolvedCards.has(card.name.toLowerCase()))
 
   const commanders = parsed
@@ -177,7 +210,10 @@ export async function importDecklistText(raw: string): Promise<{
     .map(card => scryfallCardToImportedDeckCard(resolvedCards.get(card.name.toLowerCase())!, card.quantity))
 
   if (commanders.length === 0 && mainboard.length === 0) {
-    throw new Error(`Could not find any of these cards on Scryfall: ${unresolved.slice(0, 5).map(card => card.name).join(', ')}`)
+    const details = lookupErrors.length > 0
+      ? lookupErrors.join('; ')
+      : `Could not find: ${unresolved.slice(0, 5).map(card => card.name).join(', ')}`
+    throw new Error(`No cards could be resolved. ${details}`)
   }
 
   let inferredCommander = commanders[0] ?? null
@@ -198,8 +234,16 @@ export async function importDecklistText(raw: string): Promise<{
   }
 
   const warnings: string[] = []
+  if (lookupErrors.length > 0) {
+    warnings.push(...lookupErrors)
+  }
   if (unresolved.length > 0) {
-    warnings.push(`Skipped unresolved cards: ${unresolved.slice(0, 8).map(card => card.name).join(', ')}`)
+    warnings.push(`${unresolved.length} card(s) not found: ${unresolved.slice(0, 8).map(card => card.name).join(', ')}`)
+  }
+  const resolvedCount = commanders.length + mainboard.reduce((sum, c) => sum + c.quantity, 0)
+  const totalCount = parsed.reduce((sum, c) => sum + c.quantity, 0)
+  if (resolvedCount < totalCount) {
+    warnings.push(`Imported ${resolvedCount} of ${totalCount} cards`)
   }
   if (!commanders.length && inferredCommander) {
     warnings.push(`Inferred commander from decklist: ${inferredCommander.name}`)

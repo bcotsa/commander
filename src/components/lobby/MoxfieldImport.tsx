@@ -29,7 +29,12 @@ export function MoxfieldImport({ onImport, selectedDeck }: MoxfieldImportProps) 
       onImport(payload)
       setUrlValue('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to import deck')
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg === 'Failed to fetch' || msg.includes('NetworkError') || msg.includes('fetch')) {
+        setError('Network error connecting to server. Check your internet connection and try again.')
+      } else {
+        setError(msg)
+      }
     } finally {
       setLoading(false)
     }
@@ -45,10 +50,16 @@ export function MoxfieldImport({ onImport, selectedDeck }: MoxfieldImportProps) 
     try {
       const payload = await importDecklistText(textValue)
       onImport(payload)
-      setWarning(payload.deck.importWarnings?.join(' ') ?? null)
+      const warnings = payload.deck.importWarnings ?? []
+      setWarning(warnings.length > 0 ? warnings.join(' | ') : null)
       setTextValue('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to import decklist')
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg === 'Failed to fetch' || msg.includes('NetworkError') || msg.includes('fetch')) {
+        setError('Network error connecting to Scryfall. Check your internet connection and try again.')
+      } else {
+        setError(msg)
+      }
     } finally {
       setLoading(false)
     }
@@ -88,8 +99,16 @@ export function MoxfieldImport({ onImport, selectedDeck }: MoxfieldImportProps) 
         </Button>
       </div>
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
-      {warning && !error && <p className="text-sm text-amber-300">{warning}</p>}
+      {error && (
+        <div className="rounded-lg border border-red-800 bg-red-900/20 p-3 text-sm text-red-300">
+          <span className="font-medium text-red-400">Error: </span>{error}
+        </div>
+      )}
+      {warning && !error && (
+        <div className="rounded-lg border border-amber-800 bg-amber-900/20 p-3 text-sm text-amber-300">
+          <span className="font-medium text-amber-400">Warning: </span>{warning}
+        </div>
+      )}
 
       {selectedDeck && (
         <div className="rounded-xl border border-violet-700 bg-violet-900/20 p-3">
