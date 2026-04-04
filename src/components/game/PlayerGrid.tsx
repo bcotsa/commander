@@ -11,7 +11,7 @@ interface PlayerGridProps {
 // Grid layout classes by player count
 const GRID_CLASSES: Record<number, string> = {
   1: 'grid-cols-1',
-  2: 'grid-cols-1 grid-rows-2',
+  2: 'grid-cols-2',
   3: 'grid-cols-2',
   4: 'grid-cols-2',
   5: 'grid-cols-2',

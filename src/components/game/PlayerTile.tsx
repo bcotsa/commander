@@ -1,4 +1,3 @@
-import { LifeCounter } from './LifeCounter'
 import { ColorPips } from '@/components/ui/ColorPips'
 import type { Player } from '@/types/game-state'
 
@@ -31,8 +30,28 @@ export function PlayerTile({
       )}
 
       {/* Header */}
-      <div className={`px-3 pt-2 pb-1 flex items-center gap-2 ${rotated ? 'flex-row-reverse' : ''}`}>
-        <div className="flex flex-col min-w-0 flex-1">
+      <div className={`px-3 pt-2 pb-2 flex items-start gap-2 border-b border-slate-800 bg-slate-950/80 ${rotated ? 'flex-row-reverse' : ''}`}>
+        <div className={`flex items-center gap-1 rounded-xl border border-slate-700 bg-slate-900/90 px-1.5 py-1 ${rotated ? 'rotate-180' : ''}`}>
+          <button
+            onClick={() => onLifeDelta(-1)}
+            className="flex h-6 w-6 items-center justify-center rounded-md text-sm text-slate-400 transition-colors hover:bg-slate-800 hover:text-red-400"
+            aria-label="Decrease life"
+          >
+            −
+          </button>
+          <div className="min-w-10 text-center text-2xl font-bold tabular-nums text-white">
+            {player.life}
+          </div>
+          <button
+            onClick={() => onLifeDelta(1)}
+            className="flex h-6 w-6 items-center justify-center rounded-md text-sm text-slate-400 transition-colors hover:bg-slate-800 hover:text-green-400"
+            aria-label="Increase life"
+          >
+            +
+          </button>
+        </div>
+
+        <div className="flex flex-col min-w-0 flex-1 pt-1">
           <span className="font-semibold text-sm truncate">{player.name || `Player ${player.seat + 1}`}</span>
           {player.commander && (
             <span className="text-xs text-slate-400 truncate">{player.commander.name}</span>
@@ -40,19 +59,8 @@ export function PlayerTile({
         </div>
         {player.commander && <ColorPips colors={player.commander.colorIdentity} />}
         {isCurrentTurn && (
-          <span className="text-xs bg-violet-600 text-white px-1.5 py-0.5 rounded-full flex-shrink-0">Turn</span>
+          <span className="mt-1 text-xs bg-violet-600 text-white px-1.5 py-0.5 rounded-full flex-shrink-0">Turn</span>
         )}
-      </div>
-
-      {/* Compact life area */}
-      <div className="h-28 border-b border-slate-800 bg-slate-950/80">
-        <LifeCounter
-          life={player.life}
-          eliminated={player.isEliminated}
-          onDelta={onLifeDelta}
-          rotated={rotated}
-          compact
-        />
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto bg-slate-950/60">
