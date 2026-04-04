@@ -1,5 +1,31 @@
 import { ColorPips } from '@/components/ui/ColorPips'
-import type { Player } from '@/types/game-state'
+import { CardPreview } from '@/components/ui/CardPreview'
+import type { Player, GameCard } from '@/types/game-state'
+
+function CardThumb({ card }: { card: GameCard }) {
+  const inner = card.imageUri ? (
+    <img
+      src={card.imageUri}
+      alt={card.name}
+      className="aspect-[5/7] w-full rounded-lg object-cover shadow-lg"
+      loading="lazy"
+    />
+  ) : (
+    <div className="flex aspect-[5/7] w-full items-end rounded-lg border border-slate-700 bg-slate-800 p-2 text-xs text-slate-200">
+      {card.name}
+    </div>
+  )
+
+  if (!card.imageUri) return <div className="w-20 flex-shrink-0">{inner}</div>
+
+  return (
+    <div className="w-20 flex-shrink-0">
+      <CardPreview imageUri={card.imageUri} name={card.name}>
+        {inner}
+      </CardPreview>
+    </div>
+  )
+}
 
 interface PlayerTileProps {
   player: Player
@@ -97,20 +123,7 @@ export function PlayerTile({
             <div className="mb-1 text-[11px] uppercase tracking-wide text-slate-500">Command Zone</div>
             <div className="flex gap-2 overflow-x-auto pb-1">
               {commandZone.map(card => (
-                <div key={card.instanceId} className="w-20 flex-shrink-0">
-                  {card.imageUri ? (
-                    <img
-                      src={card.imageUri}
-                      alt={card.name}
-                      className="aspect-[5/7] w-full rounded-lg object-cover shadow-lg"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className="flex aspect-[5/7] w-full items-end rounded-lg border border-slate-700 bg-slate-800 p-2 text-xs text-slate-200">
-                      {card.name}
-                    </div>
-                  )}
-                </div>
+                <CardThumb key={card.instanceId} card={card} />
               ))}
               {commandZone.length === 0 && (
                 <div className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-xs text-slate-500">
@@ -124,20 +137,7 @@ export function PlayerTile({
             <div className="mb-1 text-[11px] uppercase tracking-wide text-slate-500">Opening Hand</div>
             <div className="flex gap-2 overflow-x-auto pb-1">
               {visibleHand.map(card => (
-                <div key={card.instanceId} className="w-20 flex-shrink-0">
-                  {card.imageUri ? (
-                    <img
-                      src={card.imageUri}
-                      alt={card.name}
-                      className="aspect-[5/7] w-full rounded-lg object-cover shadow-lg"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className="flex aspect-[5/7] w-full items-end rounded-lg border border-slate-700 bg-slate-800 p-2 text-xs text-slate-200">
-                      {card.name}
-                    </div>
-                  )}
-                </div>
+                <CardThumb key={card.instanceId} card={card} />
               ))}
               {visibleHand.length === 0 && (
                 <div className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-xs text-slate-500">
