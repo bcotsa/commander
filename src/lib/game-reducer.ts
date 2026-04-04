@@ -871,6 +871,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       const next = {
         ...state,
         players,
+        currentPhase: 'main2' as const,
         combat: { attackers: [] },
         actionSeq: state.actionSeq + 1,
       }

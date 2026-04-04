@@ -58,9 +58,9 @@ function ZoneRow({
   return (
     <div className="mt-2">
       <div className="mb-0 text-[11px] uppercase tracking-wide leading-none text-slate-500">{title}</div>
-      <div className="flex gap-2 overflow-x-auto pb-1">
+      <div className="flex gap-0 overflow-x-auto pb-0">
         {cards.map(card => (
-          <div key={card.instanceId} className="relative pt-14">
+          <div key={card.instanceId} className="relative">
             {selectedCardId === card.instanceId && renderCardActions?.(card)}
             <CardThumb
               card={card}
@@ -227,7 +227,7 @@ export function PlayerTile({
     if (!selected || selected.card.instanceId !== card.instanceId) return null
 
     return (
-      <div className="absolute left-0 right-0 top-0 z-10 rounded-xl border border-violet-800 bg-slate-950/95 p-2 shadow-2xl">
+      <div className="absolute bottom-full left-0 right-0 z-10 mb-1 rounded-xl border border-violet-800 bg-slate-950/95 p-2 shadow-2xl">
         <div className="mb-1 truncate text-[10px] font-medium text-violet-200">{card.name}</div>
         <div className="flex flex-wrap gap-1">
           {selected.zone === 'hand' && selectedIsLand && (
@@ -461,10 +461,10 @@ export function PlayerTile({
                 <span className="text-[11px] uppercase tracking-wide leading-none text-violet-200">Command</span>
                 <span className="text-sm font-semibold text-white">{commandZone.length}</span>
               </div>
-              <div className="flex gap-2 overflow-x-auto pb-1">
+              <div className="flex gap-0 overflow-x-auto pb-0">
                 {commandZone.length > 0 ? (
                   commandZone.map(card => (
-                    <div key={card.instanceId} className="relative w-16 flex-shrink-0 pt-14">
+                    <div key={card.instanceId} className="relative w-16 flex-shrink-0">
                       {selected?.card.instanceId === card.instanceId && renderSelectedCardActions(card)}
                       <CardThumb
                         card={card}
