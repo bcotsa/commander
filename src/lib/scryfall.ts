@@ -31,9 +31,30 @@ export async function getCardsByNames(names: string[]): Promise<Map<string, Scry
   const uniqueNames = [...new Set(names.map(name => name.trim()).filter(Boolean))]
   const cards = new Map<string, ScryfallCard>()
 
-  for (const name of uniqueNames) {
-    const card = await getCardByName(name)
-    if (card) cards.set(name.toLowerCase(), card)
+  // Scryfall's Collection endpoint accepts up to 75 identifiers per request.
+  // This replaces 85+ individual fetches with 2 batched requests.
+  const BATCH_SIZE = 75
+  for (let i = 0; i < uniqueNames.length; i += BATCH_SIZE) {
+    const batch = uniqueNames.slice(i, i + BATCH_SIZE)
+    const identifiers = batch.map(name => ({ name }))
+
+    const res = await fetch(`${BASE}/cards/collection`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifiers }),
+    })
+
+    if (!res.ok) continue
+
+    const data = await res.json() as { data: ScryfallCard[]; not_found: unknown[] }
+    for (const card of data.data) {
+      cards.set(card.name.toLowerCase(), card)
+    }
+
+    // Respect Scryfall's rate limit between batches
+    if (i + BATCH_SIZE < uniqueNames.length) {
+      await new Promise(r => setTimeout(r, 100))
+    }
   }
 
   return cards
