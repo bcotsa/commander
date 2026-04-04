@@ -7,6 +7,7 @@ interface TurnTrackerProps {
   currentPhase: TurnPhase
   round: number
   onNextStep: () => void
+  onResolveCombat: () => void
   isHost: boolean
 }
 
@@ -20,7 +21,7 @@ const PHASE_LABELS: Record<TurnPhase, string> = {
   end: 'End',
 }
 
-export function TurnTracker({ players, turnOrder, currentTurnIndex, currentPhase, round, onNextStep, isHost }: TurnTrackerProps) {
+export function TurnTracker({ players, turnOrder, currentTurnIndex, currentPhase, round, onNextStep, onResolveCombat, isHost }: TurnTrackerProps) {
   const playerMap = Object.fromEntries(players.map(p => [p.id, p]))
 
   return (
@@ -53,12 +54,21 @@ export function TurnTracker({ players, turnOrder, currentTurnIndex, currentPhase
       </div>
 
       {isHost && (
-        <button
-          onClick={onNextStep}
-          className="flex-shrink-0 text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-full transition-colors"
-        >
-          Next →
-        </button>
+        currentPhase === 'combat' ? (
+          <button
+            onClick={onResolveCombat}
+            className="flex-shrink-0 text-xs bg-red-700 hover:bg-red-600 text-white px-3 py-1.5 rounded-full transition-colors"
+          >
+            Resolve
+          </button>
+        ) : (
+          <button
+            onClick={onNextStep}
+            className="flex-shrink-0 text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-full transition-colors"
+          >
+            Next →
+          </button>
+        )
       )}
     </div>
   )

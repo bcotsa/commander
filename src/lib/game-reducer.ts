@@ -13,6 +13,7 @@ export function createInitialGameState(roomCode: string, roomId = ''): GameState
     turnOrder: [],
     currentTurnIndex: 0,
     currentPhase: 'untap',
+    combat: { attackers: [] },
     round: 1,
     log: [],
     actionSeq: 0,
@@ -48,7 +49,12 @@ function importedCardToGameCards(card: ImportedDeckCard): GameCard[] {
     colorIdentity: card.colorIdentity,
     manaCost: card.manaCost,
     typeLine: card.typeLine,
+    power: card.power,
+    toughness: card.toughness,
     tapped: false,
+    markedDamage: 0,
+    summoningSick: false,
+    isCommander: false,
   }))
 }
 
@@ -63,7 +69,12 @@ function commanderToGameCard(player: Player): GameCard | null {
     colorIdentity: player.commander.colorIdentity,
     manaCost: player.commander.manaCost,
     typeLine: player.commander.typeLine,
+    power: null,
+    toughness: null,
     tapped: false,
+    markedDamage: 0,
+    summoningSick: false,
+    isCommander: true,
   }
 }
 
@@ -141,6 +152,19 @@ function isLandCard(card: GameCard): boolean {
   return card.typeLine.toLowerCase().includes('land')
 }
 
+function isCreatureCard(card: GameCard): boolean {
+  return card.typeLine.toLowerCase().includes('creature') && card.power !== null && card.toughness !== null
+}
+
+function entersBattlefield(card: GameCard): GameCard {
+  return {
+    ...card,
+    tapped: false,
+    markedDamage: 0,
+    summoningSick: isCreatureCard(card),
+  }
+}
+
 function nextLivingTurnIndex(state: GameState): number {
   if (state.turnOrder.length === 0) return 0
   for (let offset = 1; offset <= state.turnOrder.length; offset++) {
@@ -168,7 +192,7 @@ function applyPhaseEntry(state: GameState, phase: TurnPhase, turnIndex = state.c
                 zones: {
                   ...player.zones,
                   lands: player.zones.lands.map(card => ({ ...card, tapped: false })),
-                  battlefield: player.zones.battlefield.map(card => ({ ...card, tapped: false })),
+                  battlefield: player.zones.battlefield.map(card => ({ ...card, tapped: false, summoningSick: false, markedDamage: 0 })),
                 },
               }
             : player
@@ -239,6 +263,17 @@ function describe(state: GameState, action: ActionPayload): string {
       const card = state.players.find(p => p.id === action.playerId)?.zones.hand.find(c => c.instanceId === action.cardId)
       return `${player(action.playerId)} cast ${card?.name ?? 'a permanent'}`
     }
+    case 'DECLARE_ATTACKER': {
+      const card = state.players.find(p => p.id === action.playerId)?.zones.battlefield.find(c => c.instanceId === action.cardId)
+      const defender = state.players.find(p => p.id === action.defendingPlayerId)?.name ?? 'a player'
+      return `${player(action.playerId)} attacked ${defender} with ${card?.name ?? 'a creature'}`
+    }
+    case 'ASSIGN_BLOCKER': {
+      const blocker = state.players.find(p => p.id === action.playerId)?.zones.battlefield.find(c => c.instanceId === action.blockerId)
+      return `${player(action.playerId)} blocked with ${blocker?.name ?? 'a creature'}`
+    }
+    case 'RESOLVE_COMBAT':
+      return 'Combat resolved'
     case 'PLAYER_ELIMINATE':
       return `${player(action.playerId)} was eliminated`
     case 'GAME_START':
@@ -398,6 +433,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         ...state,
         currentTurnIndex: nextTurnIndex,
         currentPhase: nextPhase,
+        combat: nextPhase === 'combat' ? state.combat : { attackers: [] },
         round,
         actionSeq: state.actionSeq + 1,
       }
@@ -457,13 +493,14 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         if (!card) return p
 
         const cleanedCard = action.to === 'battlefield' ? { ...card } : { ...card, tapped: false }
+        const normalizedCard = action.to === 'battlefield' ? entersBattlefield(cleanedCard) : cleanedCard
 
         return {
           ...p,
           zones: {
             ...p.zones,
             [action.from]: fromZone.filter(c => c.instanceId !== action.cardId),
-            [action.to]: [...p.zones[action.to], cleanedCard],
+            [action.to]: [...p.zones[action.to], normalizedCard],
           },
         }
       })
@@ -568,7 +605,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           zones: {
             ...player.zones,
             commandZone: player.zones.commandZone.filter(c => c.instanceId !== action.cardId),
-            battlefield: [...player.zones.battlefield, { ...card }],
+            battlefield: [...player.zones.battlefield, entersBattlefield(card)],
           },
         }
       })
@@ -604,7 +641,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           zones: {
             ...player.zones,
             hand: player.zones.hand.filter(c => c.instanceId !== action.cardId),
-            battlefield: [...player.zones.battlefield, { ...card }],
+            battlefield: [...player.zones.battlefield, entersBattlefield(card)],
           },
         }
       })
@@ -618,6 +655,232 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           timestamp: new Date().toISOString(),
           playerId: action.playerId,
           playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }
+    }
+
+    case 'DECLARE_ATTACKER': {
+      const currentPlayerId = state.turnOrder[state.currentTurnIndex]
+      if (currentPlayerId !== action.playerId || state.currentPhase !== 'combat') return state
+
+      const activePlayer = state.players.find(p => p.id === action.playerId)
+      const attacker = activePlayer?.zones.battlefield.find(c => c.instanceId === action.cardId)
+      const defender = state.players.find(p => p.id === action.defendingPlayerId)
+      if (!attacker || !defender || attacker.tapped || attacker.summoningSick || !isCreatureCard(attacker)) return state
+      if (action.defendingPlayerId === action.playerId || defender.isEliminated) return state
+
+      return {
+        ...state,
+        players: state.players.map(player =>
+          player.id === action.playerId
+            ? {
+                ...player,
+                zones: {
+                  ...player.zones,
+                  battlefield: player.zones.battlefield.map(card =>
+                    card.instanceId === action.cardId ? { ...card, tapped: true } : card
+                  ),
+                },
+              }
+            : player
+        ),
+        combat: {
+          attackers: [
+            ...state.combat.attackers.filter(a => a.attackerId !== action.cardId),
+            {
+              attackerId: action.cardId,
+              attackerName: attacker.name,
+              attackingPlayerId: action.playerId,
+              defendingPlayerId: action.defendingPlayerId,
+              blockerIds: [],
+            },
+          ],
+        },
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: activePlayer?.name ?? '',
+          description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }
+    }
+
+    case 'REMOVE_ATTACKER': {
+      const currentPlayerId = state.turnOrder[state.currentTurnIndex]
+      if (currentPlayerId !== action.playerId || state.currentPhase !== 'combat') return state
+      const exists = state.combat.attackers.some(a => a.attackerId === action.cardId && a.attackingPlayerId === action.playerId)
+      if (!exists) return state
+
+      return {
+        ...state,
+        players: state.players.map(player =>
+          player.id === action.playerId
+            ? {
+                ...player,
+                zones: {
+                  ...player.zones,
+                  battlefield: player.zones.battlefield.map(card =>
+                    card.instanceId === action.cardId ? { ...card, tapped: false } : card
+                  ),
+                },
+              }
+            : player
+        ),
+        combat: {
+          attackers: state.combat.attackers.filter(a => a.attackerId !== action.cardId),
+        },
+        actionSeq: state.actionSeq + 1,
+      }
+    }
+
+    case 'ASSIGN_BLOCKER': {
+      if (state.currentPhase !== 'combat') return state
+      const blockerPlayer = state.players.find(p => p.id === action.playerId)
+      const blocker = blockerPlayer?.zones.battlefield.find(c => c.instanceId === action.blockerId)
+      const targetAttack = state.combat.attackers.find(a => a.attackerId === action.attackerId)
+      if (!blocker || !targetAttack || !isCreatureCard(blocker) || blocker.summoningSick) return state
+      if (targetAttack.defendingPlayerId !== action.playerId) return state
+
+      return {
+        ...state,
+        combat: {
+          attackers: state.combat.attackers.map(attack =>
+            attack.attackerId === action.attackerId
+              ? { ...attack, blockerIds: [...attack.blockerIds.filter(id => id !== action.blockerId), action.blockerId] }
+              : attack
+          ),
+        },
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: blockerPlayer?.name ?? '',
+          description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }
+    }
+
+    case 'REMOVE_BLOCKER': {
+      if (state.currentPhase !== 'combat') return state
+      return {
+        ...state,
+        combat: {
+          attackers: state.combat.attackers.map(attack =>
+            attack.attackerId === action.attackerId
+              ? { ...attack, blockerIds: attack.blockerIds.filter(id => id !== action.blockerId) }
+              : attack
+          ),
+        },
+        actionSeq: state.actionSeq + 1,
+      }
+    }
+
+    case 'RESOLVE_COMBAT': {
+      if (state.currentPhase !== 'combat') return state
+
+      let players = state.players.map(player => ({
+        ...player,
+        zones: {
+          ...player.zones,
+          battlefield: player.zones.battlefield.map(card => ({ ...card })),
+        },
+      }))
+
+      const findBattlefieldCard = (playerId: string, cardId: string) =>
+        players.find(p => p.id === playerId)?.zones.battlefield.find(card => card.instanceId === cardId)
+
+      for (const attack of state.combat.attackers) {
+        const attacker = findBattlefieldCard(attack.attackingPlayerId, attack.attackerId)
+        if (!attacker || !isCreatureCard(attacker) || attacker.power === null || attacker.toughness === null) continue
+
+        const blockers = attack.blockerIds
+          .map(blockerId => players.flatMap(p => p.zones.battlefield).find(card => card.instanceId === blockerId) ?? null)
+          .filter((card): card is GameCard => card !== null)
+          .filter(isCreatureCard)
+
+        if (blockers.length === 0) {
+          players = players.map(player =>
+            player.id === attack.defendingPlayerId
+              ? {
+                  ...player,
+                  life: player.life - attacker.power!,
+                  commanderDamage: attacker.isCommander
+                    ? { ...player.commanderDamage, [attack.attackingPlayerId]: (player.commanderDamage[attack.attackingPlayerId] ?? 0) + attacker.power! }
+                    : player.commanderDamage,
+                }
+              : player
+          )
+          continue
+        }
+
+        const firstBlocker = blockers[0]!
+        const blockerOwnerId = players.find(player => player.zones.battlefield.some(card => card.instanceId === firstBlocker.instanceId))?.id
+        if (!blockerOwnerId || firstBlocker.power === null || firstBlocker.toughness === null) continue
+
+        players = players.map(player => {
+          if (player.id === attack.attackingPlayerId) {
+            return {
+              ...player,
+              zones: {
+                ...player.zones,
+                battlefield: player.zones.battlefield.map(card =>
+                  card.instanceId === attacker.instanceId ? { ...card, markedDamage: card.markedDamage + firstBlocker.power! } : card
+                ),
+              },
+            }
+          }
+          if (player.id === blockerOwnerId) {
+            return {
+              ...player,
+              zones: {
+                ...player.zones,
+                battlefield: player.zones.battlefield.map(card =>
+                  card.instanceId === firstBlocker.instanceId ? { ...card, markedDamage: card.markedDamage + attacker.power! } : card
+                ),
+              },
+            }
+          }
+          return player
+        })
+      }
+
+      players = players.map(player => ({
+        ...player,
+        zones: {
+          ...player.zones,
+          graveyard: [
+            ...player.zones.graveyard,
+            ...player.zones.battlefield
+              .filter(card => isCreatureCard(card) && card.toughness !== null && card.markedDamage >= card.toughness)
+              .map(card => ({ ...card, tapped: false, markedDamage: 0 })),
+          ],
+          battlefield: player.zones.battlefield.filter(
+            card => !(isCreatureCard(card) && card.toughness !== null && card.markedDamage >= card.toughness)
+          ),
+        },
+      }))
+
+      const next = {
+        ...state,
+        players,
+        combat: { attackers: [] },
+        actionSeq: state.actionSeq + 1,
+      }
+      const withElim = checkEliminations(next)
+      return {
+        ...withElim,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: '',
+          playerName: '',
           description: describe(state, action),
           action,
           undoable: true,

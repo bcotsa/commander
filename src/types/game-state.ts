@@ -17,6 +17,8 @@ export interface ImportedDeckCard {
   colorIdentity: ColorSymbol[]
   manaCost: string | null
   typeLine: string
+  power: number | null
+  toughness: number | null
 }
 
 export interface ImportedDeck {
@@ -41,7 +43,12 @@ export interface GameCard {
   colorIdentity: ColorSymbol[]
   manaCost: string | null
   typeLine: string
+  power: number | null
+  toughness: number | null
   tapped: boolean
+  markedDamage: number
+  summoningSick: boolean
+  isCommander: boolean
 }
 
 export type ZoneName = keyof PlayerZones
@@ -99,10 +106,23 @@ export interface GameState {
   turnOrder: string[] // player IDs in sequence
   currentTurnIndex: number
   currentPhase: TurnPhase
+  combat: CombatState
   round: number
   log: LogEntry[]
   actionSeq: number
   createdAt: string
+}
+
+export interface CombatAttack {
+  attackerId: string
+  attackerName: string
+  attackingPlayerId: string
+  defendingPlayerId: string
+  blockerIds: string[]
+}
+
+export interface CombatState {
+  attackers: CombatAttack[]
 }
 
 // Discriminated union of all possible game actions
@@ -127,6 +147,11 @@ export type ActionPayload =
   | { type: 'PLAY_LAND'; playerId: string; cardId: string }
   | { type: 'CAST_COMMANDER'; playerId: string; cardId: string }
   | { type: 'CAST_PERMANENT'; playerId: string; cardId: string }
+  | { type: 'DECLARE_ATTACKER'; playerId: string; cardId: string; defendingPlayerId: string }
+  | { type: 'REMOVE_ATTACKER'; playerId: string; cardId: string }
+  | { type: 'ASSIGN_BLOCKER'; playerId: string; blockerId: string; attackerId: string }
+  | { type: 'REMOVE_BLOCKER'; playerId: string; blockerId: string; attackerId: string }
+  | { type: 'RESOLVE_COMBAT' }
   | { type: 'SET_PLAYER_NAME'; playerId: string; name: string }
   | { type: 'UNDO' }
   | { type: 'GAME_START' }

@@ -53,6 +53,7 @@ export function Game() {
         currentPhase={state.currentPhase}
         round={state.round}
         onNextStep={() => sendAction({ type: 'NEXT_STEP' })}
+        onResolveCombat={() => sendAction({ type: 'RESOLVE_COMBAT' })}
         isHost={isHost}
       />
 
@@ -62,6 +63,7 @@ export function Game() {
           players={state.players}
           currentTurnPlayerId={currentTurnPlayerId}
           currentPhase={state.currentPhase}
+          combat={state.combat}
           onLifeDelta={(pid, delta) => sendAction({ type: 'LIFE_CHANGE', targetId: pid, delta })}
           onDrawCard={(pid) => sendAction({ type: 'DRAW_CARD', playerId: pid })}
           onMoveCard={(pid, from, to, cardId) => sendAction({ type: 'MOVE_CARD', playerId: pid, from, to, cardId })}
@@ -69,6 +71,10 @@ export function Game() {
           onPlayLand={(pid, cardId) => sendAction({ type: 'PLAY_LAND', playerId: pid, cardId })}
           onCastCommander={(pid, cardId) => sendAction({ type: 'CAST_COMMANDER', playerId: pid, cardId })}
           onCastPermanent={(pid, cardId) => sendAction({ type: 'CAST_PERMANENT', playerId: pid, cardId })}
+          onDeclareAttacker={(pid, cardId, defendingPlayerId) => sendAction({ type: 'DECLARE_ATTACKER', playerId: pid, cardId, defendingPlayerId })}
+          onRemoveAttacker={(pid, cardId) => sendAction({ type: 'REMOVE_ATTACKER', playerId: pid, cardId })}
+          onAssignBlocker={(pid, blockerId, attackerId) => sendAction({ type: 'ASSIGN_BLOCKER', playerId: pid, blockerId, attackerId })}
+          onRemoveBlocker={(pid, blockerId, attackerId) => sendAction({ type: 'REMOVE_BLOCKER', playerId: pid, blockerId, attackerId })}
         />
       </div>
 

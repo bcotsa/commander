@@ -1,16 +1,28 @@
 import { useState } from 'react'
 import { ColorPips } from '@/components/ui/ColorPips'
 import { CardPreview } from '@/components/ui/CardPreview'
-import type { Player, GameCard, ZoneName, TurnPhase } from '@/types/game-state'
+import type { Player, GameCard, ZoneName, TurnPhase, CombatState } from '@/types/game-state'
 
 function CardThumb({ card, selected, onClick }: { card: GameCard; selected?: boolean; onClick?: () => void }) {
   const inner = card.imageUri ? (
-    <img
-      src={card.imageUri}
-      alt={card.name}
-      className={`aspect-[5/7] w-full rounded-lg object-cover shadow-lg transition-transform ${card.tapped ? 'rotate-90 scale-[0.86]' : ''} ${selected ? 'ring-2 ring-violet-400' : ''}`}
-      loading="lazy"
-    />
+    <div className="relative">
+      <img
+        src={card.imageUri}
+        alt={card.name}
+        className={`aspect-[5/7] w-full rounded-lg object-cover shadow-lg transition-transform ${card.tapped ? 'rotate-90 scale-[0.86]' : ''} ${selected ? 'ring-2 ring-violet-400' : ''}`}
+        loading="lazy"
+      />
+      {(card.power !== null || card.toughness !== null) && (
+        <div className="absolute bottom-1 right-1 rounded bg-black/80 px-1 py-0.5 text-[10px] font-semibold text-white">
+          {card.power ?? '?'} / {card.toughness ?? '?'}
+        </div>
+      )}
+      {card.summoningSick && (
+        <div className="absolute top-1 left-1 rounded bg-amber-500/90 px-1 py-0.5 text-[9px] font-semibold text-black">
+          Sick
+        </div>
+      )}
+    </div>
   ) : (
     <div className={`flex aspect-[5/7] w-full items-end rounded-lg border border-slate-700 bg-slate-800 p-2 text-xs text-slate-200 ${selected ? 'ring-2 ring-violet-400' : ''}`}>
       {card.name}
@@ -176,8 +188,11 @@ function FanOverlay({
 
 interface PlayerTileProps {
   player: Player
+  allPlayers: Player[]
   isCurrentTurn: boolean
+  currentTurnPlayerId: string | null
   currentPhase: TurnPhase
+  combat: CombatState
   rotated?: boolean
   onLifeDelta: (delta: number) => void
   onDrawCard: () => void
@@ -186,12 +201,16 @@ interface PlayerTileProps {
   onPlayLand: (cardId: string) => void
   onCastCommander: (cardId: string) => void
   onCastPermanent: (cardId: string) => void
+  onDeclareAttacker: (cardId: string, defendingPlayerId: string) => void
+  onRemoveAttacker: (cardId: string) => void
+  onAssignBlocker: (blockerId: string, attackerId: string) => void
+  onRemoveBlocker: (blockerId: string, attackerId: string) => void
   onOpenDamage: () => void
   onOpenCounters: () => void
 }
 
 export function PlayerTile({
-  player, isCurrentTurn, currentPhase, rotated, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onPlayLand, onCastCommander, onCastPermanent, onOpenDamage, onOpenCounters
+  player, allPlayers, isCurrentTurn, currentTurnPlayerId, currentPhase, combat, rotated, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onPlayLand, onCastCommander, onCastPermanent, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker, onOpenDamage, onOpenCounters
 }: PlayerTileProps) {
   const borderColor = isCurrentTurn ? 'border-violet-500' : 'border-slate-700'
   const { library, hand, lands, battlefield, graveyard, exile, commandZone } = player.zones
@@ -200,6 +219,9 @@ export function PlayerTile({
 
   const selectedIsLand = selected ? selected.card.typeLine.toLowerCase().includes('land') : false
   const selectedIsPermanent = selected ? !selected.card.typeLine.toLowerCase().includes('instant') && !selected.card.typeLine.toLowerCase().includes('sorcery') : false
+  const selectedIsCreature = selected ? selected.card.typeLine.toLowerCase().includes('creature') && selected.card.power !== null && selected.card.toughness !== null : false
+  const activeAttack = selected ? combat.attackers.find(a => a.attackerId === selected.card.instanceId) : null
+  const defendableAttacks = combat.attackers.filter(a => a.defendingPlayerId === player.id)
 
   function renderSelectedCardActions(card: GameCard) {
     if (!selected || selected.card.instanceId !== card.instanceId) return null
@@ -241,6 +263,53 @@ export function PlayerTile({
               Cast Cmdr
             </button>
           )}
+          {selected.zone === 'battlefield' && currentPhase === 'combat' && currentTurnPlayerId === player.id && selectedIsCreature && !card.tapped && !card.summoningSick && !activeAttack && (
+            allPlayers
+              .filter(p => p.id !== player.id && !p.isEliminated)
+              .map(opponent => (
+                <button
+                  key={opponent.id}
+                  onClick={() => {
+                    onDeclareAttacker(card.instanceId, opponent.id)
+                    setSelected(null)
+                  }}
+                  className="rounded-md bg-red-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-red-600"
+                >
+                  Attack {opponent.name || `P${opponent.seat + 1}`}
+                </button>
+              ))
+          )}
+          {selected.zone === 'battlefield' && currentPhase === 'combat' && currentTurnPlayerId === player.id && activeAttack && (
+            <button
+              onClick={() => {
+                onRemoveAttacker(card.instanceId)
+                setSelected(null)
+              }}
+              className="rounded-md bg-red-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-red-600"
+            >
+              Remove Attack
+            </button>
+          )}
+          {selected.zone === 'battlefield' && currentPhase === 'combat' && currentTurnPlayerId !== player.id && selectedIsCreature &&
+            defendableAttacks.map(attack => {
+              const alreadyBlocking = attack.blockerIds.includes(card.instanceId)
+              return (
+                <button
+                  key={attack.attackerId}
+                  onClick={() => {
+                    if (alreadyBlocking) {
+                      onRemoveBlocker(card.instanceId, attack.attackerId)
+                    } else {
+                      onAssignBlocker(card.instanceId, attack.attackerId)
+                    }
+                    setSelected(null)
+                  }}
+                  className="rounded-md bg-blue-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-blue-600"
+                >
+                  {alreadyBlocking ? `Unblock ${attack.attackerName}` : `Block ${attack.attackerName}`}
+                </button>
+              )
+            })}
           {(selected.zone === 'battlefield' || selected.zone === 'lands') && (
             <button
               onClick={() => {

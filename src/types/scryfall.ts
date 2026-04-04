@@ -4,6 +4,8 @@ export interface ScryfallCard {
   mana_cost?: string
   type_line: string
   oracle_text?: string
+  power?: string
+  toughness?: string
   color_identity: string[]
   image_uris?: ScryfallImageUris
   card_faces?: ScryfallCardFace[]
@@ -18,6 +20,8 @@ export interface ScryfallCardFace {
   mana_cost?: string
   type_line: string
   oracle_text?: string
+  power?: string
+  toughness?: string
   image_uris?: ScryfallImageUris
 }
 

@@ -93,6 +93,27 @@ export async function getCardsByNames(names: string[]): Promise<CardLookupResult
   return { cards, errors }
 }
 
+/**
+ * Attempt fuzzy lookup for cards that weren't found by exact name.
+ * Returns any successfully resolved cards.
+ */
+async function fuzzyFallback(names: string[]): Promise<Map<string, ScryfallCard>> {
+  const results = new Map<string, ScryfallCard>()
+  for (const name of names) {
+    try {
+      const card = await getCardByName(name)
+      if (card) {
+        results.set(name.toLowerCase(), card)
+      }
+    } catch {
+      // skip
+    }
+    // Respect Scryfall rate limit (100ms between requests)
+    await new Promise(r => setTimeout(r, 100))
+  }
+  return results
+}
+
 export function scryfallCardToCommander(card: ScryfallCard): CommanderCard {
   // Handle double-faced cards
   const imageUri =
@@ -124,7 +145,15 @@ export function scryfallCardToImportedDeckCard(card: ScryfallCard, quantity: num
     colorIdentity: card.color_identity as ColorSymbol[],
     manaCost: card.mana_cost ?? card.card_faces?.[0]?.mana_cost ?? null,
     typeLine: card.type_line,
+    power: parseCardStat(card.power ?? card.card_faces?.[0]?.power),
+    toughness: parseCardStat(card.toughness ?? card.card_faces?.[0]?.toughness),
   }
+}
+
+function parseCardStat(value: string | undefined): number | null {
+  if (!value) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 type ParsedDeckLine = {
@@ -197,7 +226,21 @@ export async function importDecklistText(raw: string): Promise<{
   }
 
   const { cards: resolvedCards, errors: lookupErrors } = await getCardsByNames(parsed.map(card => card.name))
-  const unresolved = parsed.filter(card => !resolvedCards.has(card.name.toLowerCase()))
+  let unresolved = parsed.filter(card => !resolvedCards.has(card.name.toLowerCase()))
+
+  // Fuzzy fallback for cards not found by exact name (handles typos / alternate names)
+  if (unresolved.length > 0 && unresolved.length <= 20) {
+    const fuzzyResults = await fuzzyFallback(unresolved.map(card => card.name))
+    for (const [key, card] of fuzzyResults) {
+      resolvedCards.set(key, card)
+    }
+    const stillMissing = unresolved.filter(card => !resolvedCards.has(card.name.toLowerCase()))
+    if (fuzzyResults.size > 0) {
+      const fuzzyNames = [...fuzzyResults.values()].map(c => c.name)
+      lookupErrors.push(`Fuzzy-matched ${fuzzyResults.size} card(s): ${fuzzyNames.join(', ')}`)
+    }
+    unresolved = stillMissing
+  }
 
   const commanders = parsed
     .filter(card => card.section === 'commander')
