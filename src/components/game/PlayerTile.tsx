@@ -20,14 +20,7 @@ export function PlayerTile({
 
   return (
     <div
-      className={`relative flex flex-col border-2 ${borderColor} rounded-2xl overflow-hidden bg-slate-900 transition-colors`}
-      style={{
-        backgroundImage: player.commander?.imageUri
-          ? `linear-gradient(to bottom, rgba(15,23,42,0.5) 0%, rgba(15,23,42,0.92) 50%, rgba(15,23,42,1) 100%), url(${player.commander.imageUri})`
-          : undefined,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center top',
-      }}
+      className={`relative flex h-full min-h-0 flex-col border-2 ${borderColor} rounded-2xl overflow-hidden bg-slate-900 transition-colors`}
     >
       {/* Eliminated overlay */}
       {player.isEliminated && (
@@ -51,66 +44,105 @@ export function PlayerTile({
         )}
       </div>
 
-      {/* Life counter — takes up most of the space */}
-      <div className="flex-1 min-h-0">
+      {/* Compact life area */}
+      <div className="h-28 border-b border-slate-800 bg-slate-950/80">
         <LifeCounter
           life={player.life}
           eliminated={player.isEliminated}
           onDelta={onLifeDelta}
           rotated={rotated}
+          compact
         />
       </div>
 
-      {/* Zones */}
-      <div className="px-2 py-2 border-t border-slate-700/50 bg-slate-950/70">
-        <div className="grid grid-cols-3 gap-2 text-[11px] text-slate-300">
-          <div className="rounded-lg bg-slate-800/90 p-2">
-            <div className="text-slate-500 uppercase tracking-wide">Library</div>
-            <div className="mt-1 text-sm font-semibold">{library.length}</div>
+      <div className="flex-1 min-h-0 overflow-y-auto bg-slate-950/60">
+        {/* Zones */}
+        <div className="px-2 py-2">
+          <div className="grid grid-cols-3 gap-2 text-[11px] text-slate-300">
+            <div className="rounded-lg bg-slate-800/90 p-2">
+              <div className="text-slate-500 uppercase tracking-wide">Library</div>
+              <div className="mt-1 text-sm font-semibold">{library.length}</div>
+            </div>
+            <div className="rounded-lg bg-slate-800/90 p-2">
+              <div className="text-slate-500 uppercase tracking-wide">Battlefield</div>
+              <div className="mt-1 text-sm font-semibold">{battlefield.length}</div>
+            </div>
+            <div className="rounded-lg bg-slate-800/90 p-2">
+              <div className="text-slate-500 uppercase tracking-wide">Graveyard</div>
+              <div className="mt-1 text-sm font-semibold">{graveyard.length}</div>
+            </div>
+            <div className="rounded-lg bg-slate-800/90 p-2">
+              <div className="text-slate-500 uppercase tracking-wide">Exile</div>
+              <div className="mt-1 text-sm font-semibold">{exile.length}</div>
+            </div>
+            <div className="rounded-lg bg-slate-800/90 p-2">
+              <div className="text-slate-500 uppercase tracking-wide">Command</div>
+              <div className="mt-1 text-sm font-semibold">{commandZone.length}</div>
+            </div>
+            <div className="rounded-lg bg-slate-800/90 p-2">
+              <div className="text-slate-500 uppercase tracking-wide">Hand</div>
+              <div className="mt-1 text-sm font-semibold">{hand.length}</div>
+            </div>
           </div>
-          <div className="rounded-lg bg-slate-800/90 p-2">
-            <div className="text-slate-500 uppercase tracking-wide">Command</div>
-            <div className="mt-1 text-sm font-semibold">{commandZone.length}</div>
-            {commandZone[0] && <div className="mt-1 truncate">{commandZone[0].name}</div>}
-          </div>
-          <div className="rounded-lg bg-slate-800/90 p-2">
-            <div className="text-slate-500 uppercase tracking-wide">Battlefield</div>
-            <div className="mt-1 text-sm font-semibold">{battlefield.length}</div>
-          </div>
-          <div className="rounded-lg bg-slate-800/90 p-2">
-            <div className="text-slate-500 uppercase tracking-wide">Graveyard</div>
-            <div className="mt-1 text-sm font-semibold">{graveyard.length}</div>
-          </div>
-          <div className="rounded-lg bg-slate-800/90 p-2">
-            <div className="text-slate-500 uppercase tracking-wide">Exile</div>
-            <div className="mt-1 text-sm font-semibold">{exile.length}</div>
-          </div>
-          <div className="rounded-lg bg-slate-800/90 p-2">
-            <div className="text-slate-500 uppercase tracking-wide">Hand</div>
-            <div className="mt-1 text-sm font-semibold">{hand.length}</div>
-          </div>
-        </div>
 
-        <div className="mt-2">
-          <div className="mb-1 text-[11px] uppercase tracking-wide text-slate-500">Opening Hand</div>
-          <div className="grid grid-cols-2 gap-1.5">
-            {visibleHand.map(card => (
-              <div key={card.instanceId} className="rounded-lg bg-slate-800/90 px-2 py-1.5 text-xs text-slate-200">
-                <div className="truncate font-medium">{card.name}</div>
-                <div className="truncate text-[10px] text-slate-500">{card.typeLine || 'Card'}</div>
-              </div>
-            ))}
-            {visibleHand.length === 0 && (
-              <div className="col-span-2 rounded-lg border border-dashed border-slate-700 px-2 py-3 text-xs text-slate-500">
-                No cards drawn
-              </div>
-            )}
+          <div className="mt-3">
+            <div className="mb-1 text-[11px] uppercase tracking-wide text-slate-500">Command Zone</div>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {commandZone.map(card => (
+                <div key={card.instanceId} className="w-20 flex-shrink-0">
+                  {card.imageUri ? (
+                    <img
+                      src={card.imageUri}
+                      alt={card.name}
+                      className="aspect-[5/7] w-full rounded-lg object-cover shadow-lg"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="flex aspect-[5/7] w-full items-end rounded-lg border border-slate-700 bg-slate-800 p-2 text-xs text-slate-200">
+                      {card.name}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {commandZone.length === 0 && (
+                <div className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-xs text-slate-500">
+                  No commander in command zone
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-3">
+            <div className="mb-1 text-[11px] uppercase tracking-wide text-slate-500">Opening Hand</div>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {visibleHand.map(card => (
+                <div key={card.instanceId} className="w-20 flex-shrink-0">
+                  {card.imageUri ? (
+                    <img
+                      src={card.imageUri}
+                      alt={card.name}
+                      className="aspect-[5/7] w-full rounded-lg object-cover shadow-lg"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="flex aspect-[5/7] w-full items-end rounded-lg border border-slate-700 bg-slate-800 p-2 text-xs text-slate-200">
+                      {card.name}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {visibleHand.length === 0 && (
+                <div className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-xs text-slate-500">
+                  No cards drawn
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
       {/* Status badges */}
-      <div className="flex flex-wrap gap-1 px-2 py-1">
+      <div className="flex flex-wrap gap-1 px-2 py-1 border-t border-slate-800 bg-slate-950/90">
         {player.hasMonarch && (
           <span className="text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-600 px-1.5 py-0.5 rounded-full">👑 Monarch</span>
         )}

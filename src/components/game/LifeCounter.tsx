@@ -6,9 +6,10 @@ interface LifeCounterProps {
   eliminated: boolean
   onDelta: (delta: number) => void
   rotated?: boolean
+  compact?: boolean
 }
 
-export function LifeCounter({ life, eliminated, onDelta, rotated }: LifeCounterProps) {
+export function LifeCounter({ life, eliminated, onDelta, rotated, compact = false }: LifeCounterProps) {
   const [flash, setFlash] = useState<'up' | 'down' | null>(null)
 
   function trigger(delta: number) {
@@ -34,7 +35,7 @@ export function LifeCounter({ life, eliminated, onDelta, rotated }: LifeCounterP
       {/* Increase */}
       <button
         {...upPress}
-        className="flex-1 flex items-center justify-center text-slate-400 hover:text-green-400 active:bg-green-900/20 transition-colors text-2xl rounded-t-xl"
+        className={`flex-1 flex items-center justify-center text-slate-400 hover:text-green-400 active:bg-green-900/20 transition-colors rounded-t-xl ${compact ? 'text-lg' : 'text-2xl'}`}
         aria-label="Increase life"
       >
         ▲
@@ -42,7 +43,7 @@ export function LifeCounter({ life, eliminated, onDelta, rotated }: LifeCounterP
 
       {/* Life total */}
       <div className={`text-center py-1 transition-all ${flash === 'up' ? 'scale-110 text-green-400' : flash === 'down' ? 'scale-110 text-red-400' : ''}`}>
-        <span className={`font-bold tabular-nums leading-none ${lifeColor} ${Math.abs(life) >= 100 ? 'text-5xl' : 'text-7xl'}`}>
+        <span className={`font-bold tabular-nums leading-none ${lifeColor} ${compact ? 'text-4xl' : Math.abs(life) >= 100 ? 'text-5xl' : 'text-7xl'}`}>
           {life}
         </span>
       </div>
@@ -50,7 +51,7 @@ export function LifeCounter({ life, eliminated, onDelta, rotated }: LifeCounterP
       {/* Decrease */}
       <button
         {...downPress}
-        className="flex-1 flex items-center justify-center text-slate-400 hover:text-red-400 active:bg-red-900/20 transition-colors text-2xl rounded-b-xl"
+        className={`flex-1 flex items-center justify-center text-slate-400 hover:text-red-400 active:bg-red-900/20 transition-colors rounded-b-xl ${compact ? 'text-lg' : 'text-2xl'}`}
         aria-label="Decrease life"
       >
         ▼
