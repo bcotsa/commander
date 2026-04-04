@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { ColorPips } from '@/components/ui/ColorPips'
 import { CardPreview } from '@/components/ui/CardPreview'
 import type { Player, GameCard, ZoneName, TurnPhase, CombatState, ColorSymbol } from '@/types/game-state'
-import { canPayManaCost, formatManaPool, getLandManaOptions, getSimpleSpellDefinition } from '@/lib/card-rules'
+import { canAutoPayManaCost, formatManaPool, getLandManaOptions, getSimpleSpellDefinition } from '@/lib/card-rules'
 
 function CardThumb({
   card,
@@ -237,7 +237,7 @@ export function PlayerTile({
   const selectedIsPermanent = selected ? !selected.card.typeLine.toLowerCase().includes('instant') && !selected.card.typeLine.toLowerCase().includes('sorcery') : false
   const selectedIsCreature = selected ? selected.card.typeLine.toLowerCase().includes('creature') && selected.card.power !== null && selected.card.toughness !== null : false
   const selectedSpell = selected ? getSimpleSpellDefinition(selected.card) : null
-  const selectedCanPay = selected ? canPayManaCost(player.manaPool, selected.card.manaCost) : false
+  const selectedCanPay = selected ? canAutoPayManaCost(player.manaPool, lands, selected.card.manaCost, player) : false
   const landManaOptions = selected?.zone === 'lands' ? getLandManaOptions(selected.card, player) : []
   const activeAttack = selected ? combat.attackers.find(a => a.attackerId === selected.card.instanceId) : null
   const defendableAttacks = combat.attackers.filter(a => a.defendingPlayerId === player.id)

@@ -58,6 +58,15 @@ export function canPayManaCost(pool: ManaPool, manaCost: string | null): boolean
   return payment !== null
 }
 
+export function canAutoPayManaCost(
+  pool: ManaPool,
+  lands: GameCard[],
+  manaCost: string | null,
+  player: Pick<Player, 'commander'>
+): boolean {
+  return autoPayManaCost(pool, lands, manaCost, player) !== null
+}
+
 export function spendManaCost(pool: ManaPool, manaCost: string | null): ManaPool | null {
   const { colored, generic } = parseManaCost(manaCost)
   const next = { ...pool }
@@ -76,6 +85,51 @@ export function spendManaCost(pool: ManaPool, manaCost: string | null): ManaPool
   }
 
   return genericLeft === 0 ? next : null
+}
+
+export function autoPayManaCost(
+  pool: ManaPool,
+  lands: GameCard[],
+  manaCost: string | null,
+  player: Pick<Player, 'commander'>
+): { manaPool: ManaPool; lands: GameCard[] } | null {
+  const directPayment = spendManaCost(pool, manaCost)
+  if (directPayment) {
+    return { manaPool: directPayment, lands }
+  }
+
+  const untappedLands = lands
+    .filter(land => !land.tapped)
+    .map(land => ({ land, options: getLandManaOptions(land, player) }))
+    .filter(entry => entry.options.length > 0)
+
+  const search = (
+    index: number,
+    currentPool: ManaPool,
+    currentLands: GameCard[]
+  ): { manaPool: ManaPool; lands: GameCard[] } | null => {
+    const paidPool = spendManaCost(currentPool, manaCost)
+    if (paidPool) return { manaPool: paidPool, lands: currentLands }
+    if (index >= untappedLands.length) return null
+
+    const { land, options } = untappedLands[index]
+
+    const skipResult = search(index + 1, currentPool, currentLands)
+    if (skipResult) return skipResult
+
+    for (const color of options) {
+      const nextPool = { ...currentPool, [color]: currentPool[color] + 1 }
+      const nextLands = currentLands.map(entry =>
+        entry.instanceId === land.instanceId ? { ...entry, tapped: true } : entry
+      )
+      const result = search(index + 1, nextPool, nextLands)
+      if (result) return result
+    }
+
+    return null
+  }
+
+  return search(0, { ...pool }, lands)
 }
 
 export function getLandManaOptions(card: Pick<GameCard, 'name' | 'typeLine' | 'oracleText'>, player: Pick<Player, 'commander'>): ColorSymbol[] {

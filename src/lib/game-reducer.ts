@@ -1,6 +1,6 @@
 import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeckCard, PlayerZones, TurnPhase } from '@/types/game-state'
 import { checkEliminations } from './game-engine'
-import { canPayManaCost, emptyManaPool, getLandManaOptions, getSimpleSpellDefinition, spendManaCost } from './card-rules'
+import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getLandManaOptions, getSimpleSpellDefinition } from './card-rules'
 
 const MAX_LOG = 50
 const TURN_PHASES: TurnPhase[] = ['untap', 'upkeep', 'draw', 'main1', 'combat', 'main2', 'end']
@@ -686,14 +686,15 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         if (player.id !== action.playerId) return player
         const card = player.zones.commandZone.find(c => c.instanceId === action.cardId)
         if (!card) return player
-        const nextManaPool = spendManaCost(player.manaPool, card.manaCost)
-        if (!nextManaPool) return player
+        const payment = autoPayManaCost(player.manaPool, player.zones.lands, card.manaCost, player)
+        if (!payment) return player
         changed = true
         return {
           ...player,
-          manaPool: nextManaPool,
+          manaPool: payment.manaPool,
           zones: {
             ...player.zones,
+            lands: payment.lands,
             commandZone: player.zones.commandZone.filter(c => c.instanceId !== action.cardId),
             battlefield: [...player.zones.battlefield, entersBattlefield(card)],
           },
@@ -725,14 +726,15 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         if (player.id !== action.playerId) return player
         const card = player.zones.hand.find(c => c.instanceId === action.cardId)
         if (!card || isLandCard(card) || !isPermanentCard(card)) return player
-        const nextManaPool = spendManaCost(player.manaPool, card.manaCost)
-        if (!nextManaPool) return player
+        const payment = autoPayManaCost(player.manaPool, player.zones.lands, card.manaCost, player)
+        if (!payment) return player
         changed = true
         return {
           ...player,
-          manaPool: nextManaPool,
+          manaPool: payment.manaPool,
           zones: {
             ...player.zones,
+            lands: payment.lands,
             hand: player.zones.hand.filter(c => c.instanceId !== action.cardId),
             battlefield: [...player.zones.battlefield, entersBattlefield(card)],
           },
@@ -764,7 +766,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       if (!caster || !card || isPermanentCard(card) || isLandCard(card)) return state
 
       const definition = getSimpleSpellDefinition(card)
-      if (!definition || !canPayManaCost(caster.manaPool, card.manaCost)) return state
+      if (!definition || !canAutoPayManaCost(caster.manaPool, caster.zones.lands, card.manaCost, caster)) return state
 
       const targetPlayer = action.targetPlayerId
         ? state.players.find(player => player.id === action.targetPlayerId) ?? null
@@ -809,13 +811,14 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
 
       let players = state.players.map(player => {
         if (player.id !== action.playerId) return player
-        const nextManaPool = spendManaCost(player.manaPool, card.manaCost)
-        if (!nextManaPool) return player
+        const payment = autoPayManaCost(player.manaPool, player.zones.lands, card.manaCost, player)
+        if (!payment) return player
         return {
           ...player,
-          manaPool: nextManaPool,
+          manaPool: payment.manaPool,
           zones: {
             ...player.zones,
+            lands: payment.lands,
             hand: player.zones.hand.filter(entry => entry.instanceId !== action.cardId),
           },
         }
