@@ -5,10 +5,14 @@ import { useUiStore } from '@/store/ui-store'
 interface PlayerGridProps {
   players: Player[]
   currentTurnPlayerId: string | null
+  currentPhase: import('@/types/game-state').TurnPhase
   onLifeDelta: (playerId: string, delta: number) => void
   onDrawCard: (playerId: string) => void
   onMoveCard: (playerId: string, from: import('@/types/game-state').ZoneName, to: import('@/types/game-state').ZoneName, cardId: string) => void
   onToggleTapped: (playerId: string, cardId: string) => void
+  onPlayLand: (playerId: string, cardId: string) => void
+  onCastCommander: (playerId: string, cardId: string) => void
+  onCastPermanent: (playerId: string, cardId: string) => void
 }
 
 // Grid layout classes by player count
@@ -21,7 +25,7 @@ const GRID_CLASSES: Record<number, string> = {
   6: 'grid-cols-2',
 }
 
-export function PlayerGrid({ players, currentTurnPlayerId, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped }: PlayerGridProps) {
+export function PlayerGrid({ players, currentTurnPlayerId, currentPhase, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onPlayLand, onCastCommander, onCastPermanent }: PlayerGridProps) {
   const openModal = useUiStore(s => s.openModal)
   const count = players.length
 
@@ -35,11 +39,15 @@ export function PlayerGrid({ players, currentTurnPlayerId, onLifeDelta, onDrawCa
             key={player.id}
             player={player}
             isCurrentTurn={player.id === currentTurnPlayerId}
+            currentPhase={currentPhase}
             rotated={rotated}
             onLifeDelta={(delta) => onLifeDelta(player.id, delta)}
             onDrawCard={() => onDrawCard(player.id)}
             onMoveCard={(from, to, cardId) => onMoveCard(player.id, from, to, cardId)}
             onToggleTapped={(cardId) => onToggleTapped(player.id, cardId)}
+            onPlayLand={(cardId) => onPlayLand(player.id, cardId)}
+            onCastCommander={(cardId) => onCastCommander(player.id, cardId)}
+            onCastPermanent={(cardId) => onCastPermanent(player.id, cardId)}
             onOpenDamage={() => openModal('commanderDamage', player.id)}
             onOpenCounters={() => openModal('counters', player.id)}
           />

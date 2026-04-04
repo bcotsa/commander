@@ -1,7 +1,8 @@
-import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeckCard, PlayerZones } from '@/types/game-state'
+import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeckCard, PlayerZones, TurnPhase } from '@/types/game-state'
 import { checkEliminations } from './game-engine'
 
 const MAX_LOG = 50
+const TURN_PHASES: TurnPhase[] = ['untap', 'upkeep', 'draw', 'main1', 'combat', 'main2', 'end']
 
 export function createInitialGameState(roomCode: string, roomId = ''): GameState {
   return {
@@ -11,6 +12,7 @@ export function createInitialGameState(roomCode: string, roomId = ''): GameState
     players: [],
     turnOrder: [],
     currentTurnIndex: 0,
+    currentPhase: 'untap',
     round: 1,
     log: [],
     actionSeq: 0,
@@ -29,6 +31,7 @@ export function createPlayer(id: string, name: string, seat: number): Player {
     commander: null,
     deck: null,
     zones: { library: [], hand: [], battlefield: [], graveyard: [], exile: [], commandZone: [] },
+    landsPlayedThisTurn: 0,
     isEliminated: false,
     hasMonarch: false,
     hasInitiative: false,
@@ -119,7 +122,74 @@ function initializePlayerForGame(player: Player): Player {
     isEliminated: false,
     hasMonarch: false,
     hasInitiative: false,
+    landsPlayedThisTurn: 0,
     zones: buildPlayerZones(player),
+  }
+}
+
+function isMainPhase(phase: TurnPhase): boolean {
+  return phase === 'main1' || phase === 'main2'
+}
+
+function isPermanentCard(card: GameCard): boolean {
+  const type = card.typeLine.toLowerCase()
+  return !type.includes('instant') && !type.includes('sorcery')
+}
+
+function isLandCard(card: GameCard): boolean {
+  return card.typeLine.toLowerCase().includes('land')
+}
+
+function nextLivingTurnIndex(state: GameState): number {
+  if (state.turnOrder.length === 0) return 0
+  for (let offset = 1; offset <= state.turnOrder.length; offset++) {
+    const idx = (state.currentTurnIndex + offset) % state.turnOrder.length
+    const playerId = state.turnOrder[idx]
+    const player = state.players.find(p => p.id === playerId)
+    if (player && !player.isEliminated) return idx
+  }
+  return state.currentTurnIndex
+}
+
+function applyPhaseEntry(state: GameState, phase: TurnPhase, turnIndex = state.currentTurnIndex): GameState {
+  const currentPlayerId = state.turnOrder[turnIndex]
+  if (!currentPlayerId) return state
+
+  switch (phase) {
+    case 'untap':
+      return {
+        ...state,
+        players: state.players.map(player =>
+          player.id === currentPlayerId
+            ? {
+                ...player,
+                landsPlayedThisTurn: 0,
+                zones: {
+                  ...player.zones,
+                  battlefield: player.zones.battlefield.map(card => ({ ...card, tapped: false })),
+                },
+              }
+            : player
+        ),
+      }
+    case 'draw':
+      return {
+        ...state,
+        players: state.players.map(player =>
+          player.id === currentPlayerId
+            ? {
+                ...player,
+                zones: {
+                  ...player.zones,
+                  library: player.zones.library.slice(Math.min(1, player.zones.library.length)),
+                  hand: [...player.zones.hand, ...player.zones.library.slice(0, 1)],
+                },
+              }
+            : player
+        ),
+      }
+    default:
+      return state
   }
 }
 
@@ -140,8 +210,8 @@ function describe(state: GameState, action: ActionPayload): string {
       return `${player(action.playerId)} took the Initiative`
     case 'CLEAR_INITIATIVE':
       return 'Initiative removed'
-    case 'NEXT_TURN':
-      return 'Next turn'
+    case 'NEXT_STEP':
+      return 'Advance turn'
     case 'DRAW_CARD':
       return `${player(action.playerId)} drew ${action.count ?? 1} card${(action.count ?? 1) === 1 ? '' : 's'}`
     case 'MOVE_CARD': {
@@ -151,6 +221,18 @@ function describe(state: GameState, action: ActionPayload): string {
     case 'TOGGLE_CARD_TAPPED': {
       const card = state.players.find(p => p.id === action.playerId)?.zones.battlefield.find(c => c.instanceId === action.cardId)
       return `${player(action.playerId)} ${card?.tapped ? 'untapped' : 'tapped'} ${card?.name ?? 'a card'}`
+    }
+    case 'PLAY_LAND': {
+      const card = state.players.find(p => p.id === action.playerId)?.zones.hand.find(c => c.instanceId === action.cardId)
+      return `${player(action.playerId)} played ${card?.name ?? 'a land'}`
+    }
+    case 'CAST_COMMANDER': {
+      const card = state.players.find(p => p.id === action.playerId)?.zones.commandZone.find(c => c.instanceId === action.cardId)
+      return `${player(action.playerId)} cast ${card?.name ?? 'their commander'}`
+    }
+    case 'CAST_PERMANENT': {
+      const card = state.players.find(p => p.id === action.playerId)?.zones.hand.find(c => c.instanceId === action.cardId)
+      return `${player(action.playerId)} cast ${card?.name ?? 'a permanent'}`
     }
     case 'PLAYER_ELIMINATE':
       return `${player(action.playerId)} was eliminated`
@@ -290,15 +372,36 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       return { ...state, players, actionSeq: state.actionSeq + 1 }
     }
 
-    case 'NEXT_TURN': {
-      const nextIndex = (state.currentTurnIndex + 1) % Math.max(1, state.turnOrder.length)
-      const round = nextIndex === 0 ? state.round + 1 : state.round
-      return {
+    case 'NEXT_STEP': {
+      const currentIndex = TURN_PHASES.indexOf(state.currentPhase)
+      let nextState = state
+      let nextPhase: TurnPhase
+      let nextTurnIndex = state.currentTurnIndex
+      let round = state.round
+
+      if (currentIndex < TURN_PHASES.length - 1) {
+        nextPhase = TURN_PHASES[currentIndex + 1]
+      } else {
+        nextTurnIndex = nextLivingTurnIndex(state)
+        if (nextTurnIndex === 0 && state.turnOrder.length > 0) {
+          round = state.round + 1
+        }
+        nextPhase = 'untap'
+      }
+
+      nextState = {
         ...state,
-        currentTurnIndex: nextIndex,
+        currentTurnIndex: nextTurnIndex,
+        currentPhase: nextPhase,
         round,
         actionSeq: state.actionSeq + 1,
-        log: appendLog(state.log, {
+      }
+
+      nextState = applyPhaseEntry(nextState, nextPhase, nextTurnIndex)
+
+      return {
+        ...nextState,
+        log: appendLog(nextState.log, {
           timestamp: new Date().toISOString(),
           playerId: '',
           playerName: '',
@@ -376,6 +479,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
     }
 
     case 'TOGGLE_CARD_TAPPED': {
+      const currentPlayerId = state.turnOrder[state.currentTurnIndex]
+      if (currentPlayerId !== action.playerId) return state
       const players = state.players.map(p => {
         if (p.id !== action.playerId) return p
         return {
@@ -388,6 +493,115 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           },
         }
       })
+      return {
+        ...state,
+        players,
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }
+    }
+
+    case 'PLAY_LAND': {
+      const currentPlayerId = state.turnOrder[state.currentTurnIndex]
+      if (currentPlayerId !== action.playerId || !isMainPhase(state.currentPhase)) return state
+
+      let changed = false
+      const players = state.players.map(player => {
+        if (player.id !== action.playerId || player.landsPlayedThisTurn >= 1) return player
+        const card = player.zones.hand.find(c => c.instanceId === action.cardId)
+        if (!card || !isLandCard(card)) return player
+        changed = true
+        return {
+          ...player,
+          landsPlayedThisTurn: player.landsPlayedThisTurn + 1,
+          zones: {
+            ...player.zones,
+            hand: player.zones.hand.filter(c => c.instanceId !== action.cardId),
+            battlefield: [...player.zones.battlefield, { ...card }],
+          },
+        }
+      })
+      if (!changed) return state
+
+      return {
+        ...state,
+        players,
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }
+    }
+
+    case 'CAST_COMMANDER': {
+      const currentPlayerId = state.turnOrder[state.currentTurnIndex]
+      if (currentPlayerId !== action.playerId || !isMainPhase(state.currentPhase)) return state
+
+      let changed = false
+      const players = state.players.map(player => {
+        if (player.id !== action.playerId) return player
+        const card = player.zones.commandZone.find(c => c.instanceId === action.cardId)
+        if (!card) return player
+        changed = true
+        return {
+          ...player,
+          zones: {
+            ...player.zones,
+            commandZone: player.zones.commandZone.filter(c => c.instanceId !== action.cardId),
+            battlefield: [...player.zones.battlefield, { ...card }],
+          },
+        }
+      })
+      if (!changed) return state
+
+      return {
+        ...state,
+        players,
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }
+    }
+
+    case 'CAST_PERMANENT': {
+      const currentPlayerId = state.turnOrder[state.currentTurnIndex]
+      if (currentPlayerId !== action.playerId || !isMainPhase(state.currentPhase)) return state
+
+      let changed = false
+      const players = state.players.map(player => {
+        if (player.id !== action.playerId) return player
+        const card = player.zones.hand.find(c => c.instanceId === action.cardId)
+        if (!card || isLandCard(card) || !isPermanentCard(card)) return player
+        changed = true
+        return {
+          ...player,
+          zones: {
+            ...player.zones,
+            hand: player.zones.hand.filter(c => c.instanceId !== action.cardId),
+            battlefield: [...player.zones.battlefield, { ...card }],
+          },
+        }
+      })
+      if (!changed) return state
+
       return {
         ...state,
         players,
@@ -475,6 +689,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         ...state,
         phase: 'active',
         players: state.players.map(initializePlayerForGame),
+        currentPhase: 'untap',
         actionSeq: state.actionSeq + 1,
         log: appendLog(state.log, {
           timestamp: new Date().toISOString(),
@@ -495,6 +710,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         phase: 'active',
         players: state.players.map(initializePlayerForGame),
         currentTurnIndex: 0,
+        currentPhase: 'untap',
         round: 1,
         log: [],
         actionSeq: state.actionSeq + 1,

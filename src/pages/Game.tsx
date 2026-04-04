@@ -50,8 +50,9 @@ export function Game() {
         players={state.players}
         turnOrder={state.turnOrder}
         currentTurnIndex={state.currentTurnIndex}
+        currentPhase={state.currentPhase}
         round={state.round}
-        onNextTurn={() => sendAction({ type: 'NEXT_TURN' })}
+        onNextStep={() => sendAction({ type: 'NEXT_STEP' })}
         isHost={isHost}
       />
 
@@ -60,10 +61,14 @@ export function Game() {
         <PlayerGrid
           players={state.players}
           currentTurnPlayerId={currentTurnPlayerId}
+          currentPhase={state.currentPhase}
           onLifeDelta={(pid, delta) => sendAction({ type: 'LIFE_CHANGE', targetId: pid, delta })}
           onDrawCard={(pid) => sendAction({ type: 'DRAW_CARD', playerId: pid })}
           onMoveCard={(pid, from, to, cardId) => sendAction({ type: 'MOVE_CARD', playerId: pid, from, to, cardId })}
           onToggleTapped={(pid, cardId) => sendAction({ type: 'TOGGLE_CARD_TAPPED', playerId: pid, cardId })}
+          onPlayLand={(pid, cardId) => sendAction({ type: 'PLAY_LAND', playerId: pid, cardId })}
+          onCastCommander={(pid, cardId) => sendAction({ type: 'CAST_COMMANDER', playerId: pid, cardId })}
+          onCastPermanent={(pid, cardId) => sendAction({ type: 'CAST_PERMANENT', playerId: pid, cardId })}
         />
       </div>
 

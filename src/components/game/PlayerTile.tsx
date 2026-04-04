@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ColorPips } from '@/components/ui/ColorPips'
 import { CardPreview } from '@/components/ui/CardPreview'
-import type { Player, GameCard, ZoneName } from '@/types/game-state'
+import type { Player, GameCard, ZoneName, TurnPhase } from '@/types/game-state'
 
 function CardThumb({ card, selected, onClick }: { card: GameCard; selected?: boolean; onClick?: () => void }) {
   const inner = card.imageUri ? (
@@ -66,49 +66,28 @@ function ZoneRow({
 interface PlayerTileProps {
   player: Player
   isCurrentTurn: boolean
+  currentPhase: TurnPhase
   rotated?: boolean
   onLifeDelta: (delta: number) => void
   onDrawCard: () => void
   onMoveCard: (from: ZoneName, to: ZoneName, cardId: string) => void
   onToggleTapped: (cardId: string) => void
+  onPlayLand: (cardId: string) => void
+  onCastCommander: (cardId: string) => void
+  onCastPermanent: (cardId: string) => void
   onOpenDamage: () => void
   onOpenCounters: () => void
 }
 
 export function PlayerTile({
-  player, isCurrentTurn, rotated, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onOpenDamage, onOpenCounters
+  player, isCurrentTurn, currentPhase, rotated, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onPlayLand, onCastCommander, onCastPermanent, onOpenDamage, onOpenCounters
 }: PlayerTileProps) {
   const borderColor = isCurrentTurn ? 'border-violet-500' : 'border-slate-700'
   const { library, hand, battlefield, graveyard, exile, commandZone } = player.zones
   const [selected, setSelected] = useState<{ zone: ZoneName; card: GameCard } | null>(null)
 
-  const zoneActions: Partial<Record<ZoneName, Array<{ label: string; to?: ZoneName; kind?: 'toggleTapped' }>>> = {
-    hand: [
-      { label: 'Battlefield', to: 'battlefield' },
-      { label: 'Graveyard', to: 'graveyard' },
-      { label: 'Exile', to: 'exile' },
-    ],
-    battlefield: [
-      { label: selected?.card.tapped ? 'Untap' : 'Tap', kind: 'toggleTapped' },
-      { label: 'Hand', to: 'hand' },
-      { label: 'Graveyard', to: 'graveyard' },
-      { label: 'Exile', to: 'exile' },
-    ],
-    graveyard: [
-      { label: 'Hand', to: 'hand' },
-      { label: 'Battlefield', to: 'battlefield' },
-      { label: 'Exile', to: 'exile' },
-    ],
-    exile: [
-      { label: 'Hand', to: 'hand' },
-      { label: 'Battlefield', to: 'battlefield' },
-      { label: 'Graveyard', to: 'graveyard' },
-    ],
-    commandZone: [
-      { label: 'Battlefield', to: 'battlefield' },
-      { label: 'Hand', to: 'hand' },
-    ],
-  }
+  const selectedIsLand = selected ? selected.card.typeLine.toLowerCase().includes('land') : false
+  const selectedIsPermanent = selected ? !selected.card.typeLine.toLowerCase().includes('instant') && !selected.card.typeLine.toLowerCase().includes('sorcery') : false
 
   return (
     <div
@@ -148,6 +127,11 @@ export function PlayerTile({
           <span className="font-semibold text-sm truncate">{player.name || `Player ${player.seat + 1}`}</span>
           {player.commander && (
             <span className="text-xs text-slate-400 truncate">{player.commander.name}</span>
+          )}
+          {isCurrentTurn && (
+            <span className="text-[10px] text-slate-500">
+              {currentPhase.toUpperCase()} • Lands played: {player.landsPlayedThisTurn}/1
+            </span>
           )}
         </div>
         {player.commander && <ColorPips colors={player.commander.colorIdentity} />}
@@ -196,22 +180,94 @@ export function PlayerTile({
             <div className="mt-3 rounded-xl border border-violet-800 bg-violet-950/30 p-2">
               <div className="text-xs font-medium text-violet-200">{selected.card.name}</div>
               <div className="mt-1 flex flex-wrap gap-1.5">
-                {(zoneActions[selected.zone] ?? []).map(action => (
+                {selected.zone === 'hand' && selectedIsLand && (
                   <button
-                    key={action.label}
                     onClick={() => {
-                      if (action.kind === 'toggleTapped') {
-                        onToggleTapped(selected.card.instanceId)
-                      } else if (action.to) {
-                        onMoveCard(selected.zone, action.to, selected.card.instanceId)
-                      }
+                      onPlayLand(selected.card.instanceId)
                       setSelected(null)
                     }}
                     className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
                   >
-                    {action.label}
+                    Play Land
                   </button>
-                ))}
+                )}
+                {selected.zone === 'hand' && !selectedIsLand && selectedIsPermanent && (
+                  <button
+                    onClick={() => {
+                      onCastPermanent(selected.card.instanceId)
+                      setSelected(null)
+                    }}
+                    className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+                  >
+                    Cast Permanent
+                  </button>
+                )}
+                {selected.zone === 'commandZone' && (
+                  <button
+                    onClick={() => {
+                      onCastCommander(selected.card.instanceId)
+                      setSelected(null)
+                    }}
+                    className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+                  >
+                    Cast Commander
+                  </button>
+                )}
+                {selected.zone === 'battlefield' && (
+                  <button
+                    onClick={() => {
+                      onToggleTapped(selected.card.instanceId)
+                      setSelected(null)
+                    }}
+                    className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+                  >
+                    {selected.card.tapped ? 'Untap' : 'Tap'}
+                  </button>
+                )}
+                {selected.zone !== 'library' && selected.zone !== 'battlefield' && (
+                  <button
+                    onClick={() => {
+                      onMoveCard(selected.zone, 'battlefield', selected.card.instanceId)
+                      setSelected(null)
+                    }}
+                    className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+                  >
+                    Move to Battlefield
+                  </button>
+                )}
+                {selected.zone !== 'hand' && (
+                  <button
+                    onClick={() => {
+                      onMoveCard(selected.zone, 'hand', selected.card.instanceId)
+                      setSelected(null)
+                    }}
+                    className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+                  >
+                    Move to Hand
+                  </button>
+                )}
+                {selected.zone !== 'graveyard' && (
+                  <button
+                    onClick={() => {
+                      onMoveCard(selected.zone, 'graveyard', selected.card.instanceId)
+                      setSelected(null)
+                    }}
+                    className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+                  >
+                    Move to Graveyard
+                  </button>
+                )}
+                {selected.zone !== 'exile' && (
+                  <button
+                    onClick={() => {
+                      onMoveCard(selected.zone, 'exile', selected.card.instanceId)
+                      setSelected(null)
+                    }}
+                    className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+                  >
+                    Move to Exile
+                  </button>
+                )}
                 <button
                   onClick={() => setSelected(null)}
                   className="rounded-md border border-slate-700 px-2 py-1 text-[10px] font-medium text-slate-300 transition-colors hover:bg-slate-800"

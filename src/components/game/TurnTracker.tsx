@@ -1,20 +1,34 @@
-import type { Player } from '@/types/game-state'
+import type { Player, TurnPhase } from '@/types/game-state'
 
 interface TurnTrackerProps {
   players: Player[]
   turnOrder: string[]
   currentTurnIndex: number
+  currentPhase: TurnPhase
   round: number
-  onNextTurn: () => void
+  onNextStep: () => void
   isHost: boolean
 }
 
-export function TurnTracker({ players, turnOrder, currentTurnIndex, round, onNextTurn, isHost }: TurnTrackerProps) {
+const PHASE_LABELS: Record<TurnPhase, string> = {
+  untap: 'Untap',
+  upkeep: 'Upkeep',
+  draw: 'Draw',
+  main1: 'Main 1',
+  combat: 'Combat',
+  main2: 'Main 2',
+  end: 'End',
+}
+
+export function TurnTracker({ players, turnOrder, currentTurnIndex, currentPhase, round, onNextStep, isHost }: TurnTrackerProps) {
   const playerMap = Object.fromEntries(players.map(p => [p.id, p]))
 
   return (
     <div className="flex items-center gap-2 px-3 py-2 bg-slate-900/80 border-b border-slate-700">
       <span className="text-xs text-slate-500 flex-shrink-0">R{round}</span>
+      <span className="text-xs text-slate-300 flex-shrink-0 rounded-full bg-slate-800 px-2 py-1">
+        {PHASE_LABELS[currentPhase]}
+      </span>
 
       <div className="flex gap-1.5 overflow-x-auto flex-1 no-scrollbar">
         {turnOrder.map((pid, idx) => {
@@ -40,7 +54,7 @@ export function TurnTracker({ players, turnOrder, currentTurnIndex, round, onNex
 
       {isHost && (
         <button
-          onClick={onNextTurn}
+          onClick={onNextStep}
           className="flex-shrink-0 text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-full transition-colors"
         >
           Next →

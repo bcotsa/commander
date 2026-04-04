@@ -45,6 +45,7 @@ export interface GameCard {
 }
 
 export type ZoneName = keyof PlayerZones
+export type TurnPhase = 'untap' | 'upkeep' | 'draw' | 'main1' | 'combat' | 'main2' | 'end'
 
 export interface PlayerZones {
   library: GameCard[]
@@ -72,6 +73,7 @@ export interface Player {
   commander: CommanderCard | null
   deck: ImportedDeck | null
   zones: PlayerZones
+  landsPlayedThisTurn: number
   isEliminated: boolean
   hasMonarch: boolean
   hasInitiative: boolean
@@ -95,6 +97,7 @@ export interface GameState {
   players: Player[]
   turnOrder: string[] // player IDs in sequence
   currentTurnIndex: number
+  currentPhase: TurnPhase
   round: number
   log: LogEntry[]
   actionSeq: number
@@ -110,7 +113,7 @@ export type ActionPayload =
   | { type: 'CLEAR_MONARCH' }
   | { type: 'SET_INITIATIVE'; playerId: string }
   | { type: 'CLEAR_INITIATIVE' }
-  | { type: 'NEXT_TURN' }
+  | { type: 'NEXT_STEP' }
   | { type: 'SET_TURN_ORDER'; order: string[] }
   | { type: 'PLAYER_JOIN'; player: Player }
   | { type: 'PLAYER_ELIMINATE'; playerId: string }
@@ -120,6 +123,9 @@ export type ActionPayload =
   | { type: 'DRAW_CARD'; playerId: string; count?: number }
   | { type: 'MOVE_CARD'; playerId: string; from: ZoneName; to: ZoneName; cardId: string }
   | { type: 'TOGGLE_CARD_TAPPED'; playerId: string; cardId: string }
+  | { type: 'PLAY_LAND'; playerId: string; cardId: string }
+  | { type: 'CAST_COMMANDER'; playerId: string; cardId: string }
+  | { type: 'CAST_PERMANENT'; playerId: string; cardId: string }
   | { type: 'SET_PLAYER_NAME'; playerId: string; name: string }
   | { type: 'UNDO' }
   | { type: 'GAME_START' }
