@@ -83,7 +83,7 @@ export function PlayerTile({
   player, isCurrentTurn, currentPhase, rotated, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onPlayLand, onCastCommander, onCastPermanent, onOpenDamage, onOpenCounters
 }: PlayerTileProps) {
   const borderColor = isCurrentTurn ? 'border-violet-500' : 'border-slate-700'
-  const { library, hand, battlefield, graveyard, exile, commandZone } = player.zones
+  const { library, hand, lands, battlefield, graveyard, exile, commandZone } = player.zones
   const [selected, setSelected] = useState<{ zone: ZoneName; card: GameCard } | null>(null)
 
   const selectedIsLand = selected ? selected.card.typeLine.toLowerCase().includes('land') : false
@@ -155,6 +155,10 @@ export function PlayerTile({
               </button>
             </div>
             <div className="rounded-lg bg-slate-800/90 p-2">
+              <div className="text-slate-500 uppercase tracking-wide">Lands</div>
+              <div className="mt-1 text-sm font-semibold">{lands.length}</div>
+            </div>
+            <div className="rounded-lg bg-slate-800/90 p-2">
               <div className="text-slate-500 uppercase tracking-wide">Battlefield</div>
               <div className="mt-1 text-sm font-semibold">{battlefield.length}</div>
             </div>
@@ -213,7 +217,7 @@ export function PlayerTile({
                     Cast Commander
                   </button>
                 )}
-                {selected.zone === 'battlefield' && (
+                {selected.zone === 'battlefield' || selected.zone === 'lands' ? (
                   <button
                     onClick={() => {
                       onToggleTapped(selected.card.instanceId)
@@ -223,8 +227,8 @@ export function PlayerTile({
                   >
                     {selected.card.tapped ? 'Untap' : 'Tap'}
                   </button>
-                )}
-                {selected.zone !== 'library' && selected.zone !== 'battlefield' && (
+                ) : null}
+                {selected.zone !== 'library' && selected.zone !== 'battlefield' && selected.zone !== 'lands' && (
                   <button
                     onClick={() => {
                       onMoveCard(selected.zone, 'battlefield', selected.card.instanceId)
@@ -292,6 +296,14 @@ export function PlayerTile({
             empty="No cards in hand"
             selectedCardId={selected?.card.instanceId ?? null}
             onSelect={(card) => setSelected({ zone: 'hand', card })}
+          />
+
+          <ZoneRow
+            title="Lands"
+            cards={lands}
+            empty="No lands in play"
+            selectedCardId={selected?.card.instanceId ?? null}
+            onSelect={(card) => setSelected({ zone: 'lands', card })}
           />
 
           <ZoneRow

@@ -50,6 +50,7 @@ export type TurnPhase = 'untap' | 'upkeep' | 'draw' | 'main1' | 'combat' | 'main
 export interface PlayerZones {
   library: GameCard[]
   hand: GameCard[]
+  lands: GameCard[]
   battlefield: GameCard[]
   graveyard: GameCard[]
   exile: GameCard[]

@@ -30,7 +30,7 @@ export function createPlayer(id: string, name: string, seat: number): Player {
     counters: { poison: 0, experience: 0, energy: 0, storm: 0 },
     commander: null,
     deck: null,
-    zones: { library: [], hand: [], battlefield: [], graveyard: [], exile: [], commandZone: [] },
+    zones: { library: [], hand: [], lands: [], battlefield: [], graveyard: [], exile: [], commandZone: [] },
     landsPlayedThisTurn: 0,
     isEliminated: false,
     hasMonarch: false,
@@ -78,7 +78,7 @@ function shuffleCards<T>(cards: T[]): T[] {
 
 function buildPlayerZones(player: Player): PlayerZones {
   if (!player.deck) {
-    return { library: [], hand: [], battlefield: [], graveyard: [], exile: [], commandZone: [] }
+    return { library: [], hand: [], lands: [], battlefield: [], graveyard: [], exile: [], commandZone: [] }
   }
 
   let library = player.deck.mainboard.flatMap(importedCardToGameCards)
@@ -106,6 +106,7 @@ function buildPlayerZones(player: Player): PlayerZones {
   return {
     library: remainingLibrary,
     hand,
+    lands: [],
     battlefield: [],
     graveyard: [],
     exile: [],
@@ -166,6 +167,7 @@ function applyPhaseEntry(state: GameState, phase: TurnPhase, turnIndex = state.c
                 landsPlayedThisTurn: 0,
                 zones: {
                   ...player.zones,
+                  lands: player.zones.lands.map(card => ({ ...card, tapped: false })),
                   battlefield: player.zones.battlefield.map(card => ({ ...card, tapped: false })),
                 },
               }
@@ -219,7 +221,10 @@ function describe(state: GameState, action: ActionPayload): string {
       return `${player(action.playerId)} moved ${source?.name ?? 'a card'} to ${action.to}`
     }
     case 'TOGGLE_CARD_TAPPED': {
-      const card = state.players.find(p => p.id === action.playerId)?.zones.battlefield.find(c => c.instanceId === action.cardId)
+      const currentPlayer = state.players.find(p => p.id === action.playerId)
+      const card =
+        currentPlayer?.zones.battlefield.find(c => c.instanceId === action.cardId) ??
+        currentPlayer?.zones.lands.find(c => c.instanceId === action.cardId)
       return `${player(action.playerId)} ${card?.tapped ? 'untapped' : 'tapped'} ${card?.name ?? 'a card'}`
     }
     case 'PLAY_LAND': {
@@ -490,6 +495,9 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
             battlefield: p.zones.battlefield.map(card =>
               card.instanceId === action.cardId ? { ...card, tapped: !card.tapped } : card
             ),
+            lands: p.zones.lands.map(card =>
+              card.instanceId === action.cardId ? { ...card, tapped: !card.tapped } : card
+            ),
           },
         }
       })
@@ -524,7 +532,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           zones: {
             ...player.zones,
             hand: player.zones.hand.filter(c => c.instanceId !== action.cardId),
-            battlefield: [...player.zones.battlefield, { ...card }],
+            lands: [...player.zones.lands, { ...card }],
           },
         }
       })
