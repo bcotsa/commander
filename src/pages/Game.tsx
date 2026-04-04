@@ -57,7 +57,7 @@ export function Game() {
         myPlayerId={myPlayerId}
         round={state.round}
         onNextStep={() => sendAction({ type: 'NEXT_STEP' })}
-        onPassPriority={() => sendAction({ type: 'PASS_PRIORITY', playerId: myPlayerId })}
+        onPassPriority={(pid) => sendAction({ type: 'PASS_PRIORITY', playerId: pid })}
         onResolveCombat={() => sendAction({ type: 'RESOLVE_COMBAT' })}
         isHost={isHost}
       />

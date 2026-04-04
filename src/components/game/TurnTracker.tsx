@@ -10,7 +10,7 @@ interface TurnTrackerProps {
   myPlayerId: string
   round: number
   onNextStep: () => void
-  onPassPriority: () => void
+  onPassPriority: (playerId: string) => void
   onResolveCombat: () => void
   isHost: boolean
 }
@@ -81,32 +81,47 @@ export function TurnTracker({ players, turnOrder, currentTurnIndex, currentPhase
           </span>
         )}
 
-        {(stackCount > 0 && priorityPlayerId === myPlayerId) ? (
-          <button
-            onClick={onPassPriority}
-            className="flex-shrink-0 text-xs bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-full transition-colors"
-          >
-            Pass
-          </button>
-        ) : isHost && (
-          stackCount > 0 ? (
-            <span className="flex-shrink-0 text-xs text-slate-500 px-2">Waiting</span>
-          ) : currentPhase === 'combat' ? (
-            <button
-              onClick={onResolveCombat}
-              className="flex-shrink-0 text-xs bg-red-700 hover:bg-red-600 text-white px-3 py-1.5 rounded-full transition-colors"
-            >
-              Resolve
-            </button>
-          ) : (
-            <button
-              onClick={onNextStep}
-              className="flex-shrink-0 text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-full transition-colors"
-            >
-              Next →
-            </button>
-          )
-        )}
+        {(() => {
+          if (stackCount > 0 && priorityPlayerId) {
+            const priorityPlayer = players.find(p => p.id === priorityPlayerId)
+            const canPass = priorityPlayerId === myPlayerId || (isHost && priorityPlayer && !priorityPlayer.isConnected)
+            if (canPass) {
+              return (
+                <button
+                  onClick={() => onPassPriority(priorityPlayerId)}
+                  className="flex-shrink-0 text-xs bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-full transition-colors"
+                >
+                  Pass{priorityPlayerId !== myPlayerId ? ` (${priorityPlayer?.name ?? 'P?'})` : ''}
+                </button>
+              )
+            }
+            if (isHost) {
+              return <span className="flex-shrink-0 text-xs text-slate-500 px-2">Waiting</span>
+            }
+            return null
+          }
+          if (isHost) {
+            if (currentPhase === 'combat') {
+              return (
+                <button
+                  onClick={onResolveCombat}
+                  className="flex-shrink-0 text-xs bg-red-700 hover:bg-red-600 text-white px-3 py-1.5 rounded-full transition-colors"
+                >
+                  Resolve
+                </button>
+              )
+            }
+            return (
+              <button
+                onClick={onNextStep}
+                className="flex-shrink-0 text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-full transition-colors"
+              >
+                Next →
+              </button>
+            )
+          }
+          return null
+        })()}
       </div>
     </div>
   )
