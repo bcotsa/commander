@@ -355,6 +355,8 @@ function resolveStackTop(state: GameState): GameState {
       ) ?? null
     : null
 
+  let spellAutomated = true
+
   if (stackItem.kind === 'commander') {
     players = players.map(player =>
       player.id === stackItem.casterId
@@ -381,7 +383,21 @@ function resolveStackTop(state: GameState): GameState {
     )
   } else {
     const definition = getSimpleSpellDefinition(stackItem.card)
-    if (definition) {
+    if (!definition) {
+      spellAutomated = false
+      // Spell has no known effect — move to graveyard without any game effect
+      players = players.map(player =>
+        player.id === stackItem.casterId
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                graveyard: [...player.zones.graveyard, { ...stackItem.card, tapped: false, markedDamage: 0 }],
+              },
+            }
+          : player
+      )
+    } else {
       const addSpellToCasterGraveyard = (allPlayers: Player[]) =>
         allPlayers.map(player =>
           player.id === stackItem.casterId
@@ -503,6 +519,16 @@ function resolveStackTop(state: GameState): GameState {
     priorityPlayerId: state.turnOrder[state.currentTurnIndex] ?? null,
     priorityPassedIds: [],
     actionSeq: state.actionSeq + 1,
+    log: !spellAutomated
+      ? appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: stackItem.casterId,
+          playerName: stackItem.casterName,
+          description: `${stackItem.card.name} resolved — effect not automated, apply manually`,
+          action: { type: 'RESOLVE_STACK' },
+          undoable: true,
+        })
+      : state.log,
   }
   return checkEliminations(next)
 }
@@ -594,18 +620,34 @@ function appendLog(log: LogEntry[], entry: Omit<LogEntry, 'seq'>): LogEntry[] {
   return next.length > MAX_LOG ? next.slice(next.length - MAX_LOG) : next
 }
 
-// Checkpoint used by undo: replay from game-start state
-let _checkpoints: Record<string, GameState> = {}
+// Undo stack: stores previous states for direct restore (no replay needed)
+const MAX_UNDO = 30
+const _undoStacks: Record<string, GameState[]> = {}
 
-export function setCheckpoint(roomId: string, state: GameState) {
-  _checkpoints[roomId] = state
+export function pushUndo(roomId: string, state: GameState) {
+  if (!_undoStacks[roomId]) _undoStacks[roomId] = []
+  const stack = _undoStacks[roomId]
+  stack.push(state)
+  if (stack.length > MAX_UNDO) {
+    _undoStacks[roomId] = stack.slice(stack.length - MAX_UNDO)
+  }
 }
 
-export function getCheckpoint(roomId: string): GameState | undefined {
-  return _checkpoints[roomId]
+export function popUndo(roomId: string): GameState | undefined {
+  return _undoStacks[roomId]?.pop()
+}
+
+export function clearUndo(roomId: string) {
+  _undoStacks[roomId] = []
 }
 
 export function gameReducer(state: GameState, action: ActionPayload): GameState {
+  // Snapshot before undoable mutations (not for meta/read-only actions)
+  const nonUndoable = new Set(['PLAYER_JOIN', 'PLAYER_CONNECTED', 'SET_PLAYER_NAME', 'SET_COMMANDER', 'SET_DECK', 'SET_TURN_ORDER', 'UNDO', 'GAME_START', 'RESET_GAME'])
+  if (!nonUndoable.has(action.type) && state.phase === 'active') {
+    pushUndo(state.roomId, state)
+  }
+
   switch (action.type) {
     case 'LIFE_CHANGE': {
       const players = state.players.map(p =>
@@ -1221,7 +1263,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       const blockerPlayer = state.players.find(p => p.id === action.playerId)
       const blocker = blockerPlayer?.zones.battlefield.find(c => c.instanceId === action.blockerId)
       const targetAttack = state.combat.attackers.find(a => a.attackerId === action.attackerId)
-      if (!blocker || !targetAttack || !isCreatureCard(blocker) || blocker.summoningSick) return state
+      // Note: summoning sickness does NOT prevent blocking in MTG rules
+      if (!blocker || !targetAttack || !isCreatureCard(blocker)) return state
       if (targetAttack.defendingPlayerId !== action.playerId) return state
 
       return {
@@ -1298,35 +1341,67 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           continue
         }
 
-        const firstBlocker = blockers[0]!
-        const blockerOwnerId = players.find(player => player.zones.battlefield.some(card => card.instanceId === firstBlocker.instanceId))?.id
-        if (!blockerOwnerId || firstBlocker.power === null || firstBlocker.toughness === null) continue
+        // Distribute attacker's damage across blockers in order (simplified: sequential assignment)
+        // Each blocker receives lethal damage before moving to the next.
+        // All blockers deal their power back to the attacker simultaneously.
+        let attackerDamageRemaining = attacker.power!
+        const blockerDamageMap = new Map<string, number>()
+
+        for (const blocker of blockers) {
+          if (attackerDamageRemaining <= 0) break
+          if (blocker.toughness === null) continue
+          const lethal = Math.max(0, blocker.toughness - blocker.markedDamage)
+          const assigned = Math.min(attackerDamageRemaining, lethal)
+          blockerDamageMap.set(blocker.instanceId, assigned)
+          attackerDamageRemaining -= assigned
+        }
+
+        // All blockers deal damage back to the attacker
+        const totalBlockerDamage = blockers.reduce((sum, b) => sum + (b.power ?? 0), 0)
 
         players = players.map(player => {
+          let updated = player
+          // Mark damage on attacker
           if (player.id === attack.attackingPlayerId) {
-            return {
-              ...player,
+            updated = {
+              ...updated,
               zones: {
-                ...player.zones,
-                battlefield: player.zones.battlefield.map(card =>
-                  card.instanceId === attacker.instanceId ? { ...card, markedDamage: card.markedDamage + firstBlocker.power! } : card
+                ...updated.zones,
+                battlefield: updated.zones.battlefield.map(card =>
+                  card.instanceId === attacker.instanceId
+                    ? { ...card, markedDamage: card.markedDamage + totalBlockerDamage }
+                    : card
                 ),
               },
             }
           }
-          if (player.id === blockerOwnerId) {
-            return {
-              ...player,
+          // Mark damage on each blocker this player owns
+          const hasBlockers = blockers.some(b =>
+            player.zones.battlefield.some(card => card.instanceId === b.instanceId)
+          )
+          if (hasBlockers) {
+            updated = {
+              ...updated,
               zones: {
-                ...player.zones,
-                battlefield: player.zones.battlefield.map(card =>
-                  card.instanceId === firstBlocker.instanceId ? { ...card, markedDamage: card.markedDamage + attacker.power! } : card
-                ),
+                ...updated.zones,
+                battlefield: updated.zones.battlefield.map(card => {
+                  const dmg = blockerDamageMap.get(card.instanceId)
+                  return dmg !== undefined ? { ...card, markedDamage: card.markedDamage + dmg } : card
+                }),
               },
             }
           }
-          return player
+          return updated
         })
+
+        // Trample: excess damage goes to defending player
+        if (attackerDamageRemaining > 0) {
+          players = players.map(player =>
+            player.id === attack.defendingPlayerId
+              ? { ...player, life: player.life - attackerDamageRemaining }
+              : player
+          )
+        }
       }
 
       players = players.map(player => ({
@@ -1488,7 +1563,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       }
 
     case 'GAME_START': {
-      const next: GameState = advanceThroughAutomaticPhases({
+      clearUndo(state.roomId)
+      return advanceThroughAutomaticPhases({
         ...state,
         phase: 'active',
         players: state.players.map(initializePlayerForGame),
@@ -1506,12 +1582,11 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           undoable: false,
         }),
       })
-      setCheckpoint(state.roomId, next)
-      return next
     }
 
     case 'RESET_GAME': {
-      const reset: GameState = advanceThroughAutomaticPhases({
+      clearUndo(state.roomId)
+      return advanceThroughAutomaticPhases({
         ...state,
         phase: 'active',
         players: state.players.map(initializePlayerForGame),
@@ -1524,22 +1599,12 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         log: [],
         actionSeq: state.actionSeq + 1,
       })
-      setCheckpoint(state.roomId, reset)
-      return reset
     }
 
     case 'UNDO': {
-      const checkpoint = getCheckpoint(state.roomId)
-      if (!checkpoint) return state
-      // Find last undoable action and replay without it
-      const undoableLog = state.log.filter(e => e.undoable)
-      if (undoableLog.length === 0) return state
-      const replayActions = undoableLog.slice(0, -1).map(e => e.action)
-      let replayed = checkpoint
-      for (const a of replayActions) {
-        replayed = gameReducer(replayed, a)
-      }
-      return { ...replayed, roomId: state.roomId, roomCode: state.roomCode }
+      const previous = popUndo(state.roomId)
+      if (!previous) return state
+      return { ...previous, actionSeq: state.actionSeq + 1 }
     }
 
     default:

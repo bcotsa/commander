@@ -103,6 +103,14 @@ export function autoPayManaCost(
     .map(land => ({ land, options: getLandManaOptions(land, player) }))
     .filter(entry => entry.options.length > 0)
 
+  // Cap search to avoid exponential blowup on large boards with many duals.
+  // Beyond this limit, fall back to a greedy approach.
+  const MAX_SEARCH_LANDS = 12
+
+  if (untappedLands.length > MAX_SEARCH_LANDS) {
+    return greedyPayManaCost(pool, untappedLands, lands, manaCost)
+  }
+
   const search = (
     index: number,
     currentPool: ManaPool,
@@ -130,6 +138,61 @@ export function autoPayManaCost(
   }
 
   return search(0, { ...pool }, lands)
+}
+
+function greedyPayManaCost(
+  pool: ManaPool,
+  untappedLands: Array<{ land: GameCard; options: ColorSymbol[] }>,
+  allLands: GameCard[],
+  manaCost: string | null,
+): { manaPool: ManaPool; lands: GameCard[] } | null {
+  const { colored, generic } = parseManaCost(manaCost)
+  const currentPool = { ...pool }
+  const tappedIds = new Set<string>()
+
+  // First pass: tap lands for colored requirements, preferring single-color lands
+  const sorted = [...untappedLands].sort((a, b) => a.options.length - b.options.length)
+  for (const color of COLOR_ORDER) {
+    let needed = colored[color] - currentPool[color]
+    if (needed <= 0) continue
+    for (const entry of sorted) {
+      if (needed <= 0) break
+      if (tappedIds.has(entry.land.instanceId)) continue
+      if (!entry.options.includes(color)) continue
+      tappedIds.add(entry.land.instanceId)
+      currentPool[color] += 1
+      needed -= 1
+    }
+  }
+
+  // Check colored requirements met
+  for (const color of COLOR_ORDER) {
+    if (currentPool[color] < colored[color]) return null
+  }
+
+  // Second pass: tap lands for generic, preferring single-color lands
+  let genericNeeded = generic
+  for (const color of COLOR_ORDER) {
+    const excess = currentPool[color] - colored[color]
+    const spend = Math.min(excess, genericNeeded)
+    genericNeeded -= spend
+  }
+  for (const entry of sorted) {
+    if (genericNeeded <= 0) break
+    if (tappedIds.has(entry.land.instanceId)) continue
+    tappedIds.add(entry.land.instanceId)
+    currentPool[entry.options[0]] += 1
+    genericNeeded -= 1
+  }
+  if (genericNeeded > 0) return null
+
+  const resultPool = spendManaCost(currentPool, manaCost)
+  if (!resultPool) return null
+
+  const resultLands = allLands.map(land =>
+    tappedIds.has(land.instanceId) ? { ...land, tapped: true } : land
+  )
+  return { manaPool: resultPool, lands: resultLands }
 }
 
 export function getLandManaOptions(card: Pick<GameCard, 'name' | 'typeLine' | 'oracleText'>, player: Pick<Player, 'commander'>): ColorSymbol[] {
