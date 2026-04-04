@@ -1,9 +1,20 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ColorPips } from '@/components/ui/ColorPips'
 import { CardPreview } from '@/components/ui/CardPreview'
 import type { Player, GameCard, ZoneName, TurnPhase, CombatState } from '@/types/game-state'
 
-function CardThumb({ card, selected, onClick }: { card: GameCard; selected?: boolean; onClick?: () => void }) {
+function CardThumb({
+  card,
+  selected,
+  onClick,
+  buttonRef,
+}: {
+  card: GameCard
+  selected?: boolean
+  onClick?: () => void
+  buttonRef?: (node: HTMLButtonElement | null) => void
+}) {
   const inner = card.imageUri ? (
     <div className="relative">
       <img
@@ -29,10 +40,10 @@ function CardThumb({ card, selected, onClick }: { card: GameCard; selected?: boo
     </div>
   )
 
-  if (!card.imageUri) return <button type="button" onClick={onClick} className="w-20 flex-shrink-0 text-left">{inner}</button>
+  if (!card.imageUri) return <button type="button" ref={buttonRef} onClick={onClick} className="w-20 flex-shrink-0 text-left">{inner}</button>
 
   return (
-    <button type="button" onClick={onClick} className="relative w-20 flex-shrink-0 text-left">
+    <button type="button" ref={buttonRef} onClick={onClick} className="relative w-20 flex-shrink-0 text-left">
       <CardPreview imageUri={card.imageUri} name={card.name}>
         {inner}
       </CardPreview>
@@ -46,14 +57,14 @@ function ZoneRow({
   empty,
   selectedCardId,
   onSelect,
-  renderCardActions,
+  registerCardRef,
 }: {
   title: string
   cards: GameCard[]
   empty: string
   selectedCardId: string | null
   onSelect: (card: GameCard) => void
-  renderCardActions?: (card: GameCard) => React.ReactNode
+  registerCardRef: (cardId: string, node: HTMLButtonElement | null) => void
 }) {
   return (
     <div className="mt-2">
@@ -61,11 +72,11 @@ function ZoneRow({
       <div className="flex gap-0 overflow-x-auto pb-0">
         {cards.map(card => (
           <div key={card.instanceId} className="relative">
-            {selectedCardId === card.instanceId && renderCardActions?.(card)}
             <CardThumb
               card={card}
               selected={selectedCardId === card.instanceId}
               onClick={() => onSelect(card)}
+              buttonRef={(node) => registerCardRef(card.instanceId, node)}
             />
           </div>
         ))}
@@ -216,6 +227,8 @@ export function PlayerTile({
   const { library, hand, lands, battlefield, graveyard, exile, commandZone } = player.zones
   const [selected, setSelected] = useState<{ zone: ZoneName; card: GameCard } | null>(null)
   const [expandedZone, setExpandedZone] = useState<{ zone: 'graveyard' | 'exile'; title: string } | null>(null)
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null)
+  const cardButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({})
 
   const selectedIsLand = selected ? selected.card.typeLine.toLowerCase().includes('land') : false
   const selectedIsPermanent = selected ? !selected.card.typeLine.toLowerCase().includes('instant') && !selected.card.typeLine.toLowerCase().includes('sorcery') : false
@@ -223,11 +236,55 @@ export function PlayerTile({
   const activeAttack = selected ? combat.attackers.find(a => a.attackerId === selected.card.instanceId) : null
   const defendableAttacks = combat.attackers.filter(a => a.defendingPlayerId === player.id)
 
+  function registerCardRef(cardId: string, node: HTMLButtonElement | null) {
+    cardButtonRefs.current[cardId] = node
+  }
+
+  useEffect(() => {
+    if (!selected) {
+      setMenuPosition(null)
+      return
+    }
+
+    const updateMenuPosition = () => {
+      const anchor = cardButtonRefs.current[selected.card.instanceId]
+      if (!anchor) {
+        setMenuPosition(null)
+        return
+      }
+
+      const rect = anchor.getBoundingClientRect()
+      const menuWidth = 220
+      const desiredLeft = rect.left + rect.width / 2 - menuWidth / 2
+      const clampedLeft = Math.min(Math.max(8, desiredLeft), window.innerWidth - menuWidth - 8)
+      const showAbove = rect.top > 112
+      const top = showAbove ? rect.top - 8 : rect.bottom + 8
+
+      setMenuPosition({ top, left: clampedLeft })
+    }
+
+    updateMenuPosition()
+    window.addEventListener('resize', updateMenuPosition)
+    window.addEventListener('scroll', updateMenuPosition, true)
+
+    return () => {
+      window.removeEventListener('resize', updateMenuPosition)
+      window.removeEventListener('scroll', updateMenuPosition, true)
+    }
+  }, [selected])
+
   function renderSelectedCardActions(card: GameCard) {
     if (!selected || selected.card.instanceId !== card.instanceId) return null
 
     return (
-      <div className="absolute bottom-full left-0 right-0 z-10 mb-1 rounded-xl border border-violet-800 bg-slate-950/95 p-2 shadow-2xl">
+      <div
+        className="fixed z-[60] w-[220px] rounded-xl border border-violet-800 bg-slate-950/95 p-2 shadow-2xl"
+        style={{
+          top: menuPosition ? `${menuPosition.top}px` : undefined,
+          left: menuPosition ? `${menuPosition.left}px` : undefined,
+          transform: menuPosition && menuPosition.top > 100 ? 'translateY(-100%)' : undefined,
+        }}
+      >
         <div className="mb-1 truncate text-[10px] font-medium text-violet-200">{card.name}</div>
         <div className="flex flex-wrap gap-1">
           {selected.zone === 'hand' && selectedIsLand && (
@@ -421,6 +478,12 @@ export function PlayerTile({
             </span>
           )}
         </div>
+        <div className="flex flex-wrap items-center justify-end gap-1 pt-1 text-[10px]">
+          <span className="rounded bg-slate-800 px-1.5 py-0.5 text-slate-300">Lib {library.length}</span>
+          <span className="rounded bg-slate-800 px-1.5 py-0.5 text-slate-300">Ld {lands.length}</span>
+          <span className="rounded bg-slate-800 px-1.5 py-0.5 text-slate-300">Fld {battlefield.length}</span>
+          <span className="rounded bg-slate-800 px-1.5 py-0.5 text-slate-300">Hand {hand.length}</span>
+        </div>
         {player.commander && <ColorPips colors={player.commander.colorIdentity} />}
         {isCurrentTurn && (
           <span className="mt-1 text-xs bg-violet-600 text-white px-1.5 py-0.5 rounded-full flex-shrink-0">Turn</span>
@@ -430,29 +493,14 @@ export function PlayerTile({
       <div className="flex-1 min-h-0 overflow-y-auto bg-slate-950/60">
         {/* Zones */}
         <div className="px-2 py-2">
-          <div className="grid grid-cols-3 gap-2 text-[11px] text-slate-300">
-            <div className="rounded-lg bg-slate-800/90 p-2">
-              <div className="text-slate-500 uppercase tracking-wide">Library</div>
-              <div className="mt-1 text-sm font-semibold">{library.length}</div>
-              <button
-                onClick={onDrawCard}
-                className="mt-2 rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
-              >
-                Draw
-              </button>
-            </div>
-            <div className="rounded-lg bg-slate-800/90 p-2">
-              <div className="text-slate-500 uppercase tracking-wide">Lands</div>
-              <div className="mt-1 text-sm font-semibold">{lands.length}</div>
-            </div>
-            <div className="rounded-lg bg-slate-800/90 p-2">
-              <div className="text-slate-500 uppercase tracking-wide">Battlefield</div>
-              <div className="mt-1 text-sm font-semibold">{battlefield.length}</div>
-            </div>
-            <div className="rounded-lg bg-slate-800/90 p-2">
-              <div className="text-slate-500 uppercase tracking-wide">Hand</div>
-              <div className="mt-1 text-sm font-semibold">{hand.length}</div>
-            </div>
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-[11px] uppercase tracking-wide leading-none text-slate-500">Library</div>
+            <button
+              onClick={onDrawCard}
+              className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+            >
+              Draw
+            </button>
           </div>
 
           <div className="mt-2 grid grid-cols-3 gap-2">
@@ -465,11 +513,11 @@ export function PlayerTile({
                 {commandZone.length > 0 ? (
                   commandZone.map(card => (
                     <div key={card.instanceId} className="relative w-16 flex-shrink-0">
-                      {selected?.card.instanceId === card.instanceId && renderSelectedCardActions(card)}
                       <CardThumb
                         card={card}
                         selected={selected?.card.instanceId === card.instanceId}
                         onClick={() => setSelected({ zone: 'commandZone', card })}
+                        buttonRef={(node) => registerCardRef(card.instanceId, node)}
                       />
                     </div>
                   ))
@@ -502,7 +550,7 @@ export function PlayerTile({
             empty="No permanents on battlefield"
             selectedCardId={selected?.card.instanceId ?? null}
             onSelect={(card) => setSelected({ zone: 'battlefield', card })}
-            renderCardActions={renderSelectedCardActions}
+            registerCardRef={registerCardRef}
           />
 
           <ZoneRow
@@ -511,7 +559,7 @@ export function PlayerTile({
             empty="No lands in play"
             selectedCardId={selected?.card.instanceId ?? null}
             onSelect={(card) => setSelected({ zone: 'lands', card })}
-            renderCardActions={renderSelectedCardActions}
+            registerCardRef={registerCardRef}
           />
 
           <ZoneRow
@@ -520,7 +568,7 @@ export function PlayerTile({
             empty="No cards in hand"
             selectedCardId={selected?.card.instanceId ?? null}
             onSelect={(card) => setSelected({ zone: 'hand', card })}
-            renderCardActions={renderSelectedCardActions}
+            registerCardRef={registerCardRef}
           />
         </div>
       </div>
@@ -535,6 +583,19 @@ export function PlayerTile({
             setExpandedZone(null)
           }}
         />
+      )}
+
+      {selected && menuPosition && createPortal(
+        <>
+          <button
+            type="button"
+            aria-label="Close card actions"
+            className="fixed inset-0 z-50 cursor-default bg-transparent"
+            onClick={() => setSelected(null)}
+          />
+          {renderSelectedCardActions(selected.card)}
+        </>,
+        document.body
       )}
 
       {/* Status badges */}
