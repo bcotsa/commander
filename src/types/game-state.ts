@@ -41,7 +41,10 @@ export interface GameCard {
   colorIdentity: ColorSymbol[]
   manaCost: string | null
   typeLine: string
+  tapped: boolean
 }
+
+export type ZoneName = keyof PlayerZones
 
 export interface PlayerZones {
   library: GameCard[]
@@ -114,6 +117,9 @@ export type ActionPayload =
   | { type: 'PLAYER_CONNECTED'; playerId: string; connected: boolean }
   | { type: 'SET_COMMANDER'; playerId: string; commander: CommanderCard }
   | { type: 'SET_DECK'; playerId: string; deck: ImportedDeck; commander: CommanderCard | null }
+  | { type: 'DRAW_CARD'; playerId: string; count?: number }
+  | { type: 'MOVE_CARD'; playerId: string; from: ZoneName; to: ZoneName; cardId: string }
+  | { type: 'TOGGLE_CARD_TAPPED'; playerId: string; cardId: string }
   | { type: 'SET_PLAYER_NAME'; playerId: string; name: string }
   | { type: 'UNDO' }
   | { type: 'GAME_START' }

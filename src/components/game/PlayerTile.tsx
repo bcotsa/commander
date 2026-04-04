@@ -1,28 +1,64 @@
+import { useState } from 'react'
 import { ColorPips } from '@/components/ui/ColorPips'
 import { CardPreview } from '@/components/ui/CardPreview'
-import type { Player, GameCard } from '@/types/game-state'
+import type { Player, GameCard, ZoneName } from '@/types/game-state'
 
-function CardThumb({ card }: { card: GameCard }) {
+function CardThumb({ card, selected, onClick }: { card: GameCard; selected?: boolean; onClick?: () => void }) {
   const inner = card.imageUri ? (
     <img
       src={card.imageUri}
       alt={card.name}
-      className="aspect-[5/7] w-full rounded-lg object-cover shadow-lg"
+      className={`aspect-[5/7] w-full rounded-lg object-cover shadow-lg transition-transform ${card.tapped ? 'rotate-90 scale-[0.86]' : ''} ${selected ? 'ring-2 ring-violet-400' : ''}`}
       loading="lazy"
     />
   ) : (
-    <div className="flex aspect-[5/7] w-full items-end rounded-lg border border-slate-700 bg-slate-800 p-2 text-xs text-slate-200">
+    <div className={`flex aspect-[5/7] w-full items-end rounded-lg border border-slate-700 bg-slate-800 p-2 text-xs text-slate-200 ${selected ? 'ring-2 ring-violet-400' : ''}`}>
       {card.name}
     </div>
   )
 
-  if (!card.imageUri) return <div className="w-20 flex-shrink-0">{inner}</div>
+  if (!card.imageUri) return <button type="button" onClick={onClick} className="w-20 flex-shrink-0 text-left">{inner}</button>
 
   return (
-    <div className="w-20 flex-shrink-0">
+    <button type="button" onClick={onClick} className="w-20 flex-shrink-0 text-left">
       <CardPreview imageUri={card.imageUri} name={card.name}>
         {inner}
       </CardPreview>
+    </button>
+  )
+}
+
+function ZoneRow({
+  title,
+  cards,
+  empty,
+  selectedCardId,
+  onSelect,
+}: {
+  title: string
+  cards: GameCard[]
+  empty: string
+  selectedCardId: string | null
+  onSelect: (card: GameCard) => void
+}) {
+  return (
+    <div className="mt-3">
+      <div className="mb-1 text-[11px] uppercase tracking-wide text-slate-500">{title}</div>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {cards.map(card => (
+          <CardThumb
+            key={card.instanceId}
+            card={card}
+            selected={selectedCardId === card.instanceId}
+            onClick={() => onSelect(card)}
+          />
+        ))}
+        {cards.length === 0 && (
+          <div className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-xs text-slate-500">
+            {empty}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -32,16 +68,47 @@ interface PlayerTileProps {
   isCurrentTurn: boolean
   rotated?: boolean
   onLifeDelta: (delta: number) => void
+  onDrawCard: () => void
+  onMoveCard: (from: ZoneName, to: ZoneName, cardId: string) => void
+  onToggleTapped: (cardId: string) => void
   onOpenDamage: () => void
   onOpenCounters: () => void
 }
 
 export function PlayerTile({
-  player, isCurrentTurn, rotated, onLifeDelta, onOpenDamage, onOpenCounters
+  player, isCurrentTurn, rotated, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onOpenDamage, onOpenCounters
 }: PlayerTileProps) {
   const borderColor = isCurrentTurn ? 'border-violet-500' : 'border-slate-700'
   const { library, hand, battlefield, graveyard, exile, commandZone } = player.zones
-  const visibleHand = hand.slice(0, 7)
+  const [selected, setSelected] = useState<{ zone: ZoneName; card: GameCard } | null>(null)
+
+  const zoneActions: Partial<Record<ZoneName, Array<{ label: string; to?: ZoneName; kind?: 'toggleTapped' }>>> = {
+    hand: [
+      { label: 'Battlefield', to: 'battlefield' },
+      { label: 'Graveyard', to: 'graveyard' },
+      { label: 'Exile', to: 'exile' },
+    ],
+    battlefield: [
+      { label: selected?.card.tapped ? 'Untap' : 'Tap', kind: 'toggleTapped' },
+      { label: 'Hand', to: 'hand' },
+      { label: 'Graveyard', to: 'graveyard' },
+      { label: 'Exile', to: 'exile' },
+    ],
+    graveyard: [
+      { label: 'Hand', to: 'hand' },
+      { label: 'Battlefield', to: 'battlefield' },
+      { label: 'Exile', to: 'exile' },
+    ],
+    exile: [
+      { label: 'Hand', to: 'hand' },
+      { label: 'Battlefield', to: 'battlefield' },
+      { label: 'Graveyard', to: 'graveyard' },
+    ],
+    commandZone: [
+      { label: 'Battlefield', to: 'battlefield' },
+      { label: 'Hand', to: 'hand' },
+    ],
+  }
 
   return (
     <div
@@ -96,6 +163,12 @@ export function PlayerTile({
             <div className="rounded-lg bg-slate-800/90 p-2">
               <div className="text-slate-500 uppercase tracking-wide">Library</div>
               <div className="mt-1 text-sm font-semibold">{library.length}</div>
+              <button
+                onClick={onDrawCard}
+                className="mt-2 rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+              >
+                Draw
+              </button>
             </div>
             <div className="rounded-lg bg-slate-800/90 p-2">
               <div className="text-slate-500 uppercase tracking-wide">Battlefield</div>
@@ -119,33 +192,75 @@ export function PlayerTile({
             </div>
           </div>
 
-          <div className="mt-3">
-            <div className="mb-1 text-[11px] uppercase tracking-wide text-slate-500">Command Zone</div>
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {commandZone.map(card => (
-                <CardThumb key={card.instanceId} card={card} />
-              ))}
-              {commandZone.length === 0 && (
-                <div className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-xs text-slate-500">
-                  No commander in command zone
-                </div>
-              )}
+          {selected && (
+            <div className="mt-3 rounded-xl border border-violet-800 bg-violet-950/30 p-2">
+              <div className="text-xs font-medium text-violet-200">{selected.card.name}</div>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {(zoneActions[selected.zone] ?? []).map(action => (
+                  <button
+                    key={action.label}
+                    onClick={() => {
+                      if (action.kind === 'toggleTapped') {
+                        onToggleTapped(selected.card.instanceId)
+                      } else if (action.to) {
+                        onMoveCard(selected.zone, action.to, selected.card.instanceId)
+                      }
+                      setSelected(null)
+                    }}
+                    className="rounded-md bg-slate-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-slate-600"
+                  >
+                    {action.label}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setSelected(null)}
+                  className="rounded-md border border-slate-700 px-2 py-1 text-[10px] font-medium text-slate-300 transition-colors hover:bg-slate-800"
+                >
+                  Close
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
-          <div className="mt-3">
-            <div className="mb-1 text-[11px] uppercase tracking-wide text-slate-500">Opening Hand</div>
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {visibleHand.map(card => (
-                <CardThumb key={card.instanceId} card={card} />
-              ))}
-              {visibleHand.length === 0 && (
-                <div className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-xs text-slate-500">
-                  No cards drawn
-                </div>
-              )}
-            </div>
-          </div>
+          <ZoneRow
+            title="Command Zone"
+            cards={commandZone}
+            empty="No commander in command zone"
+            selectedCardId={selected?.card.instanceId ?? null}
+            onSelect={(card) => setSelected({ zone: 'commandZone', card })}
+          />
+
+          <ZoneRow
+            title="Hand"
+            cards={hand}
+            empty="No cards in hand"
+            selectedCardId={selected?.card.instanceId ?? null}
+            onSelect={(card) => setSelected({ zone: 'hand', card })}
+          />
+
+          <ZoneRow
+            title="Battlefield"
+            cards={battlefield}
+            empty="No permanents on battlefield"
+            selectedCardId={selected?.card.instanceId ?? null}
+            onSelect={(card) => setSelected({ zone: 'battlefield', card })}
+          />
+
+          <ZoneRow
+            title="Graveyard"
+            cards={graveyard}
+            empty="No cards in graveyard"
+            selectedCardId={selected?.card.instanceId ?? null}
+            onSelect={(card) => setSelected({ zone: 'graveyard', card })}
+          />
+
+          <ZoneRow
+            title="Exile"
+            cards={exile}
+            empty="No cards in exile"
+            selectedCardId={selected?.card.instanceId ?? null}
+            onSelect={(card) => setSelected({ zone: 'exile', card })}
+          />
         </div>
       </div>
 

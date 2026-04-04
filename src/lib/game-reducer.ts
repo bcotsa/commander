@@ -45,6 +45,7 @@ function importedCardToGameCards(card: ImportedDeckCard): GameCard[] {
     colorIdentity: card.colorIdentity,
     manaCost: card.manaCost,
     typeLine: card.typeLine,
+    tapped: false,
   }))
 }
 
@@ -59,6 +60,7 @@ function commanderToGameCard(player: Player): GameCard | null {
     colorIdentity: player.commander.colorIdentity,
     manaCost: player.commander.manaCost,
     typeLine: player.commander.typeLine,
+    tapped: false,
   }
 }
 
@@ -140,6 +142,16 @@ function describe(state: GameState, action: ActionPayload): string {
       return 'Initiative removed'
     case 'NEXT_TURN':
       return 'Next turn'
+    case 'DRAW_CARD':
+      return `${player(action.playerId)} drew ${action.count ?? 1} card${(action.count ?? 1) === 1 ? '' : 's'}`
+    case 'MOVE_CARD': {
+      const source = state.players.find(p => p.id === action.playerId)?.zones[action.from].find(card => card.instanceId === action.cardId)
+      return `${player(action.playerId)} moved ${source?.name ?? 'a card'} to ${action.to}`
+    }
+    case 'TOGGLE_CARD_TAPPED': {
+      const card = state.players.find(p => p.id === action.playerId)?.zones.battlefield.find(c => c.instanceId === action.cardId)
+      return `${player(action.playerId)} ${card?.tapped ? 'untapped' : 'tapped'} ${card?.name ?? 'a card'}`
+    }
     case 'PLAYER_ELIMINATE':
       return `${player(action.playerId)} was eliminated`
     case 'GAME_START':
@@ -299,6 +311,97 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
 
     case 'SET_TURN_ORDER':
       return { ...state, turnOrder: action.order, currentTurnIndex: 0, actionSeq: state.actionSeq + 1 }
+
+    case 'DRAW_CARD': {
+      const count = Math.max(1, action.count ?? 1)
+      const players = state.players.map(p => {
+        if (p.id !== action.playerId) return p
+        const drawn = p.zones.library.slice(0, count)
+        return {
+          ...p,
+          zones: {
+            ...p.zones,
+            library: p.zones.library.slice(drawn.length),
+            hand: [...p.zones.hand, ...drawn],
+          },
+        }
+      })
+      return {
+        ...state,
+        players,
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }
+    }
+
+    case 'MOVE_CARD': {
+      const players = state.players.map(p => {
+        if (p.id !== action.playerId) return p
+        const fromZone = p.zones[action.from]
+        const card = fromZone.find(c => c.instanceId === action.cardId)
+        if (!card) return p
+
+        const cleanedCard = action.to === 'battlefield' ? { ...card } : { ...card, tapped: false }
+
+        return {
+          ...p,
+          zones: {
+            ...p.zones,
+            [action.from]: fromZone.filter(c => c.instanceId !== action.cardId),
+            [action.to]: [...p.zones[action.to], cleanedCard],
+          },
+        }
+      })
+
+      return {
+        ...state,
+        players,
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }
+    }
+
+    case 'TOGGLE_CARD_TAPPED': {
+      const players = state.players.map(p => {
+        if (p.id !== action.playerId) return p
+        return {
+          ...p,
+          zones: {
+            ...p.zones,
+            battlefield: p.zones.battlefield.map(card =>
+              card.instanceId === action.cardId ? { ...card, tapped: !card.tapped } : card
+            ),
+          },
+        }
+      })
+      return {
+        ...state,
+        players,
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }
+    }
 
     case 'PLAYER_JOIN': {
       const exists = state.players.some(p => p.id === action.player.id)

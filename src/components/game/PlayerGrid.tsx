@@ -6,6 +6,9 @@ interface PlayerGridProps {
   players: Player[]
   currentTurnPlayerId: string | null
   onLifeDelta: (playerId: string, delta: number) => void
+  onDrawCard: (playerId: string) => void
+  onMoveCard: (playerId: string, from: import('@/types/game-state').ZoneName, to: import('@/types/game-state').ZoneName, cardId: string) => void
+  onToggleTapped: (playerId: string, cardId: string) => void
 }
 
 // Grid layout classes by player count
@@ -18,7 +21,7 @@ const GRID_CLASSES: Record<number, string> = {
   6: 'grid-cols-2',
 }
 
-export function PlayerGrid({ players, currentTurnPlayerId, onLifeDelta }: PlayerGridProps) {
+export function PlayerGrid({ players, currentTurnPlayerId, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped }: PlayerGridProps) {
   const openModal = useUiStore(s => s.openModal)
   const count = players.length
 
@@ -34,6 +37,9 @@ export function PlayerGrid({ players, currentTurnPlayerId, onLifeDelta }: Player
             isCurrentTurn={player.id === currentTurnPlayerId}
             rotated={rotated}
             onLifeDelta={(delta) => onLifeDelta(player.id, delta)}
+            onDrawCard={() => onDrawCard(player.id)}
+            onMoveCard={(from, to, cardId) => onMoveCard(player.id, from, to, cardId)}
+            onToggleTapped={(cardId) => onToggleTapped(player.id, cardId)}
             onOpenDamage={() => openModal('commanderDamage', player.id)}
             onOpenCounters={() => openModal('counters', player.id)}
           />

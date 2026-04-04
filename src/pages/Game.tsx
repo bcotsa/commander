@@ -61,6 +61,9 @@ export function Game() {
           players={state.players}
           currentTurnPlayerId={currentTurnPlayerId}
           onLifeDelta={(pid, delta) => sendAction({ type: 'LIFE_CHANGE', targetId: pid, delta })}
+          onDrawCard={(pid) => sendAction({ type: 'DRAW_CARD', playerId: pid })}
+          onMoveCard={(pid, from, to, cardId) => sendAction({ type: 'MOVE_CARD', playerId: pid, from, to, cardId })}
+          onToggleTapped={(pid, cardId) => sendAction({ type: 'TOGGLE_CARD_TAPPED', playerId: pid, cardId })}
         />
       </div>
 
