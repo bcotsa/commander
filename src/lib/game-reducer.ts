@@ -11,6 +11,7 @@ export function createInitialGameState(roomCode: string, roomId = ''): GameState
     roomId,
     roomCode,
     phase: 'lobby',
+    hostControlsAllPlayers: false,
     players: [],
     turnOrder: [],
     currentTurnIndex: 0,
@@ -1657,6 +1658,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       return advanceThroughAutomaticPhases({
         ...state,
         phase: 'active',
+        hostControlsAllPlayers: action.hostControlsAllPlayers ?? false,
         players: state.players.map(initializePlayerForGame),
         currentPhase: 'untap',
         stack: [],
@@ -1679,6 +1681,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       return advanceThroughAutomaticPhases({
         ...state,
         phase: 'active',
+        hostControlsAllPlayers: state.hostControlsAllPlayers,
         players: state.players.map(initializePlayerForGame),
         currentTurnIndex: 0,
         currentPhase: 'untap',

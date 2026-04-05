@@ -55,6 +55,7 @@ export function Game() {
         stackCount={state.stack.length}
         priorityPlayerId={state.priorityPlayerId}
         myPlayerId={myPlayerId}
+        hostControlsAllPlayers={state.hostControlsAllPlayers}
         round={state.round}
         onNextStep={() => sendAction({ type: 'NEXT_STEP' })}
         onPassPriority={(pid) => sendAction({ type: 'PASS_PRIORITY', playerId: pid })}
@@ -77,6 +78,7 @@ export function Game() {
           priorityPlayerId={state.priorityPlayerId}
           isHost={isHost}
           myPlayerId={myPlayerId}
+          hostControlsAllPlayers={state.hostControlsAllPlayers}
           currentPhase={state.currentPhase}
           combat={state.combat}
           onLifeDelta={(pid, delta) => sendAction({ type: 'LIFE_CHANGE', targetId: pid, delta })}

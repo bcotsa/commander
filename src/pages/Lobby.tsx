@@ -71,7 +71,7 @@ export function Lobby() {
 
   function handleStartGame() {
     if (!isHost) return
-    sendAction({ type: 'GAME_START' })
+    sendAction({ type: 'GAME_START', hostControlsAllPlayers: false })
     // Host navigation happens via the phase effect above (same as non-hosts)
   }
 
@@ -100,7 +100,7 @@ export function Lobby() {
 
       sendAction({ type: 'SET_DECK', playerId, deck: hostDeck.deck, commander: hostDeck.commander })
       sendAction({ type: 'SET_DECK', playerId: TEST_FAKE_PLAYER_ID, deck: fakeDeck.deck, commander: fakeDeck.commander })
-      sendAction({ type: 'GAME_START' })
+      sendAction({ type: 'GAME_START', hostControlsAllPlayers: true })
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Failed to load test match')
     } finally {

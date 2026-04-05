@@ -106,6 +106,7 @@ export interface GameState {
   roomId: string
   roomCode: string
   phase: 'lobby' | 'active' | 'ended'
+  hostControlsAllPlayers: boolean
   players: Player[]
   turnOrder: string[] // player IDs in sequence
   currentTurnIndex: number
@@ -177,7 +178,7 @@ export type ActionPayload =
   | { type: 'PASS_PRIORITY'; playerId: string }
   | { type: 'SET_PLAYER_NAME'; playerId: string; name: string }
   | { type: 'UNDO' }
-  | { type: 'GAME_START' }
+  | { type: 'GAME_START'; hostControlsAllPlayers?: boolean }
   | { type: 'RESET_GAME' }
 
 export type BroadcastEvent = 'ACTION' | 'STATE_SYNC' | 'HOST_CHANGE' | 'DECK_IMPORT_REQUEST' | 'DECK_IMPORT_STATUS'

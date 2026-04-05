@@ -8,6 +8,7 @@ interface TurnTrackerProps {
   stackCount: number
   priorityPlayerId: string | null
   myPlayerId: string
+  hostControlsAllPlayers: boolean
   round: number
   onNextStep: () => void
   onPassPriority: (playerId: string) => void
@@ -26,7 +27,7 @@ const PHASE_LABELS: Record<TurnPhase, string> = {
 }
 const PHASE_ORDER: TurnPhase[] = ['untap', 'upkeep', 'draw', 'main1', 'combat', 'main2', 'end']
 
-export function TurnTracker({ players, turnOrder, currentTurnIndex, currentPhase, stackCount, priorityPlayerId, myPlayerId, round, onNextStep, onPassPriority, onResolveCombat, isHost }: TurnTrackerProps) {
+export function TurnTracker({ players, turnOrder, currentTurnIndex, currentPhase, stackCount, priorityPlayerId, myPlayerId, hostControlsAllPlayers, round, onNextStep, onPassPriority, onResolveCombat, isHost }: TurnTrackerProps) {
   const playerMap = Object.fromEntries(players.map(p => [p.id, p]))
   const priorityPlayerName = priorityPlayerId ? playerMap[priorityPlayerId]?.name || `P${(playerMap[priorityPlayerId]?.seat ?? 0) + 1}` : null
 
@@ -82,7 +83,7 @@ export function TurnTracker({ players, turnOrder, currentTurnIndex, currentPhase
             </span>
             {(() => {
               const priorityPlayer = priorityPlayerId ? players.find(p => p.id === priorityPlayerId) : null
-              if (isHost && priorityPlayer && !priorityPlayer.isConnected && priorityPlayerId !== myPlayerId) {
+              if (isHost && hostControlsAllPlayers && priorityPlayer && priorityPlayerId !== myPlayerId) {
                 return (
                   <span className="mt-1 text-[10px] text-emerald-300">
                     Use {priorityPlayer.name || `P${priorityPlayer.seat + 1}`}&apos;s cards or pass for them
@@ -97,7 +98,7 @@ export function TurnTracker({ players, turnOrder, currentTurnIndex, currentPhase
         {(() => {
           if (stackCount > 0 && priorityPlayerId) {
             const priorityPlayer = players.find(p => p.id === priorityPlayerId)
-            const canPass = priorityPlayerId === myPlayerId || (isHost && priorityPlayer && !priorityPlayer.isConnected)
+            const canPass = priorityPlayerId === myPlayerId || (isHost && hostControlsAllPlayers)
             if (canPass) {
               return (
                 <button

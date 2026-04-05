@@ -8,6 +8,7 @@ interface PlayerGridProps {
   priorityPlayerId: string | null
   isHost: boolean
   myPlayerId: string
+  hostControlsAllPlayers: boolean
   currentPhase: import('@/types/game-state').TurnPhase
   combat: CombatState
   onLifeDelta: (playerId: string, delta: number) => void
@@ -35,7 +36,7 @@ const GRID_CLASSES: Record<number, string> = {
   6: 'grid-cols-2',
 }
 
-export function PlayerGrid({ players, currentTurnPlayerId, priorityPlayerId, isHost, myPlayerId, currentPhase, combat, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onActivateAbility, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker }: PlayerGridProps) {
+export function PlayerGrid({ players, currentTurnPlayerId, priorityPlayerId, isHost, myPlayerId, hostControlsAllPlayers, currentPhase, combat, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onActivateAbility, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker }: PlayerGridProps) {
   const openModal = useUiStore(s => s.openModal)
   const count = players.length
 
@@ -50,7 +51,8 @@ export function PlayerGrid({ players, currentTurnPlayerId, priorityPlayerId, isH
             player={player}
             allPlayers={players}
             isCurrentTurn={player.id === currentTurnPlayerId}
-            isPriorityProxy={Boolean(isHost && priorityPlayerId === player.id && player.id !== myPlayerId && !player.isConnected)}
+            canControlPlayer={player.id === myPlayerId || (isHost && hostControlsAllPlayers)}
+            isPriorityProxy={Boolean(isHost && hostControlsAllPlayers && priorityPlayerId === player.id && player.id !== myPlayerId)}
             currentTurnPlayerId={currentTurnPlayerId}
             currentPhase={currentPhase}
             combat={combat}
