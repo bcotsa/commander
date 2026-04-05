@@ -22,8 +22,10 @@ export type SimpleSpellDefinition =
   | { kind: 'return_graveyard_creature_to_hand'; target: 'own_graveyard_creature' }
 
 export type ActivatedAbilityDefinition =
-  | { id: string; label: string; kind: 'add_mana'; color: ColorSymbol; amount: number; requiresTap: boolean }
-  | { id: string; label: string; kind: 'draw_card'; requiresTap: boolean; sacrifice: boolean }
+  | { id: string; label: string; kind: 'add_mana'; color: ColorSymbol; amount: number; requiresTap: boolean; sacrifice?: boolean; genericCost?: number }
+  | { id: string; label: string; kind: 'draw_card'; requiresTap: boolean; sacrifice: boolean; genericCost: number }
+  | { id: string; label: string; kind: 'gain_life'; requiresTap: boolean; sacrifice: boolean; genericCost: number; amount: number }
+  | { id: string; label: string; kind: 'explore_target_creature'; requiresTap: boolean; sacrifice: boolean; genericCost: number }
 
 export type TriggerEventType = 'enters_battlefield' | 'attacks' | 'creature_dies'
 
@@ -371,6 +373,56 @@ export function getActivatedAbilities(card: Pick<GameCard, 'name' | 'typeLine' |
     return abilities
   }
 
+  if (lowerName === 'treasure') {
+    const colors: ColorSymbol[] = player.commander?.colorIdentity?.length ? player.commander.colorIdentity : ['W', 'U', 'B', 'R', 'G']
+    for (const color of colors) {
+      abilities.push({
+        id: `treasure-${color}`,
+        label: `Sac for ${color}`,
+        kind: 'add_mana',
+        color,
+        amount: 1,
+        requiresTap: true,
+        sacrifice: true,
+        genericCost: 0,
+      })
+    }
+  }
+
+  if (lowerName === 'food') {
+    abilities.push({
+      id: 'food-life',
+      label: '2, Tap, Sac: Gain 3',
+      kind: 'gain_life',
+      requiresTap: true,
+      sacrifice: true,
+      genericCost: 2,
+      amount: 3,
+    })
+  }
+
+  if (lowerName === 'clue') {
+    abilities.push({
+      id: 'clue-draw',
+      label: '2, Sac: Draw',
+      kind: 'draw_card',
+      requiresTap: false,
+      sacrifice: true,
+      genericCost: 2,
+    })
+  }
+
+  if (lowerName === 'map') {
+    abilities.push({
+      id: 'map-explore',
+      label: '1, Tap, Sac: Explore',
+      kind: 'explore_target_creature',
+      requiresTap: true,
+      sacrifice: true,
+      genericCost: 1,
+    })
+  }
+
   if (lowerName === 'sol ring') {
     abilities.push({ id: 'mana-C-2', label: 'Tap for CC', kind: 'add_mana', color: 'C', amount: 2, requiresTap: true })
   }
@@ -390,7 +442,7 @@ export function getActivatedAbilities(card: Pick<GameCard, 'name' | 'typeLine' |
   }
 
   if (lowerName === "commander's sphere") {
-    abilities.push({ id: 'draw-sac', label: 'Sacrifice: Draw', kind: 'draw_card', requiresTap: false, sacrifice: true })
+    abilities.push({ id: 'draw-sac', label: 'Sacrifice: Draw', kind: 'draw_card', requiresTap: false, sacrifice: true, genericCost: 0 })
   }
 
   if (lowerName === 'devoted druid') {

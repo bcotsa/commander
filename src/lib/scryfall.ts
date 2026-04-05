@@ -1,7 +1,21 @@
 import type { ScryfallCard, ScryfallSearchResult } from '@/types/scryfall'
-import type { CommanderCard, ColorSymbol, ImportedDeck, ImportedDeckCard } from '@/types/game-state'
+import type { CommanderCard, ColorSymbol, ImportedDeck, ImportedDeckCard, TokenTemplateKey } from '@/types/game-state'
 
 const BASE = 'https://api.scryfall.com'
+const TOKEN_QUERY_BY_KEY: Record<TokenTemplateKey, string> = {
+  treasure: '"Treasure" t:token',
+  food: '"Food" t:token',
+  clue: '"Clue" t:token',
+  map: '"Map" t:token',
+  squirrel: '"Squirrel" t:token',
+  rat: '"Rat" t:token',
+  insect: '"Insect" t:token',
+  zombie: '"Zombie" t:token',
+  snake: '"Snake" t:token',
+  pest: '"Pest" t:token',
+}
+const tokenImageCache = new Map<TokenTemplateKey, string>()
+const tokenImageInflight = new Map<TokenTemplateKey, Promise<string>>()
 
 export async function searchCommanders(query: string): Promise<ScryfallCard[]> {
   if (!query.trim()) return []
@@ -25,6 +39,42 @@ export async function getCardByName(name: string): Promise<ScryfallCard | null> 
   const res = await fetch(`${BASE}/cards/named?fuzzy=${encodeURIComponent(name)}`)
   if (!res.ok) return null
   return res.json()
+}
+
+export async function getTokenImageUri(tokenKey: TokenTemplateKey): Promise<string> {
+  const cached = tokenImageCache.get(tokenKey)
+  if (cached !== undefined) return cached
+
+  const inflight = tokenImageInflight.get(tokenKey)
+  if (inflight) return inflight
+
+  const query = TOKEN_QUERY_BY_KEY[tokenKey]
+  const promise = (async () => {
+    try {
+      const q = encodeURIComponent(query)
+      const res = await fetch(`${BASE}/cards/search?q=${q}&include_extras=true&unique=art&order=released`)
+      if (!res.ok) {
+        tokenImageCache.set(tokenKey, '')
+        return ''
+      }
+      const data: ScryfallSearchResult = await res.json()
+      const card = data.data?.[0]
+      const imageUri =
+        card?.image_uris?.normal ??
+        card?.card_faces?.[0]?.image_uris?.normal ??
+        ''
+      tokenImageCache.set(tokenKey, imageUri)
+      return imageUri
+    } catch {
+      tokenImageCache.set(tokenKey, '')
+      return ''
+    } finally {
+      tokenImageInflight.delete(tokenKey)
+    }
+  })()
+
+  tokenImageInflight.set(tokenKey, promise)
+  return promise
 }
 
 export interface CardLookupResult {

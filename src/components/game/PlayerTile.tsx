@@ -4,29 +4,61 @@ import { ColorPips } from '@/components/ui/ColorPips'
 import { CardPreview } from '@/components/ui/CardPreview'
 import type { Player, GameCard, ZoneName, TurnPhase, CombatState } from '@/types/game-state'
 import { canAutoPayManaCost, formatManaPool, getActivatedAbilities, getSimpleSpellDefinition } from '@/lib/card-rules'
+import { getTokenImageUri } from '@/lib/scryfall'
 
 function CardThumb({
   card,
+  count,
   selected,
   onClick,
   buttonRef,
 }: {
   card: GameCard
+  count?: number
   selected?: boolean
   onClick?: () => void
   buttonRef?: (node: HTMLButtonElement | null) => void
 }) {
-  const inner = card.imageUri ? (
+  const [resolvedImageUri, setResolvedImageUri] = useState(card.imageUri)
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (card.imageUri) {
+      setResolvedImageUri(card.imageUri)
+      return
+    }
+
+    if (!card.isToken || !card.tokenKey) {
+      setResolvedImageUri('')
+      return
+    }
+
+    void getTokenImageUri(card.tokenKey).then((imageUri) => {
+      if (!cancelled) setResolvedImageUri(imageUri)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [card.imageUri, card.isToken, card.tokenKey])
+
+  const inner = resolvedImageUri ? (
     <div className="relative">
       <img
-        src={card.imageUri}
+        src={resolvedImageUri}
         alt={card.name}
         className={`aspect-[5/7] w-full rounded-lg object-cover shadow-lg transition-transform ${card.tapped ? 'rotate-90 scale-[0.86]' : ''} ${selected ? 'ring-2 ring-violet-400' : ''}`}
         loading="lazy"
       />
       {(card.power !== null || card.toughness !== null) && (
         <div className="absolute bottom-1 right-1 rounded bg-black/80 px-1 py-0.5 text-[10px] font-semibold text-white">
-          {card.power ?? '?'} / {card.toughness ?? '?'}
+          {(card.power ?? 0) + card.plusOneCounters} / {(card.toughness ?? 0) + card.plusOneCounters}
+        </div>
+      )}
+      {card.plusOneCounters > 0 && (
+        <div className="absolute top-1 right-1 rounded bg-emerald-500/90 px-1 py-0.5 text-[9px] font-semibold text-black">
+          +{card.plusOneCounters}
         </div>
       )}
       {card.summoningSick && (
@@ -34,22 +66,75 @@ function CardThumb({
           Sick
         </div>
       )}
+      {count && count > 1 && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="rounded-full bg-black/80 px-3 py-1 text-xl font-bold text-white shadow-lg">
+            {count}
+          </div>
+        </div>
+      )}
     </div>
   ) : (
-    <div className={`flex aspect-[5/7] w-full items-end rounded-lg border border-slate-700 bg-slate-800 p-2 text-xs text-slate-200 ${selected ? 'ring-2 ring-violet-400' : ''}`}>
+    <div className={`relative flex aspect-[5/7] w-full items-end rounded-lg border border-slate-700 bg-slate-800 p-2 text-xs text-slate-200 ${selected ? 'ring-2 ring-violet-400' : ''}`}>
       {card.name}
+      {count && count > 1 && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="rounded-full bg-black/80 px-3 py-1 text-xl font-bold text-white shadow-lg">
+            {count}
+          </div>
+        </div>
+      )}
     </div>
   )
 
-  if (!card.imageUri) return <button type="button" ref={buttonRef} onClick={onClick} className="w-20 flex-shrink-0 text-left">{inner}</button>
+  if (!resolvedImageUri) return <button type="button" ref={buttonRef} onClick={onClick} className="w-20 flex-shrink-0 text-left">{inner}</button>
 
   return (
     <button type="button" ref={buttonRef} onClick={onClick} className="relative w-20 flex-shrink-0 text-left">
-      <CardPreview imageUri={card.imageUri} name={card.name}>
+      <CardPreview imageUri={resolvedImageUri} name={card.name}>
         {inner}
       </CardPreview>
     </button>
   )
+}
+
+type ZoneDisplayCard = {
+  key: string
+  card: GameCard
+  count: number
+}
+
+function getZoneDisplayCards(cards: GameCard[], collapseTokens = false): ZoneDisplayCard[] {
+  if (!collapseTokens) {
+    return cards.map(card => ({ key: card.instanceId, card, count: 1 }))
+  }
+
+  const display: ZoneDisplayCard[] = []
+  const tokenGroups = new Map<string, ZoneDisplayCard>()
+
+  for (const card of cards) {
+    if (!card.isToken) {
+      display.push({ key: card.instanceId, card, count: 1 })
+      continue
+    }
+
+    const groupKey = `${card.tokenKey ?? card.name}:${card.tapped ? 't' : 'u'}`
+    const existing = tokenGroups.get(groupKey)
+    if (existing) {
+      existing.count += 1
+      continue
+    }
+
+    const nextGroup = {
+      key: groupKey,
+      card,
+      count: 1,
+    }
+    tokenGroups.set(groupKey, nextGroup)
+    display.push(nextGroup)
+  }
+
+  return display
 }
 
 function ZoneRow({
@@ -59,6 +144,7 @@ function ZoneRow({
   selectedCardId,
   onSelect,
   registerCardRef,
+  collapseTokens,
 }: {
   title: string
   cards: GameCard[]
@@ -66,15 +152,19 @@ function ZoneRow({
   selectedCardId: string | null
   onSelect: (card: GameCard) => void
   registerCardRef: (cardId: string, node: HTMLButtonElement | null) => void
+  collapseTokens?: boolean
 }) {
+  const displayCards = getZoneDisplayCards(cards, collapseTokens)
+
   return (
     <div className="mt-2">
       <div className="mb-0 text-[11px] uppercase tracking-wide leading-none text-slate-500">{title}</div>
       <div className="flex gap-0 overflow-x-auto pb-0">
-        {cards.map(card => (
-          <div key={card.instanceId} className="relative">
+        {displayCards.map(({ key, card, count }) => (
+          <div key={key} className="relative">
             <CardThumb
               card={card}
+              count={count}
               selected={selectedCardId === card.instanceId}
               onClick={() => onSelect(card)}
               buttonRef={(node) => registerCardRef(card.instanceId, node)}
@@ -212,7 +302,7 @@ interface PlayerTileProps {
   onDrawCard: () => void
   onMoveCard: (from: ZoneName, to: ZoneName, cardId: string) => void
   onToggleTapped: (cardId: string) => void
-  onActivateAbility: (cardId: string, abilityId: string) => void
+  onActivateAbility: (cardId: string, abilityId: string, targetCardId?: string) => void
   onPlayLand: (cardId: string) => void
   onCastCommander: (cardId: string) => void
   onCastPermanent: (cardId: string) => void
@@ -243,6 +333,7 @@ export function PlayerTile({
   const activatedAbilities = selected && (selected.zone === 'battlefield' || selected.zone === 'lands')
     ? getActivatedAbilities(selected.card, player)
     : []
+  const ownBattlefieldCreatureTargets = player.zones.battlefield.filter(card => card.typeLine.toLowerCase().includes('creature'))
   const activeAttack = selected ? combat.attackers.find(a => a.attackerId === selected.card.instanceId) : null
   const defendableAttacks = combat.attackers.filter(a => a.defendingPlayerId === player.id)
   const spellCardTargets = selectedSpell && selected
@@ -265,6 +356,17 @@ export function PlayerTile({
   const ownGraveyardCreatureTargets = selectedSpell?.target === 'own_graveyard_creature'
     ? graveyard.filter(card => card.typeLine.toLowerCase().includes('creature'))
     : []
+
+  function canPayActivatedAbility(ability: ReturnType<typeof getActivatedAbilities>[number]): boolean {
+    if (!selected) return false
+    if (!ability.genericCost) return true
+    return canAutoPayManaCost(
+      player.manaPool,
+      [...lands, ...battlefield].filter(entry => entry.instanceId !== selected.card.instanceId),
+      `{${ability.genericCost}}`,
+      player
+    )
+  }
 
   function registerCardRef(cardId: string, node: HTMLButtonElement | null) {
     cardButtonRefs.current[cardId] = node
@@ -317,18 +419,38 @@ export function PlayerTile({
       >
         <div className="mb-1 truncate text-[10px] font-medium text-violet-200">{card.name}</div>
         <div className="flex flex-wrap gap-1">
-          {canControlPlayer && (selected.zone === 'battlefield' || selected.zone === 'lands') && activatedAbilities.map(ability => (
+          {canControlPlayer && (selected.zone === 'battlefield' || selected.zone === 'lands') && activatedAbilities
+            .filter(ability => ability.kind !== 'explore_target_creature')
+            .map(ability => (
             <button
               key={ability.id}
               onClick={() => {
                 onActivateAbility(card.instanceId, ability.id)
                 setSelected(null)
               }}
-              className="rounded-md bg-emerald-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-emerald-600"
+              disabled={!canPayActivatedAbility(ability)}
+              className="rounded-md bg-emerald-700 px-2 py-1 text-[10px] font-medium text-white transition-colors enabled:hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {ability.label}
             </button>
           ))}
+          {canControlPlayer && (selected.zone === 'battlefield' || selected.zone === 'lands') && activatedAbilities
+            .filter(ability => ability.kind === 'explore_target_creature')
+            .flatMap(ability =>
+              ownBattlefieldCreatureTargets.map(target => (
+                <button
+                  key={`${ability.id}-${target.instanceId}`}
+                  onClick={() => {
+                    onActivateAbility(card.instanceId, ability.id, target.instanceId)
+                    setSelected(null)
+                  }}
+                  disabled={!canPayActivatedAbility(ability)}
+                  className="rounded-md bg-emerald-700 px-2 py-1 text-[10px] font-medium text-white transition-colors enabled:hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Explore {target.name}
+                </button>
+              ))
+            )}
           {canControlPlayer && selected.zone === 'hand' && selectedIsLand && (
             <button
               onClick={() => {
@@ -665,6 +787,7 @@ export function PlayerTile({
             selectedCardId={selected?.card.instanceId ?? null}
             onSelect={(card) => setSelected({ zone: 'battlefield', card })}
             registerCardRef={registerCardRef}
+            collapseTokens
           />
 
           <ZoneRow

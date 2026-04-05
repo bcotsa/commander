@@ -15,7 +15,7 @@ interface PlayerGridProps {
   onDrawCard: (playerId: string) => void
   onMoveCard: (playerId: string, from: import('@/types/game-state').ZoneName, to: import('@/types/game-state').ZoneName, cardId: string) => void
   onToggleTapped: (playerId: string, cardId: string) => void
-  onActivateAbility: (playerId: string, cardId: string, abilityId: string) => void
+  onActivateAbility: (playerId: string, cardId: string, abilityId: string, targetCardId?: string) => void
   onPlayLand: (playerId: string, cardId: string) => void
   onCastCommander: (playerId: string, cardId: string) => void
   onCastPermanent: (playerId: string, cardId: string) => void
@@ -61,7 +61,7 @@ export function PlayerGrid({ players, currentTurnPlayerId, priorityPlayerId, isH
             onDrawCard={() => onDrawCard(player.id)}
             onMoveCard={(from, to, cardId) => onMoveCard(player.id, from, to, cardId)}
             onToggleTapped={(cardId) => onToggleTapped(player.id, cardId)}
-            onActivateAbility={(cardId, abilityId) => onActivateAbility(player.id, cardId, abilityId)}
+            onActivateAbility={(cardId, abilityId, targetCardId) => onActivateAbility(player.id, cardId, abilityId, targetCardId)}
             onPlayLand={(cardId) => onPlayLand(player.id, cardId)}
             onCastCommander={(cardId) => onCastCommander(player.id, cardId)}
             onCastPermanent={(cardId) => onCastPermanent(player.id, cardId)}

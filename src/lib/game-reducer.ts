@@ -18,6 +18,7 @@ export function createInitialGameState(roomCode: string, roomId = ''): GameState
     currentPhase: 'untap',
     combat: { attackers: [] },
     stack: [],
+    pendingExploreChoice: null,
     priorityPlayerId: null,
     priorityPassedIds: [],
     round: 1,
@@ -61,6 +62,7 @@ function importedCardToGameCards(card: ImportedDeckCard): GameCard[] {
     typeLine: card.typeLine,
     power: card.power,
     toughness: card.toughness,
+    plusOneCounters: 0,
     tapped: false,
     markedDamage: 0,
     summoningSick: false,
@@ -83,6 +85,7 @@ function commanderToGameCard(player: Player): GameCard | null {
     typeLine: player.commander.typeLine,
     power: null,
     toughness: null,
+    plusOneCounters: 0,
     tapped: false,
     markedDamage: 0,
     summoningSick: false,
@@ -104,6 +107,7 @@ function createTokenCard(tokenKey: TokenTemplateKey, tapped = false): GameCard {
     typeLine: template.typeLine,
     power: template.power,
     toughness: template.toughness,
+    plusOneCounters: 0,
     tapped,
     markedDamage: 0,
     summoningSick: template.typeLine.toLowerCase().includes('creature'),
@@ -117,6 +121,24 @@ type TriggerOccurrence =
   | { type: 'enters_battlefield'; controllerId: string; card: GameCard }
   | { type: 'attacks'; controllerId: string; card: GameCard }
   | { type: 'creature_dies'; controllerId: string; card: GameCard }
+
+function createTokensForPlayer(player: Player, tokenKey: TokenTemplateKey, count: number, tapped = false): GameCard[] {
+  if (count <= 0) return []
+
+  const tokens = Array.from({ length: count }, () => createTokenCard(tokenKey, tapped))
+  const lowerBattlefieldNames = player.zones.battlefield.map(card => card.name.toLowerCase())
+  const chatterfangCount = lowerBattlefieldNames.filter(name => name === 'chatterfang, squirrel general').length
+
+  if (chatterfangCount <= 0) return tokens
+
+  let totalTokens = [...tokens]
+  for (let i = 0; i < chatterfangCount; i++) {
+    const bonusCount = totalTokens.length
+    totalTokens = [...totalTokens, ...Array.from({ length: bonusCount }, () => createTokenCard('squirrel', tapped))]
+  }
+
+  return totalTokens
+}
 
 function shuffleCards<T>(cards: T[]): T[] {
   const next = [...cards]
@@ -203,6 +225,7 @@ function beginActiveGame(state: GameState): GameState {
     currentTurnIndex: 0,
     currentPhase: 'untap',
     stack: [],
+    pendingExploreChoice: null,
     priorityPlayerId: null,
     priorityPassedIds: [],
     combat: { attackers: [] },
@@ -232,6 +255,14 @@ function isLandCard(card: GameCard): boolean {
 
 function isCreatureCard(card: GameCard): boolean {
   return card.typeLine.toLowerCase().includes('creature') && card.power !== null && card.toughness !== null
+}
+
+function effectivePower(card: GameCard): number {
+  return (card.power ?? 0) + card.plusOneCounters
+}
+
+function effectiveToughness(card: GameCard): number {
+  return (card.toughness ?? 0) + card.plusOneCounters
 }
 
 function entersBattlefield(card: GameCard): GameCard {
@@ -285,6 +316,14 @@ function applyTappedManaCards(player: Player, cards: GameCard[]): Pick<Player, '
       lands: player.zones.lands.map(card => byId.get(card.instanceId) ?? card),
       battlefield: player.zones.battlefield.map(card => byId.get(card.instanceId) ?? card),
     },
+  }
+}
+
+function removeCardFromBattlefieldOrLands(player: Player, cardId: string): Player['zones'] {
+  return {
+    ...player.zones,
+    battlefield: player.zones.battlefield.filter(card => card.instanceId !== cardId),
+    lands: player.zones.lands.filter(card => card.instanceId !== cardId),
   }
 }
 
@@ -558,9 +597,10 @@ function resolveStackTop(state: GameState): GameState {
     const effect = stackItem.triggerEffect
     switch (effect.kind) {
       case 'create_tokens': {
-        const createdTokens = Array.from({ length: effect.count }, () =>
-          createTokenCard(effect.tokenKey, effect.tapped ?? false)
-        )
+        const tokenController = players.find(player => player.id === stackItem.casterId)
+        const createdTokens = tokenController
+          ? createTokensForPlayer(tokenController, effect.tokenKey, effect.count, effect.tapped ?? false)
+          : []
         players = players.map(player =>
           player.id === stackItem.casterId
             ? {
@@ -651,9 +691,10 @@ function resolveStackTop(state: GameState): GameState {
           const count = definition.count === 'opponents'
             ? players.filter(player => player.id !== stackItem.casterId && !player.isEliminated).length
             : definition.count
-          const createdTokens = Array.from({ length: count }, () =>
-            createTokenCard(definition.tokenKey, definition.tapped ?? false)
-          )
+          const tokenController = players.find(player => player.id === stackItem.casterId)
+          const createdTokens = tokenController
+            ? createTokensForPlayer(tokenController, definition.tokenKey, count, definition.tapped ?? false)
+            : []
           players = addSpellToCasterGraveyard(players).map(player =>
             player.id === stackItem.casterId
               ? {
@@ -703,11 +744,11 @@ function resolveStackTop(state: GameState): GameState {
               ...player,
               zones: {
                 ...player.zones,
-                battlefield: updatedBattlefield.filter(entry => !(isCreatureCard(entry) && entry.toughness !== null && entry.markedDamage >= entry.toughness)),
+                battlefield: updatedBattlefield.filter(entry => !(isCreatureCard(entry) && entry.markedDamage >= effectiveToughness(entry))),
                 graveyard: [
                   ...player.zones.graveyard,
                   ...updatedBattlefield
-                    .filter(entry => isCreatureCard(entry) && entry.toughness !== null && entry.markedDamage >= entry.toughness)
+                    .filter(entry => isCreatureCard(entry) && entry.markedDamage >= effectiveToughness(entry))
                     .filter(entry => !entry.isToken)
                     .map(entry => ({ ...entry, tapped: false, markedDamage: 0 })),
                 ],
@@ -716,7 +757,7 @@ function resolveStackTop(state: GameState): GameState {
           })
           if (targetBattlefieldOwner) {
             const damagedCard = targetBattlefieldOwner.zones.battlefield.find(entry => entry.instanceId === stackItem.targetCardId)
-            if (damagedCard && isCreatureCard(damagedCard) && damagedCard.toughness !== null && damagedCard.markedDamage + definition.amount >= damagedCard.toughness) {
+            if (damagedCard && isCreatureCard(damagedCard) && damagedCard.markedDamage + definition.amount >= effectiveToughness(damagedCard)) {
               triggerOccurrences.push({ type: 'creature_dies', controllerId: targetBattlefieldOwner.id, card: damagedCard })
             }
           }
@@ -731,7 +772,7 @@ function resolveStackTop(state: GameState): GameState {
               isCreatureCard(entry) ? { ...entry, markedDamage: entry.markedDamage + amount } : entry
             )
             const deadCreatures = updatedBattlefield
-              .filter(entry => isCreatureCard(entry) && entry.toughness !== null && entry.markedDamage >= entry.toughness)
+              .filter(entry => isCreatureCard(entry) && entry.markedDamage >= effectiveToughness(entry))
             for (const deadCreature of deadCreatures) {
               triggerOccurrences.push({ type: 'creature_dies', controllerId: player.id, card: deadCreature })
             }
@@ -739,11 +780,11 @@ function resolveStackTop(state: GameState): GameState {
               ...player,
               zones: {
                 ...player.zones,
-                battlefield: updatedBattlefield.filter(entry => !(isCreatureCard(entry) && entry.toughness !== null && entry.markedDamage >= entry.toughness)),
+                battlefield: updatedBattlefield.filter(entry => !(isCreatureCard(entry) && entry.markedDamage >= effectiveToughness(entry))),
                 graveyard: [
                   ...player.zones.graveyard,
                   ...updatedBattlefield
-                    .filter(entry => isCreatureCard(entry) && entry.toughness !== null && entry.markedDamage >= entry.toughness)
+                    .filter(entry => isCreatureCard(entry) && entry.markedDamage >= effectiveToughness(entry))
                     .filter(entry => !entry.isToken)
                     .map(entry => ({ ...entry, tapped: false, markedDamage: 0 })),
                 ],
@@ -847,6 +888,10 @@ function describe(state: GameState, action: ActionPayload): string {
         state.players.find(p => p.id === action.playerId)?.zones.lands.find(card => card.instanceId === action.cardId)
       return `${player(action.playerId)} activated ${source?.name ?? 'an ability'}`
     }
+    case 'RESOLVE_EXPLORE_CHOICE': {
+      const choice = state.pendingExploreChoice
+      return `${player(action.playerId)} chose to ${action.putInGraveyard ? 'put' : 'leave'} ${choice?.revealedCard.name ?? 'the revealed card'} ${action.putInGraveyard ? 'in the graveyard' : 'on top'}`
+    }
     case 'TOGGLE_CARD_TAPPED': {
       const currentPlayer = state.players.find(p => p.id === action.playerId)
       const card =
@@ -949,6 +994,20 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
     }
   }
 
+  if (state.pendingExploreChoice) {
+    const allowedDuringExploreChoice = new Set<ActionPayload['type']>([
+      'RESOLVE_EXPLORE_CHOICE',
+      'PLAYER_CONNECTED',
+      'PLAYER_JOIN',
+      'SET_PLAYER_NAME',
+      'UNDO',
+      'RESET_GAME',
+    ])
+    if (!allowedDuringExploreChoice.has(action.type)) {
+      return state
+    }
+  }
+
   switch (action.type) {
     case 'LIFE_CHANGE': {
       const players = state.players.map(p =>
@@ -962,6 +1021,38 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           timestamp: new Date().toISOString(),
           playerId: action.targetId,
           playerName: state.players.find(p => p.id === action.targetId)?.name ?? '',
+          description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }
+    }
+
+    case 'RESOLVE_EXPLORE_CHOICE': {
+      const choice = state.pendingExploreChoice
+      if (!choice || choice.playerId !== action.playerId) return state
+
+      const players = state.players.map(player => {
+        if (player.id !== action.playerId) return player
+        return {
+          ...player,
+          zones: {
+            ...player.zones,
+            library: action.putInGraveyard ? player.zones.library : [choice.revealedCard, ...player.zones.library],
+            graveyard: action.putInGraveyard ? [...player.zones.graveyard, choice.revealedCard] : player.zones.graveyard,
+          },
+        }
+      })
+
+      return {
+        ...state,
+        players,
+        pendingExploreChoice: null,
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
           description: describe(state, action),
           action,
           undoable: true,
@@ -1360,6 +1451,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       if (state.stack.length === 0 && currentPlayerId !== action.playerId) return state
 
       let changed = false
+      let pendingExploreChoice = state.pendingExploreChoice
       const players = state.players.map(player => {
         if (player.id !== action.playerId) return player
         const card =
@@ -1371,22 +1463,38 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         if (!ability) return player
         if (ability.requiresTap && card.tapped) return player
 
+        const payment = autoPayManaCost(
+          player.manaPool,
+          [...player.zones.lands, ...player.zones.battlefield].filter(entry => entry.instanceId !== action.cardId),
+          ability.genericCost ? `{${ability.genericCost}}` : null,
+          player
+        )
+        if ((ability.genericCost ?? 0) > 0 && !payment) return player
+
         changed = true
 
         if (ability.kind === 'add_mana') {
+          const updatedSource = { ...card, tapped: ability.requiresTap ? true : card.tapped }
           const updatedCards = [
-            ...player.zones.lands.map(entry =>
-              entry.instanceId === action.cardId ? { ...entry, tapped: ability.requiresTap ? true : entry.tapped } : entry
-            ),
-            ...player.zones.battlefield.map(entry =>
-              entry.instanceId === action.cardId ? { ...entry, tapped: ability.requiresTap ? true : entry.tapped } : entry
-            ),
+            ...player.zones.lands.map(entry => {
+              if (entry.instanceId === action.cardId) return updatedSource
+              return payment?.cards.find(card => card.instanceId === entry.instanceId) ?? entry
+            }),
+            ...player.zones.battlefield.map(entry => {
+              if (entry.instanceId === action.cardId) return updatedSource
+              return payment?.cards.find(card => card.instanceId === entry.instanceId) ?? entry
+            }),
           ]
+          const zonesWithTap = applyTappedManaCards(player, updatedCards).zones
+          const zones = ability.sacrifice ? removeCardFromBattlefieldOrLands({ ...player, zones: zonesWithTap }, action.cardId) : zonesWithTap
 
           return {
             ...player,
-            manaPool: { ...player.manaPool, [ability.color]: player.manaPool[ability.color] + ability.amount },
-            zones: applyTappedManaCards(player, updatedCards).zones,
+            manaPool: {
+              ...(payment?.manaPool ?? player.manaPool),
+              [ability.color]: (payment?.manaPool ?? player.manaPool)[ability.color] + ability.amount,
+            },
+            zones,
           }
         }
 
@@ -1394,16 +1502,75 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           const sourceInBattlefield = player.zones.battlefield.some(entry => entry.instanceId === action.cardId)
           const sourceInLands = player.zones.lands.some(entry => entry.instanceId === action.cardId)
           const drawn = player.zones.library.slice(0, 1)
+          const manaPool = payment?.manaPool ?? player.manaPool
 
           return {
             ...player,
+            manaPool,
             zones: {
               ...player.zones,
               battlefield: sourceInBattlefield ? player.zones.battlefield.filter(entry => entry.instanceId !== action.cardId) : player.zones.battlefield,
               lands: sourceInLands ? player.zones.lands.filter(entry => entry.instanceId !== action.cardId) : player.zones.lands,
               library: player.zones.library.slice(drawn.length),
               hand: [...player.zones.hand, ...drawn],
-              graveyard: ability.sacrifice ? [...player.zones.graveyard, { ...card, tapped: false }] : player.zones.graveyard,
+              graveyard: ability.sacrifice && !card.isToken ? [...player.zones.graveyard, { ...card, tapped: false }] : player.zones.graveyard,
+            },
+          }
+        }
+
+        if (ability.kind === 'gain_life') {
+          const sourceInBattlefield = player.zones.battlefield.some(entry => entry.instanceId === action.cardId)
+          const sourceInLands = player.zones.lands.some(entry => entry.instanceId === action.cardId)
+          return {
+            ...player,
+            life: player.life + ability.amount,
+            manaPool: payment?.manaPool ?? player.manaPool,
+            zones: {
+              ...player.zones,
+              battlefield: sourceInBattlefield ? player.zones.battlefield.filter(entry => entry.instanceId !== action.cardId) : player.zones.battlefield,
+              lands: sourceInLands ? player.zones.lands.filter(entry => entry.instanceId !== action.cardId) : player.zones.lands,
+              graveyard: ability.sacrifice && !card.isToken ? [...player.zones.graveyard, { ...card, tapped: false }] : player.zones.graveyard,
+            },
+          }
+        }
+
+        if (ability.kind === 'explore_target_creature') {
+          if (!action.targetCardId) return player
+          const target = player.zones.battlefield.find(entry => entry.instanceId === action.targetCardId)
+          if (!target || !isCreatureCard(target)) return player
+
+          const sourceInBattlefield = player.zones.battlefield.some(entry => entry.instanceId === action.cardId)
+          const sourceInLands = player.zones.lands.some(entry => entry.instanceId === action.cardId)
+          const topCard = player.zones.library[0] ?? null
+          const isTopLand = topCard ? isLandCard(topCard) : false
+          if (topCard && !isTopLand) {
+            pendingExploreChoice = {
+              playerId: player.id,
+              sourceCardId: action.cardId,
+              targetCardId: action.targetCardId,
+              revealedCard: { ...topCard },
+            }
+          }
+
+          return {
+            ...player,
+            manaPool: payment?.manaPool ?? player.manaPool,
+            zones: {
+              ...player.zones,
+              battlefield: player.zones.battlefield
+                .filter(entry => !(sourceInBattlefield && entry.instanceId === action.cardId))
+                .map(entry =>
+                  entry.instanceId === action.targetCardId && !isTopLand
+                    ? { ...entry, plusOneCounters: entry.plusOneCounters + 1 }
+                    : entry
+                ),
+              lands: sourceInLands ? player.zones.lands.filter(entry => entry.instanceId !== action.cardId) : player.zones.lands,
+              library: topCard ? player.zones.library.slice(1) : player.zones.library,
+              hand: topCard && isTopLand ? [...player.zones.hand, topCard] : player.zones.hand,
+              graveyard: [
+                ...player.zones.graveyard,
+                ...(ability.sacrifice && !card.isToken ? [{ ...card, tapped: false }] : []),
+              ],
             },
           }
         }
@@ -1415,6 +1582,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       return {
         ...state,
         players,
+        pendingExploreChoice,
         actionSeq: state.actionSeq + 1,
         log: appendLog(state.log, {
           timestamp: new Date().toISOString(),
@@ -1821,9 +1989,9 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
             player.id === attack.defendingPlayerId
               ? {
                   ...player,
-                  life: player.life - attacker.power!,
+                  life: player.life - effectivePower(attacker),
                   commanderDamage: attacker.isCommander
-                    ? { ...player.commanderDamage, [attack.attackingPlayerId]: (player.commanderDamage[attack.attackingPlayerId] ?? 0) + attacker.power! }
+                    ? { ...player.commanderDamage, [attack.attackingPlayerId]: (player.commanderDamage[attack.attackingPlayerId] ?? 0) + effectivePower(attacker) }
                     : player.commanderDamage,
                 }
               : player
@@ -1834,20 +2002,19 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         // Distribute attacker's damage across blockers in order (simplified: sequential assignment)
         // Each blocker receives lethal damage before moving to the next.
         // All blockers deal their power back to the attacker simultaneously.
-        let attackerDamageRemaining = attacker.power!
+        let attackerDamageRemaining = effectivePower(attacker)
         const blockerDamageMap = new Map<string, number>()
 
         for (const blocker of blockers) {
           if (attackerDamageRemaining <= 0) break
-          if (blocker.toughness === null) continue
-          const lethal = Math.max(0, blocker.toughness - blocker.markedDamage)
+          const lethal = Math.max(0, effectiveToughness(blocker) - blocker.markedDamage)
           const assigned = Math.min(attackerDamageRemaining, lethal)
           blockerDamageMap.set(blocker.instanceId, assigned)
           attackerDamageRemaining -= assigned
         }
 
         // All blockers deal damage back to the attacker
-        const totalBlockerDamage = blockers.reduce((sum, b) => sum + (b.power ?? 0), 0)
+        const totalBlockerDamage = blockers.reduce((sum, b) => sum + effectivePower(b), 0)
 
         players = players.map(player => {
           let updated = player
@@ -1902,7 +2069,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           graveyard: [
             ...player.zones.graveyard,
             ...player.zones.battlefield
-              .filter(card => isCreatureCard(card) && card.toughness !== null && card.markedDamage >= card.toughness)
+              .filter(card => isCreatureCard(card) && card.markedDamage >= effectiveToughness(card))
               .map(card => {
                 deadCreatures.push({ type: 'creature_dies', controllerId: player.id, card })
                 return card
@@ -1911,7 +2078,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
               .map(card => ({ ...card, tapped: false, markedDamage: 0 })),
           ],
           battlefield: player.zones.battlefield.filter(
-            card => !(isCreatureCard(card) && card.toughness !== null && card.markedDamage >= card.toughness)
+            card => !(isCreatureCard(card) && card.markedDamage >= effectiveToughness(card))
           ),
         },
       }))

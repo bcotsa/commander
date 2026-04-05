@@ -48,6 +48,7 @@ export interface GameCard {
   typeLine: string
   power: number | null
   toughness: number | null
+  plusOneCounters: number
   tapped: boolean
   markedDamage: number
   summoningSick: boolean
@@ -134,6 +135,7 @@ export interface GameState {
   currentPhase: TurnPhase
   combat: CombatState
   stack: StackItem[]
+  pendingExploreChoice: ExploreChoiceState | null
   priorityPlayerId: string | null
   priorityPassedIds: string[]
   round: number
@@ -167,6 +169,13 @@ export interface StackItem {
   triggerEffect?: TriggerEffectPayload
 }
 
+export interface ExploreChoiceState {
+  playerId: string
+  sourceCardId: string
+  targetCardId: string
+  revealedCard: GameCard
+}
+
 // Discriminated union of all possible game actions
 export type ActionPayload =
   | { type: 'LIFE_CHANGE'; targetId: string; delta: number }
@@ -190,7 +199,8 @@ export type ActionPayload =
   | { type: 'MOVE_CARD'; playerId: string; from: ZoneName; to: ZoneName; cardId: string }
   | { type: 'TOGGLE_CARD_TAPPED'; playerId: string; cardId: string }
   | { type: 'ADD_MANA'; playerId: string; cardId: string; color: ColorSymbol }
-  | { type: 'ACTIVATE_ABILITY'; playerId: string; cardId: string; abilityId: string }
+  | { type: 'ACTIVATE_ABILITY'; playerId: string; cardId: string; abilityId: string; targetCardId?: string }
+  | { type: 'RESOLVE_EXPLORE_CHOICE'; playerId: string; putInGraveyard: boolean }
   | { type: 'PLAY_LAND'; playerId: string; cardId: string }
   | { type: 'CAST_COMMANDER'; playerId: string; cardId: string }
   | { type: 'CAST_PERMANENT'; playerId: string; cardId: string }

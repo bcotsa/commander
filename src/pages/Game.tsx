@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { PlayerGrid } from '@/components/game/PlayerGrid'
+import { ExploreChoiceOverlay } from '@/components/game/ExploreChoiceOverlay'
 import { MulliganOverlay } from '@/components/game/MulliganOverlay'
 import { StackPanel } from '@/components/game/StackPanel'
 import { TurnTracker } from '@/components/game/TurnTracker'
@@ -86,7 +87,7 @@ export function Game() {
           onDrawCard={(pid) => sendAction({ type: 'DRAW_CARD', playerId: pid })}
           onMoveCard={(pid, from, to, cardId) => sendAction({ type: 'MOVE_CARD', playerId: pid, from, to, cardId })}
           onToggleTapped={(pid, cardId) => sendAction({ type: 'TOGGLE_CARD_TAPPED', playerId: pid, cardId })}
-          onActivateAbility={(pid, cardId, abilityId) => sendAction({ type: 'ACTIVATE_ABILITY', playerId: pid, cardId, abilityId })}
+          onActivateAbility={(pid, cardId, abilityId, targetCardId) => sendAction({ type: 'ACTIVATE_ABILITY', playerId: pid, cardId, abilityId, targetCardId })}
           onPlayLand={(pid, cardId) => sendAction({ type: 'PLAY_LAND', playerId: pid, cardId })}
           onCastCommander={(pid, cardId) => sendAction({ type: 'CAST_COMMANDER', playerId: pid, cardId })}
           onCastPermanent={(pid, cardId) => sendAction({ type: 'CAST_PERMANENT', playerId: pid, cardId })}
@@ -106,6 +107,20 @@ export function Game() {
           onKeep={(playerId) => sendAction({ type: 'MULLIGAN_KEEP', playerId })}
           onMulligan={(playerId) => sendAction({ type: 'MULLIGAN_TAKE', playerId })}
           onBottomCard={(playerId, cardId) => sendAction({ type: 'MULLIGAN_BOTTOM_CARD', playerId, cardId })}
+        />
+      )}
+
+      {state.pendingExploreChoice && (
+        <ExploreChoiceOverlay
+          choice={state.pendingExploreChoice}
+          players={state.players}
+          myPlayerId={myPlayerId}
+          canControlAllPlayers={Boolean(isHost && state.hostControlsAllPlayers)}
+          onChoose={(putInGraveyard) => sendAction({
+            type: 'RESOLVE_EXPLORE_CHOICE',
+            playerId: state.pendingExploreChoice?.playerId ?? myPlayerId,
+            putInGraveyard,
+          })}
         />
       )}
 
