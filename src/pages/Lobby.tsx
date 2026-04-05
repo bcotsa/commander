@@ -54,7 +54,7 @@ export function Lobby() {
   // BUG FIX 3: Non-host players watch for game phase change and navigate
   // to the game page when the host starts the game.
   useEffect(() => {
-    if (state.phase === 'active') {
+    if (state.phase !== 'lobby') {
       navigate(`/game/${code}`)
     }
   }, [state.phase, code, navigate])

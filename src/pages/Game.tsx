@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { PlayerGrid } from '@/components/game/PlayerGrid'
+import { MulliganOverlay } from '@/components/game/MulliganOverlay'
 import { StackPanel } from '@/components/game/StackPanel'
 import { TurnTracker } from '@/components/game/TurnTracker'
 import { CommanderDamageModal } from '@/components/modals/CommanderDamageModal'
@@ -96,6 +97,17 @@ export function Game() {
           onRemoveBlocker={(pid, blockerId, attackerId) => sendAction({ type: 'REMOVE_BLOCKER', playerId: pid, blockerId, attackerId })}
         />
       </div>
+
+      {state.phase === 'mulligan' && (
+        <MulliganOverlay
+          players={state.players}
+          myPlayerId={myPlayerId}
+          canControlAllPlayers={Boolean(isHost && state.hostControlsAllPlayers)}
+          onKeep={(playerId) => sendAction({ type: 'MULLIGAN_KEEP', playerId })}
+          onMulligan={(playerId) => sendAction({ type: 'MULLIGAN_TAKE', playerId })}
+          onBottomCard={(playerId, cardId) => sendAction({ type: 'MULLIGAN_BOTTOM_CARD', playerId, cardId })}
+        />
+      )}
 
       {/* Bottom toolbar */}
       <div className="flex items-center justify-around px-3 py-2 bg-slate-900 border-t border-slate-700">

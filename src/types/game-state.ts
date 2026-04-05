@@ -86,6 +86,8 @@ export interface Player {
   deck: ImportedDeck | null
   zones: PlayerZones
   landsPlayedThisTurn: number
+  mulligansTaken: number
+  hasKeptOpeningHand: boolean
   isEliminated: boolean
   hasMonarch: boolean
   hasInitiative: boolean
@@ -105,7 +107,7 @@ export interface LogEntry {
 export interface GameState {
   roomId: string
   roomCode: string
-  phase: 'lobby' | 'active' | 'ended'
+  phase: 'lobby' | 'mulligan' | 'active' | 'ended'
   hostControlsAllPlayers: boolean
   players: Player[]
   turnOrder: string[] // player IDs in sequence
@@ -161,6 +163,9 @@ export type ActionPayload =
   | { type: 'SET_COMMANDER'; playerId: string; commander: CommanderCard }
   | { type: 'SET_DECK'; playerId: string; deck: ImportedDeck; commander: CommanderCard | null }
   | { type: 'DRAW_CARD'; playerId: string; count?: number }
+  | { type: 'MULLIGAN_TAKE'; playerId: string }
+  | { type: 'MULLIGAN_KEEP'; playerId: string }
+  | { type: 'MULLIGAN_BOTTOM_CARD'; playerId: string; cardId: string }
   | { type: 'MOVE_CARD'; playerId: string; from: ZoneName; to: ZoneName; cardId: string }
   | { type: 'TOGGLE_CARD_TAPPED'; playerId: string; cardId: string }
   | { type: 'ADD_MANA'; playerId: string; cardId: string; color: ColorSymbol }

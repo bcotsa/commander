@@ -40,6 +40,8 @@ export function createPlayer(id: string, name: string, seat: number): Player {
     deck: null,
     zones: { library: [], hand: [], lands: [], battlefield: [], graveyard: [], exile: [], commandZone: [] },
     landsPlayedThisTurn: 0,
+    mulligansTaken: 0,
+    hasKeptOpeningHand: false,
     isEliminated: false,
     hasMonarch: false,
     hasInitiative: false,
@@ -145,8 +147,45 @@ function initializePlayerForGame(player: Player): Player {
     hasMonarch: false,
     hasInitiative: false,
     landsPlayedThisTurn: 0,
+    mulligansTaken: 0,
+    hasKeptOpeningHand: false,
     zones: buildPlayerZones(player),
   }
+}
+
+function mulliganBottomCount(player: Player): number {
+  return Math.max(0, player.mulligansTaken - 1)
+}
+
+function mulliganBottomsRemaining(player: Player): number {
+  if (!player.hasKeptOpeningHand) return 0
+  const targetHandSize = 7 - mulliganBottomCount(player)
+  return Math.max(0, player.zones.hand.length - targetHandSize)
+}
+
+function isPlayerDoneMulliganing(player: Player): boolean {
+  return player.hasKeptOpeningHand && mulliganBottomsRemaining(player) === 0
+}
+
+function beginActiveGame(state: GameState): GameState {
+  return advanceThroughAutomaticPhases({
+    ...state,
+    phase: 'active',
+    currentTurnIndex: 0,
+    currentPhase: 'untap',
+    stack: [],
+    priorityPlayerId: null,
+    priorityPassedIds: [],
+    combat: { attackers: [] },
+    actionSeq: state.actionSeq + 1,
+  })
+}
+
+function maybeFinishMulligans(state: GameState): GameState {
+  if (state.phase !== 'mulligan') return state
+  if (state.players.length === 0) return state
+  if (!state.players.every(isPlayerDoneMulliganing)) return state
+  return beginActiveGame(state)
 }
 
 function isMainPhase(phase: TurnPhase): boolean {
@@ -566,6 +605,14 @@ function describe(state: GameState, action: ActionPayload): string {
       return 'Advance turn'
     case 'DRAW_CARD':
       return `${player(action.playerId)} drew ${action.count ?? 1} card${(action.count ?? 1) === 1 ? '' : 's'}`
+    case 'MULLIGAN_TAKE':
+      return `${player(action.playerId)} took a mulligan`
+    case 'MULLIGAN_KEEP':
+      return `${player(action.playerId)} kept their opening hand`
+    case 'MULLIGAN_BOTTOM_CARD': {
+      const card = state.players.find(p => p.id === action.playerId)?.zones.hand.find(c => c.instanceId === action.cardId)
+      return `${player(action.playerId)} put ${card?.name ?? 'a card'} on the bottom`
+    }
     case 'MOVE_CARD': {
       const source = state.players.find(p => p.id === action.playerId)?.zones[action.from].find(card => card.instanceId === action.cardId)
       return `${player(action.playerId)} moved ${source?.name ?? 'a card'} to ${action.to}`
@@ -664,6 +711,22 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
   const nonUndoable = new Set(['PLAYER_JOIN', 'PLAYER_CONNECTED', 'SET_PLAYER_NAME', 'SET_COMMANDER', 'SET_DECK', 'SET_TURN_ORDER', 'UNDO', 'GAME_START', 'RESET_GAME'])
   if (!nonUndoable.has(action.type) && state.phase === 'active') {
     pushUndo(state.roomId, state)
+  }
+
+  if (state.phase === 'mulligan') {
+    const allowedDuringMulligan = new Set<ActionPayload['type']>([
+      'MULLIGAN_TAKE',
+      'MULLIGAN_KEEP',
+      'MULLIGAN_BOTTOM_CARD',
+      'PLAYER_CONNECTED',
+      'PLAYER_JOIN',
+      'SET_PLAYER_NAME',
+      'UNDO',
+      'RESET_GAME',
+    ])
+    if (!allowedDuringMulligan.has(action.type)) {
+      return state
+    }
   }
 
   switch (action.type) {
@@ -845,6 +908,120 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           description: describe(state, action),
           action,
           undoable: true,
+        }),
+      }
+    }
+
+    case 'MULLIGAN_TAKE': {
+      if (state.phase !== 'mulligan') return state
+
+      let changed = false
+      const players = state.players.map(player => {
+        if (player.id !== action.playerId || player.hasKeptOpeningHand) return player
+
+        const shuffledLibrary = shuffleCards([...player.zones.library, ...player.zones.hand])
+        const nextHand = shuffledLibrary.slice(0, 7)
+        const nextLibrary = shuffledLibrary.slice(7)
+        changed = true
+
+        return {
+          ...player,
+          mulligansTaken: player.mulligansTaken + 1,
+          zones: {
+            ...player.zones,
+            library: nextLibrary,
+            hand: nextHand,
+          },
+        }
+      })
+
+      if (!changed) return state
+
+      return {
+        ...state,
+        players,
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          description: describe(state, action),
+          action,
+          undoable: false,
+        }),
+      }
+    }
+
+    case 'MULLIGAN_KEEP': {
+      if (state.phase !== 'mulligan') return state
+
+      let changed = false
+      const players = state.players.map(player => {
+        if (player.id !== action.playerId || player.hasKeptOpeningHand) return player
+        changed = true
+        return {
+          ...player,
+          hasKeptOpeningHand: true,
+        }
+      })
+
+      if (!changed) return state
+
+      const nextState = maybeFinishMulligans({
+        ...state,
+        players,
+        actionSeq: state.actionSeq + 1,
+      })
+
+      return {
+        ...nextState,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          description: describe(state, action),
+          action,
+          undoable: false,
+        }),
+      }
+    }
+
+    case 'MULLIGAN_BOTTOM_CARD': {
+      if (state.phase !== 'mulligan') return state
+
+      let changed = false
+      const players = state.players.map(player => {
+        if (player.id !== action.playerId || !player.hasKeptOpeningHand || mulliganBottomsRemaining(player) <= 0) return player
+        const card = player.zones.hand.find(entry => entry.instanceId === action.cardId)
+        if (!card) return player
+        changed = true
+        return {
+          ...player,
+          zones: {
+            ...player.zones,
+            hand: player.zones.hand.filter(entry => entry.instanceId !== action.cardId),
+            library: [...player.zones.library, { ...card }],
+          },
+        }
+      })
+
+      if (!changed) return state
+
+      const nextState = maybeFinishMulligans({
+        ...state,
+        players,
+        actionSeq: state.actionSeq + 1,
+      })
+
+      return {
+        ...nextState,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          description: describe(state, action),
+          action,
+          undoable: false,
         }),
       }
     }
@@ -1655,12 +1832,14 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
 
     case 'GAME_START': {
       clearUndo(state.roomId)
-      return advanceThroughAutomaticPhases({
+      return {
         ...state,
-        phase: 'active',
+        phase: 'mulligan',
         hostControlsAllPlayers: action.hostControlsAllPlayers ?? false,
         players: state.players.map(initializePlayerForGame),
+        currentTurnIndex: 0,
         currentPhase: 'untap',
+        combat: { attackers: [] },
         stack: [],
         priorityPlayerId: null,
         priorityPassedIds: [],
@@ -1673,25 +1852,26 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           action,
           undoable: false,
         }),
-      })
+      }
     }
 
     case 'RESET_GAME': {
       clearUndo(state.roomId)
-      return advanceThroughAutomaticPhases({
+      return {
         ...state,
-        phase: 'active',
+        phase: 'mulligan',
         hostControlsAllPlayers: state.hostControlsAllPlayers,
         players: state.players.map(initializePlayerForGame),
         currentTurnIndex: 0,
         currentPhase: 'untap',
+        combat: { attackers: [] },
         stack: [],
         priorityPlayerId: null,
         priorityPassedIds: [],
         round: 1,
         log: [],
         actionSeq: state.actionSeq + 1,
-      })
+      }
     }
 
     case 'UNDO': {
