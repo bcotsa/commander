@@ -1,4 +1,4 @@
-import type { ColorSymbol, GameCard, ManaPool, Player } from '@/types/game-state'
+import type { ColorSymbol, GameCard, ManaPool, Player, TokenTemplateKey } from '@/types/game-state'
 
 const COLOR_ORDER: ColorSymbol[] = ['W', 'U', 'B', 'R', 'G', 'C']
 const BASIC_LAND_TYPES: Array<{ pattern: RegExp; color: ColorSymbol }> = [
@@ -24,8 +24,127 @@ export type ActivatedAbilityDefinition =
   | { id: string; label: string; kind: 'add_mana'; color: ColorSymbol; amount: number; requiresTap: boolean }
   | { id: string; label: string; kind: 'draw_card'; requiresTap: boolean; sacrifice: boolean }
 
+export type TriggerEventType = 'enters_battlefield' | 'attacks' | 'creature_dies'
+
+export type TriggerEffectDefinition =
+  | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number | 'opponents'; tapped?: boolean }
+  | { kind: 'draw_cards'; amount: number }
+  | { kind: 'drain_each_opponent'; amount: number; gainLife: number }
+
+export type TriggeredAbilityDefinition =
+  | { id: string; label: string; event: 'enters_battlefield'; effect: TriggerEffectDefinition; match: 'self' }
+  | { id: string; label: string; event: 'attacks'; effect: TriggerEffectDefinition; match: 'self' }
+  | { id: string; label: string; event: 'creature_dies'; effect: TriggerEffectDefinition; match: 'another_creature_you_control' | 'any_creature' }
+
+export interface TokenTemplate {
+  key: TokenTemplateKey
+  name: string
+  typeLine: string
+  oracleText: string | null
+  colorIdentity: ColorSymbol[]
+  power: number | null
+  toughness: number | null
+}
+
+const TOKEN_TEMPLATES: Record<TokenTemplateKey, TokenTemplate> = {
+  treasure: {
+    key: 'treasure',
+    name: 'Treasure',
+    typeLine: 'Token Artifact — Treasure',
+    oracleText: '{T}, Sacrifice this artifact: Add one mana of any color.',
+    colorIdentity: [],
+    power: null,
+    toughness: null,
+  },
+  food: {
+    key: 'food',
+    name: 'Food',
+    typeLine: 'Token Artifact — Food',
+    oracleText: '{2}, {T}, Sacrifice this artifact: You gain 3 life.',
+    colorIdentity: [],
+    power: null,
+    toughness: null,
+  },
+  clue: {
+    key: 'clue',
+    name: 'Clue',
+    typeLine: 'Token Artifact — Clue',
+    oracleText: '{2}, Sacrifice this artifact: Draw a card.',
+    colorIdentity: [],
+    power: null,
+    toughness: null,
+  },
+  map: {
+    key: 'map',
+    name: 'Map',
+    typeLine: 'Token Artifact — Map',
+    oracleText: '{1}, {T}, Sacrifice this artifact: Target creature you control explores. Activate only as a sorcery.',
+    colorIdentity: [],
+    power: null,
+    toughness: null,
+  },
+  squirrel: {
+    key: 'squirrel',
+    name: 'Squirrel',
+    typeLine: 'Token Creature — Squirrel',
+    oracleText: null,
+    colorIdentity: ['G'],
+    power: 1,
+    toughness: 1,
+  },
+  rat: {
+    key: 'rat',
+    name: 'Rat',
+    typeLine: 'Token Creature — Rat',
+    oracleText: null,
+    colorIdentity: ['B'],
+    power: 1,
+    toughness: 1,
+  },
+  insect: {
+    key: 'insect',
+    name: 'Insect',
+    typeLine: 'Token Creature — Insect',
+    oracleText: null,
+    colorIdentity: ['G'],
+    power: 1,
+    toughness: 1,
+  },
+  zombie: {
+    key: 'zombie',
+    name: 'Zombie',
+    typeLine: 'Token Creature — Zombie',
+    oracleText: null,
+    colorIdentity: ['B'],
+    power: 2,
+    toughness: 2,
+  },
+  snake: {
+    key: 'snake',
+    name: 'Snake',
+    typeLine: 'Token Creature — Snake',
+    oracleText: null,
+    colorIdentity: ['G'],
+    power: 1,
+    toughness: 1,
+  },
+  pest: {
+    key: 'pest',
+    name: 'Pest',
+    typeLine: 'Token Creature — Pest',
+    oracleText: 'When this creature dies, you gain 1 life.',
+    colorIdentity: ['B', 'G'],
+    power: 1,
+    toughness: 1,
+  },
+}
+
 export function emptyManaPool(): ManaPool {
   return { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 }
+}
+
+export function getTokenTemplate(key: TokenTemplateKey): TokenTemplate {
+  return TOKEN_TEMPLATES[key]
 }
 
 export function formatManaPool(pool: ManaPool): string {
@@ -310,6 +429,86 @@ export function getActivatedAbilities(card: Pick<GameCard, 'name' | 'typeLine' |
   return abilities
 }
 
+export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'>): TriggeredAbilityDefinition[] {
+  const abilities: TriggeredAbilityDefinition[] = []
+  const oracleText = (card.oracleText ?? '').replace(/\n/g, ' ').toLowerCase()
+  const lowerName = card.name.toLowerCase()
+
+  const entersTokens = parseCreateTokenEffect(oracleText, /(when|whenever) [^.,]* enters the battlefield, create ([^.]+?) tokens?/i)
+  if (entersTokens) {
+    abilities.push({
+      id: 'etb-create-tokens',
+      label: 'ETB trigger',
+      event: 'enters_battlefield',
+      match: 'self',
+      effect: entersTokens,
+    })
+  }
+
+  const attacksTokens = parseCreateTokenEffect(oracleText, /(when|whenever) [^.,]* attacks, create ([^.]+?) tokens?/i)
+  if (attacksTokens) {
+    abilities.push({
+      id: 'attack-create-tokens',
+      label: 'Attack trigger',
+      event: 'attacks',
+      match: 'self',
+      effect: attacksTokens,
+    })
+  }
+
+  if (oracleText.includes('whenever another creature you control dies, each opponent loses 1 life and you gain 1 life')) {
+    abilities.push({
+      id: 'dies-drain-team',
+      label: 'Dies trigger',
+      event: 'creature_dies',
+      match: 'another_creature_you_control',
+      effect: { kind: 'drain_each_opponent', amount: 1, gainLife: 1 },
+    })
+  }
+
+  if (oracleText.includes('whenever another creature dies, each opponent loses 1 life and you gain 1 life')) {
+    abilities.push({
+      id: 'dies-drain-any',
+      label: 'Dies trigger',
+      event: 'creature_dies',
+      match: 'any_creature',
+      effect: { kind: 'drain_each_opponent', amount: 1, gainLife: 1 },
+    })
+  }
+
+  if (oracleText.includes('whenever another creature dies, each opponent loses 1 life')) {
+    abilities.push({
+      id: 'dies-ping-any',
+      label: 'Dies trigger',
+      event: 'creature_dies',
+      match: 'any_creature',
+      effect: { kind: 'drain_each_opponent', amount: 1, gainLife: 0 },
+    })
+  }
+
+  if (oracleText.includes('whenever a creature dies, each opponent loses 1 life')) {
+    abilities.push({
+      id: 'dies-ping-creature',
+      label: 'Dies trigger',
+      event: 'creature_dies',
+      match: 'any_creature',
+      effect: { kind: 'drain_each_opponent', amount: 1, gainLife: 0 },
+    })
+  }
+
+  if (lowerName === 'morbid opportunist') {
+    abilities.push({
+      id: 'dies-draw',
+      label: 'Dies trigger',
+      event: 'creature_dies',
+      match: 'any_creature',
+      effect: { kind: 'draw_cards', amount: 1 },
+    })
+  }
+
+  return abilities
+}
+
 export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine' | 'oracleText'>): SimpleSpellDefinition | null {
   const typeLine = card.typeLine.toLowerCase()
   if (!typeLine.includes('instant') && !typeLine.includes('sorcery')) return null
@@ -405,4 +604,43 @@ function wordToNumber(value: string): number {
     seven: 7,
   }
   return map[value] ?? 0
+}
+
+function parseCreateTokenEffect(
+  oracleText: string,
+  pattern: RegExp
+): Extract<TriggerEffectDefinition, { kind: 'create_tokens' }> | null {
+  const match = oracleText.match(pattern)
+  if (!match?.[2]) return null
+
+  const fragment = match[2].trim().toLowerCase()
+  if (fragment.startsWith('x ')) return null
+
+  const countMatch = fragment.match(/^(a|an|one|two|three|four|five|six|seven|\d+)\b/)
+  const countToken = countMatch?.[1] ?? 'one'
+  const count = countToken === 'a' || countToken === 'an' ? 1 : wordToNumber(countToken)
+  const tokenKey = inferTokenKey(fragment)
+  if (!tokenKey || count <= 0) return null
+
+  const tapped = fragment.includes('tapped')
+  return {
+    kind: 'create_tokens',
+    tokenKey,
+    count,
+    tapped,
+  }
+}
+
+function inferTokenKey(fragment: string): TokenTemplateKey | null {
+  if (fragment.includes('treasure')) return 'treasure'
+  if (fragment.includes('food')) return 'food'
+  if (fragment.includes('clue')) return 'clue'
+  if (fragment.includes('map')) return 'map'
+  if (fragment.includes('squirrel')) return 'squirrel'
+  if (fragment.includes('rat')) return 'rat'
+  if (fragment.includes('insect')) return 'insect'
+  if (fragment.includes('zombie')) return 'zombie'
+  if (fragment.includes('snake')) return 'snake'
+  if (fragment.includes('pest')) return 'pest'
+  return null
 }

@@ -52,7 +52,26 @@ export interface GameCard {
   markedDamage: number
   summoningSick: boolean
   isCommander: boolean
+  isToken: boolean
+  tokenKey?: TokenTemplateKey
 }
+
+export type TokenTemplateKey =
+  | 'treasure'
+  | 'food'
+  | 'clue'
+  | 'map'
+  | 'squirrel'
+  | 'rat'
+  | 'insect'
+  | 'zombie'
+  | 'snake'
+  | 'pest'
+
+export type TriggerEffectPayload =
+  | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number; tapped?: boolean }
+  | { kind: 'draw_cards'; amount: number }
+  | { kind: 'drain_each_opponent'; amount: number; gainLife: number }
 
 export type ZoneName = keyof PlayerZones
 export type TurnPhase = 'untap' | 'upkeep' | 'draw' | 'main1' | 'combat' | 'main2' | 'end'
@@ -141,9 +160,11 @@ export interface StackItem {
   casterId: string
   casterName: string
   source: 'hand' | 'commandZone'
-  kind: 'commander' | 'permanent' | 'spell'
+  kind: 'commander' | 'permanent' | 'spell' | 'trigger'
   targetCardId?: string
   targetPlayerId?: string
+  abilityLabel?: string
+  triggerEffect?: TriggerEffectPayload
 }
 
 // Discriminated union of all possible game actions

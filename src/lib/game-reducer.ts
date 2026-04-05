@@ -1,6 +1,6 @@
-import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeckCard, PlayerZones, TurnPhase, StackItem } from '@/types/game-state'
+import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeckCard, PlayerZones, TurnPhase, StackItem, TokenTemplateKey, TriggerEffectPayload } from '@/types/game-state'
 import { checkEliminations } from './game-engine'
-import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getActivatedAbilities, getLandManaOptions, getSimpleSpellDefinition } from './card-rules'
+import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getActivatedAbilities, getLandManaOptions, getSimpleSpellDefinition, getTokenTemplate, getTriggeredAbilities, type TriggeredAbilityDefinition, type TriggerEffectDefinition } from './card-rules'
 
 const MAX_LOG = 50
 const TURN_PHASES: TurnPhase[] = ['untap', 'upkeep', 'draw', 'main1', 'combat', 'main2', 'end']
@@ -65,6 +65,7 @@ function importedCardToGameCards(card: ImportedDeckCard): GameCard[] {
     markedDamage: 0,
     summoningSick: false,
     isCommander: false,
+    isToken: false,
   }))
 }
 
@@ -86,8 +87,36 @@ function commanderToGameCard(player: Player): GameCard | null {
     markedDamage: 0,
     summoningSick: false,
     isCommander: true,
+    isToken: false,
   }
 }
+
+function createTokenCard(tokenKey: TokenTemplateKey, tapped = false): GameCard {
+  const template = getTokenTemplate(tokenKey)
+  return {
+    instanceId: `token-${tokenKey}-${crypto.randomUUID()}`,
+    scryfallId: null,
+    name: template.name,
+    imageUri: '',
+    colorIdentity: template.colorIdentity,
+    manaCost: null,
+    oracleText: template.oracleText,
+    typeLine: template.typeLine,
+    power: template.power,
+    toughness: template.toughness,
+    tapped,
+    markedDamage: 0,
+    summoningSick: template.typeLine.toLowerCase().includes('creature'),
+    isCommander: false,
+    isToken: true,
+    tokenKey,
+  }
+}
+
+type TriggerOccurrence =
+  | { type: 'enters_battlefield'; controllerId: string; card: GameCard }
+  | { type: 'attacks'; controllerId: string; card: GameCard }
+  | { type: 'creature_dies'; controllerId: string; card: GameCard }
 
 function shuffleCards<T>(cards: T[]): T[] {
   const next = [...cards]
@@ -226,7 +255,9 @@ function moveBattlefieldCardToGraveyard(player: Player, cardId: string): Player 
       zones: {
         ...player.zones,
         battlefield: player.zones.battlefield.filter(card => card.instanceId !== cardId),
-        graveyard: [...player.zones.graveyard, { ...fromBattlefield, tapped: false, markedDamage: 0 }],
+        graveyard: fromBattlefield.isToken
+          ? player.zones.graveyard
+          : [...player.zones.graveyard, { ...fromBattlefield, tapped: false, markedDamage: 0 }],
       },
     }
   }
@@ -239,7 +270,9 @@ function moveBattlefieldCardToGraveyard(player: Player, cardId: string): Player 
     zones: {
       ...player.zones,
       lands: player.zones.lands.filter(card => card.instanceId !== cardId),
-      graveyard: [...player.zones.graveyard, { ...fromLands, tapped: false, markedDamage: 0 }],
+      graveyard: fromLands.isToken
+        ? player.zones.graveyard
+        : [...player.zones.graveyard, { ...fromLands, tapped: false, markedDamage: 0 }],
     },
   }
 }
@@ -279,6 +312,90 @@ function nextLivingPlayerIdAfter(state: GameState, playerId: string): string | n
   const currentIndex = livingOrder.indexOf(playerId)
   if (currentIndex === -1) return livingOrder[0] ?? null
   return livingOrder[(currentIndex + 1) % livingOrder.length] ?? null
+}
+
+function resolveTriggerEffect(effect: TriggerEffectDefinition, state: GameState, controllerId: string): TriggerEffectPayload {
+  if (effect.kind === 'create_tokens') {
+    const count = effect.count === 'opponents'
+      ? state.players.filter(player => player.id !== controllerId && !player.isEliminated).length
+      : effect.count
+    return {
+      kind: 'create_tokens',
+      tokenKey: effect.tokenKey,
+      count,
+      tapped: effect.tapped,
+    }
+  }
+
+  if (effect.kind === 'draw_cards') {
+    return { kind: 'draw_cards', amount: effect.amount }
+  }
+
+  return {
+    kind: 'drain_each_opponent',
+    amount: effect.amount,
+    gainLife: effect.gainLife,
+  }
+}
+
+function matchesTriggeredAbility(
+  sourceCard: GameCard,
+  sourceControllerId: string,
+  ability: TriggeredAbilityDefinition,
+  occurrence: TriggerOccurrence
+): boolean {
+  if (ability.event !== occurrence.type) return false
+
+  if (occurrence.type === 'enters_battlefield' || occurrence.type === 'attacks') {
+    return ability.match === 'self' && sourceCard.instanceId === occurrence.card.instanceId
+  }
+
+  if (occurrence.type === 'creature_dies') {
+    if (!isCreatureCard(occurrence.card)) return false
+    if (ability.match === 'another_creature_you_control') {
+      return occurrence.controllerId === sourceControllerId && occurrence.card.instanceId !== sourceCard.instanceId
+    }
+    return ability.match === 'any_creature'
+  }
+
+  return false
+}
+
+function queueTriggeredAbilities(state: GameState, occurrences: TriggerOccurrence[]): GameState {
+  if (occurrences.length === 0) return state
+
+  const triggers: StackItem[] = []
+
+  for (const player of state.players) {
+    for (const sourceCard of player.zones.battlefield) {
+      const abilities = getTriggeredAbilities(sourceCard)
+      for (const occurrence of occurrences) {
+        for (const ability of abilities) {
+          if (!matchesTriggeredAbility(sourceCard, player.id, ability, occurrence)) continue
+          triggers.push({
+            id: crypto.randomUUID(),
+            card: sourceCard,
+            casterId: player.id,
+            casterName: player.name,
+            source: 'hand',
+            kind: 'trigger',
+            abilityLabel: ability.label,
+            triggerEffect: resolveTriggerEffect(ability.effect, state, player.id),
+          })
+        }
+      }
+    }
+  }
+
+  if (triggers.length === 0) return state
+
+  return {
+    ...state,
+    stack: [...state.stack, ...triggers],
+    priorityPlayerId: state.turnOrder[state.currentTurnIndex] ?? null,
+    priorityPassedIds: [],
+    actionSeq: state.actionSeq + 1,
+  }
 }
 
 function describeTarget(state: GameState, targetCardId?: string, targetPlayerId?: string): string {
@@ -395,6 +512,7 @@ function resolveStackTop(state: GameState): GameState {
       hand: player.zones.hand.map(card => ({ ...card })),
     },
   }))
+  const triggerOccurrences: TriggerOccurrence[] = []
 
   const targetPlayer = stackItem.targetPlayerId
     ? players.find(player => player.id === stackItem.targetPlayerId) ?? null
@@ -409,29 +527,80 @@ function resolveStackTop(state: GameState): GameState {
   let spellAutomated = true
 
   if (stackItem.kind === 'commander') {
+    const enteredCard = entersBattlefield(stackItem.card)
     players = players.map(player =>
       player.id === stackItem.casterId
         ? {
             ...player,
             zones: {
               ...player.zones,
-              battlefield: [...player.zones.battlefield, entersBattlefield(stackItem.card)],
+              battlefield: [...player.zones.battlefield, enteredCard],
             },
           }
         : player
     )
+    triggerOccurrences.push({ type: 'enters_battlefield', controllerId: stackItem.casterId, card: enteredCard })
   } else if (stackItem.kind === 'permanent') {
+    const enteredCard = entersBattlefield(stackItem.card)
     players = players.map(player =>
       player.id === stackItem.casterId
         ? {
             ...player,
             zones: {
               ...player.zones,
-              battlefield: [...player.zones.battlefield, entersBattlefield(stackItem.card)],
+              battlefield: [...player.zones.battlefield, enteredCard],
             },
           }
         : player
     )
+    triggerOccurrences.push({ type: 'enters_battlefield', controllerId: stackItem.casterId, card: enteredCard })
+  } else if (stackItem.kind === 'trigger' && stackItem.triggerEffect) {
+    const effect = stackItem.triggerEffect
+    switch (effect.kind) {
+      case 'create_tokens': {
+        const createdTokens = Array.from({ length: effect.count }, () =>
+          createTokenCard(effect.tokenKey, effect.tapped ?? false)
+        )
+        players = players.map(player =>
+          player.id === stackItem.casterId
+            ? {
+                ...player,
+                zones: {
+                  ...player.zones,
+                  battlefield: [...player.zones.battlefield, ...createdTokens],
+                },
+              }
+            : player
+        )
+        for (const token of createdTokens) {
+          triggerOccurrences.push({ type: 'enters_battlefield', controllerId: stackItem.casterId, card: token })
+        }
+        break
+      }
+      case 'draw_cards':
+        players = players.map(player =>
+          player.id === stackItem.casterId
+            ? {
+                ...player,
+                zones: {
+                  ...player.zones,
+                  library: player.zones.library.slice(Math.min(effect.amount, player.zones.library.length)),
+                  hand: [...player.zones.hand, ...player.zones.library.slice(0, effect.amount)],
+                },
+              }
+            : player
+        )
+        break
+      case 'drain_each_opponent':
+        players = players.map(player => {
+          if (player.id === stackItem.casterId) {
+            return { ...player, life: player.life + effect.gainLife }
+          }
+          if (player.isEliminated) return player
+          return { ...player, life: player.life - effect.amount }
+        })
+        break
+    }
   } else {
     const definition = getSimpleSpellDefinition(stackItem.card)
     if (!definition) {
@@ -480,13 +649,22 @@ function resolveStackTop(state: GameState): GameState {
           break
         case 'destroy_target_creature':
         case 'destroy_target_nonland_permanent':
-        case 'destroy_target_permanent':
+        case 'destroy_target_permanent': {
+          const deadCard = targetBattlefieldOwner && stackItem.targetCardId
+            ? targetBattlefieldOwner.zones.battlefield.find(entry => entry.instanceId === stackItem.targetCardId) ??
+              targetBattlefieldOwner.zones.lands.find(entry => entry.instanceId === stackItem.targetCardId) ??
+              null
+            : null
           players = addSpellToCasterGraveyard(players).map(player =>
             player.id === targetBattlefieldOwner?.id && stackItem.targetCardId
               ? moveBattlefieldCardToGraveyard(player, stackItem.targetCardId)
               : player
           )
+          if (deadCard && isCreatureCard(deadCard)) {
+            triggerOccurrences.push({ type: 'creature_dies', controllerId: targetBattlefieldOwner!.id, card: deadCard })
+          }
           break
+        }
         case 'damage_target_creature':
         case 'damage_target_creature_or_player':
           players = addSpellToCasterGraveyard(players).map(player => {
@@ -498,7 +676,6 @@ function resolveStackTop(state: GameState): GameState {
             const updatedBattlefield = player.zones.battlefield.map(entry =>
               entry.instanceId === stackItem.targetCardId ? { ...entry, markedDamage: entry.markedDamage + definition.amount } : entry
             )
-
             return {
               ...player,
               zones: {
@@ -508,11 +685,18 @@ function resolveStackTop(state: GameState): GameState {
                   ...player.zones.graveyard,
                   ...updatedBattlefield
                     .filter(entry => isCreatureCard(entry) && entry.toughness !== null && entry.markedDamage >= entry.toughness)
+                    .filter(entry => !entry.isToken)
                     .map(entry => ({ ...entry, tapped: false, markedDamage: 0 })),
                 ],
               },
             }
           })
+          if (targetBattlefieldOwner) {
+            const damagedCard = targetBattlefieldOwner.zones.battlefield.find(entry => entry.instanceId === stackItem.targetCardId)
+            if (damagedCard && isCreatureCard(damagedCard) && damagedCard.toughness !== null && damagedCard.markedDamage + definition.amount >= damagedCard.toughness) {
+              triggerOccurrences.push({ type: 'creature_dies', controllerId: targetBattlefieldOwner.id, card: damagedCard })
+            }
+          }
           break
         case 'mass_damage_creatures': {
           const amount = definition.amount === 'creature_count'
@@ -523,6 +707,11 @@ function resolveStackTop(state: GameState): GameState {
             const updatedBattlefield = player.zones.battlefield.map(entry =>
               isCreatureCard(entry) ? { ...entry, markedDamage: entry.markedDamage + amount } : entry
             )
+            const deadCreatures = updatedBattlefield
+              .filter(entry => isCreatureCard(entry) && entry.toughness !== null && entry.markedDamage >= entry.toughness)
+            for (const deadCreature of deadCreatures) {
+              triggerOccurrences.push({ type: 'creature_dies', controllerId: player.id, card: deadCreature })
+            }
             return {
               ...player,
               zones: {
@@ -532,6 +721,7 @@ function resolveStackTop(state: GameState): GameState {
                   ...player.zones.graveyard,
                   ...updatedBattlefield
                     .filter(entry => isCreatureCard(entry) && entry.toughness !== null && entry.markedDamage >= entry.toughness)
+                    .filter(entry => !entry.isToken)
                     .map(entry => ({ ...entry, tapped: false, markedDamage: 0 })),
                 ],
               },
@@ -558,12 +748,18 @@ function resolveStackTop(state: GameState): GameState {
               },
             }
           })
+          if (definition.kind === 'return_graveyard_creature_to_battlefield') {
+            const reanimated = state.players.find(player => player.id === stackItem.casterId)?.zones.graveyard.find(entry => entry.instanceId === stackItem.targetCardId)
+            if (reanimated) {
+              triggerOccurrences.push({ type: 'enters_battlefield', controllerId: stackItem.casterId, card: entersBattlefield(reanimated) })
+            }
+          }
           break
       }
     }
   }
 
-  const next = {
+  const nextBase = {
     ...state,
     players,
     stack: state.stack.slice(0, -1),
@@ -581,6 +777,7 @@ function resolveStackTop(state: GameState): GameState {
         })
       : state.log,
   }
+  const next = queueTriggeredAbilities(nextBase, triggerOccurrences)
   return checkEliminations(next)
 }
 
@@ -664,7 +861,7 @@ function describe(state: GameState, action: ActionPayload): string {
       return 'Combat resolved'
     case 'RESOLVE_STACK': {
       const top = state.stack[state.stack.length - 1]
-      return `Resolved ${top?.card.name ?? 'top of stack'}`
+      return `Resolved ${top?.kind === 'trigger' ? `${top.card.name} — ${top.abilityLabel ?? 'trigger'}` : top?.card.name ?? 'top of stack'}`
     }
     case 'PASS_PRIORITY':
       return `${player(action.playerId)} passed priority`
@@ -1459,7 +1656,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       if (!attacker || !defender || attacker.tapped || attacker.summoningSick || !isCreatureCard(attacker)) return state
       if (action.defendingPlayerId === action.playerId || defender.isEliminated) return state
 
-      return {
+      const nextState = queueTriggeredAbilities({
         ...state,
         players: state.players.map(player =>
           player.id === action.playerId
@@ -1495,7 +1692,9 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           action,
           undoable: true,
         }),
-      }
+      }, [{ type: 'attacks', controllerId: action.playerId, card: attacker }])
+
+      return nextState
     }
 
     case 'REMOVE_ATTACKER': {
@@ -1672,6 +1871,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         }
       }
 
+      const deadCreatures: TriggerOccurrence[] = []
       players = players.map(player => ({
         ...player,
         zones: {
@@ -1680,6 +1880,11 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
             ...player.zones.graveyard,
             ...player.zones.battlefield
               .filter(card => isCreatureCard(card) && card.toughness !== null && card.markedDamage >= card.toughness)
+              .map(card => {
+                deadCreatures.push({ type: 'creature_dies', controllerId: player.id, card })
+                return card
+              })
+              .filter(card => !card.isToken)
               .map(card => ({ ...card, tapped: false, markedDamage: 0 })),
           ],
           battlefield: player.zones.battlefield.filter(
@@ -1688,13 +1893,13 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         },
       }))
 
-      const next = {
+      const next = queueTriggeredAbilities({
         ...state,
         players: players.map(player => ({ ...player, manaPool: emptyManaPool() })),
         currentPhase: 'main2' as const,
         combat: { attackers: [] },
         actionSeq: state.actionSeq + 1,
-      }
+      }, deadCreatures)
       const withElim = checkEliminations(next)
       return {
         ...withElim,
