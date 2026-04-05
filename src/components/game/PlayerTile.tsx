@@ -202,6 +202,7 @@ interface PlayerTileProps {
   player: Player
   allPlayers: Player[]
   isCurrentTurn: boolean
+  isPriorityProxy?: boolean
   currentTurnPlayerId: string | null
   currentPhase: TurnPhase
   combat: CombatState
@@ -224,9 +225,9 @@ interface PlayerTileProps {
 }
 
 export function PlayerTile({
-  player, allPlayers, isCurrentTurn, currentTurnPlayerId, currentPhase, combat, rotated, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onActivateAbility, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker, onOpenDamage, onOpenCounters
+  player, allPlayers, isCurrentTurn, isPriorityProxy, currentTurnPlayerId, currentPhase, combat, rotated, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onActivateAbility, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker, onOpenDamage, onOpenCounters
 }: PlayerTileProps) {
-  const borderColor = isCurrentTurn ? 'border-violet-500' : 'border-slate-700'
+  const borderColor = isPriorityProxy ? 'border-emerald-500' : isCurrentTurn ? 'border-violet-500' : 'border-slate-700'
   const { library, hand, lands, battlefield, graveyard, exile, commandZone } = player.zones
   const [selected, setSelected] = useState<{ zone: ZoneName; card: GameCard } | null>(null)
   const [expandedZone, setExpandedZone] = useState<{ zone: 'graveyard' | 'exile'; title: string } | null>(null)
@@ -572,6 +573,11 @@ export function PlayerTile({
           <span className="font-semibold text-sm truncate">{player.name || `Player ${player.seat + 1}`}</span>
           {player.commander && (
             <span className="text-xs text-slate-400 truncate">{player.commander.name}</span>
+          )}
+          {isPriorityProxy && (
+            <span className="text-[10px] text-emerald-300 truncate">
+              Host acting for this player
+            </span>
           )}
           <span className="text-[10px] text-emerald-300 truncate">
             Mana: {formatManaPool(player.manaPool)}

@@ -76,9 +76,22 @@ export function TurnTracker({ players, turnOrder, currentTurnIndex, currentPhase
         </div>
 
         {stackCount > 0 && priorityPlayerName && (
-          <span className="flex-shrink-0 rounded-full bg-slate-800 px-2 py-1 text-[11px] text-slate-300">
-            Priority: {priorityPlayerName}
-          </span>
+          <div className="flex flex-col items-end">
+            <span className="flex-shrink-0 rounded-full bg-slate-800 px-2 py-1 text-[11px] text-slate-300">
+              Priority: {priorityPlayerName}
+            </span>
+            {(() => {
+              const priorityPlayer = priorityPlayerId ? players.find(p => p.id === priorityPlayerId) : null
+              if (isHost && priorityPlayer && !priorityPlayer.isConnected && priorityPlayerId !== myPlayerId) {
+                return (
+                  <span className="mt-1 text-[10px] text-emerald-300">
+                    Use {priorityPlayer.name || `P${priorityPlayer.seat + 1}`}&apos;s cards or pass for them
+                  </span>
+                )
+              }
+              return null
+            })()}
+          </div>
         )}
 
         {(() => {

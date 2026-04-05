@@ -74,6 +74,9 @@ export function Game() {
         <PlayerGrid
           players={state.players}
           currentTurnPlayerId={currentTurnPlayerId}
+          priorityPlayerId={state.priorityPlayerId}
+          isHost={isHost}
+          myPlayerId={myPlayerId}
           currentPhase={state.currentPhase}
           combat={state.combat}
           onLifeDelta={(pid, delta) => sendAction({ type: 'LIFE_CHANGE', targetId: pid, delta })}
