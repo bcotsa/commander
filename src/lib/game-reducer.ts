@@ -647,6 +647,29 @@ function resolveStackTop(state: GameState): GameState {
               : player
           )
           break
+        case 'create_tokens': {
+          const count = definition.count === 'opponents'
+            ? players.filter(player => player.id !== stackItem.casterId && !player.isEliminated).length
+            : definition.count
+          const createdTokens = Array.from({ length: count }, () =>
+            createTokenCard(definition.tokenKey, definition.tapped ?? false)
+          )
+          players = addSpellToCasterGraveyard(players).map(player =>
+            player.id === stackItem.casterId
+              ? {
+                  ...player,
+                  zones: {
+                    ...player.zones,
+                    battlefield: [...player.zones.battlefield, ...createdTokens],
+                  },
+                }
+              : player
+          )
+          for (const token of createdTokens) {
+            triggerOccurrences.push({ type: 'enters_battlefield', controllerId: stackItem.casterId, card: token })
+          }
+          break
+        }
         case 'destroy_target_creature':
         case 'destroy_target_nonland_permanent':
         case 'destroy_target_permanent': {

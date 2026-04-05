@@ -11,6 +11,7 @@ const BASIC_LAND_TYPES: Array<{ pattern: RegExp; color: ColorSymbol }> = [
 
 export type SimpleSpellDefinition =
   | { kind: 'draw_cards'; amount: number; loseLife?: number; target: 'none' }
+  | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number | 'opponents'; tapped?: boolean; target: 'none' }
   | { kind: 'destroy_target_creature'; target: 'battlefield_creature' }
   | { kind: 'destroy_target_nonland_permanent'; target: 'battlefield_nonland_permanent' }
   | { kind: 'destroy_target_permanent'; target: 'battlefield_permanent' }
@@ -527,6 +528,17 @@ export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine
     }
   }
 
+  const tokenSpell = parseCreateTokenEffect(oracleText, /create ([^.]+?) tokens?/i)
+  if (tokenSpell) {
+    return {
+      kind: 'create_tokens',
+      tokenKey: tokenSpell.tokenKey,
+      count: tokenSpell.count,
+      tapped: tokenSpell.tapped,
+      target: 'none',
+    }
+  }
+
   if (oracleText.includes('destroy target creature')) {
     return { kind: 'destroy_target_creature', target: 'battlefield_creature' }
   }
@@ -618,9 +630,14 @@ function parseCreateTokenEffect(
 
   const countMatch = fragment.match(/^(a|an|one|two|three|four|five|six|seven|\d+)\b/)
   const countToken = countMatch?.[1] ?? 'one'
-  const count = countToken === 'a' || countToken === 'an' ? 1 : wordToNumber(countToken)
+  const count =
+    fragment.includes('for each opponent')
+      ? 'opponents'
+      : countToken === 'a' || countToken === 'an'
+      ? 1
+      : wordToNumber(countToken)
   const tokenKey = inferTokenKey(fragment)
-  if (!tokenKey || count <= 0) return null
+  if (!tokenKey || (typeof count === 'number' && count <= 0)) return null
 
   const tapped = fragment.includes('tapped')
   return {
