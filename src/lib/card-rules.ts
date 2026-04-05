@@ -435,7 +435,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
   const oracleText = (card.oracleText ?? '').replace(/\n/g, ' ').toLowerCase()
   const lowerName = card.name.toLowerCase()
 
-  const entersTokens = parseCreateTokenEffect(oracleText, /(when|whenever) [^.,]* enters the battlefield, create ([^.]+?) tokens?/i)
+  const entersTokens = parseCreateTokenEffect(oracleText, /(when|whenever) [^.,]* enters(?: the battlefield)?, create ([^.]+?) tokens?/i)
   if (entersTokens) {
     abilities.push({
       id: 'etb-create-tokens',
@@ -631,7 +631,7 @@ function parseCreateTokenEffect(
   const countMatch = fragment.match(/^(a|an|one|two|three|four|five|six|seven|\d+)\b/)
   const countToken = countMatch?.[1] ?? 'one'
   const count =
-    fragment.includes('for each opponent')
+    fragment.includes('for each opponent') || fragment.includes('equal to the number of opponents')
       ? 'opponents'
       : countToken === 'a' || countToken === 'an'
       ? 1
