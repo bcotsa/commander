@@ -39,6 +39,11 @@ export type TriggeredAbilityDefinition =
   | { id: string; label: string; event: 'attacks'; effect: TriggerEffectDefinition; match: 'self' }
   | { id: string; label: string; event: 'creature_dies'; effect: TriggerEffectDefinition; match: 'another_creature_you_control' | 'any_creature' }
 
+export type LandEntryEffectDefinition =
+  | { kind: 'gain_life'; amount: number }
+  | { kind: 'bounce_land' }
+  | { kind: 'exile_graveyard' }
+
 export interface TokenTemplate {
   key: TokenTemplateKey
   name: string
@@ -649,6 +654,33 @@ export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine
   const massDamage = oracleText.match(/deals? (\d+) damage to each creature/)
   if (massDamage) {
     return { kind: 'mass_damage_creatures', amount: Number(massDamage[1]), target: 'none' }
+  }
+
+  return null
+}
+
+export function landEntersTapped(card: Pick<GameCard, 'typeLine' | 'oracleText'>): boolean {
+  if (!card.typeLine.toLowerCase().includes('land')) return false
+  const oracleText = (card.oracleText ?? '').replace(/\n/g, ' ').toLowerCase()
+  return oracleText.includes('enters tapped') || oracleText.includes('enters the battlefield tapped')
+}
+
+export function getLandEntryEffect(card: Pick<GameCard, 'name' | 'typeLine' | 'oracleText'>): LandEntryEffectDefinition | null {
+  if (!card.typeLine.toLowerCase().includes('land')) return null
+
+  const oracleText = (card.oracleText ?? '').replace(/\n/g, ' ').toLowerCase()
+
+  const gainLifeMatch = oracleText.match(/when [^.,]* enters(?: the battlefield)?, you gain (\d+) life/)
+  if (gainLifeMatch) {
+    return { kind: 'gain_life', amount: Number(gainLifeMatch[1]) }
+  }
+
+  if (oracleText.includes('return a land you control to its owner\'s hand')) {
+    return { kind: 'bounce_land' }
+  }
+
+  if (oracleText.includes('exile all cards from target player\'s graveyard')) {
+    return { kind: 'exile_graveyard' }
   }
 
   return null

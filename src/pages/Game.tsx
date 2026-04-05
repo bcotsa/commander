@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { PlayerGrid } from '@/components/game/PlayerGrid'
 import { ExploreChoiceOverlay } from '@/components/game/ExploreChoiceOverlay'
+import { LandEffectOverlay } from '@/components/game/LandEffectOverlay'
 import { MulliganOverlay } from '@/components/game/MulliganOverlay'
 import { StackPanel } from '@/components/game/StackPanel'
 import { TurnTracker } from '@/components/game/TurnTracker'
@@ -107,6 +108,29 @@ export function Game() {
           onKeep={(playerId) => sendAction({ type: 'MULLIGAN_KEEP', playerId })}
           onMulligan={(playerId) => sendAction({ type: 'MULLIGAN_TAKE', playerId })}
           onBottomCard={(playerId, cardId) => sendAction({ type: 'MULLIGAN_BOTTOM_CARD', playerId, cardId })}
+        />
+      )}
+
+      {state.pendingLandEffectChoice && (
+        <LandEffectOverlay
+          choice={state.pendingLandEffectChoice}
+          players={state.players}
+          myPlayerId={myPlayerId}
+          canControlAllPlayers={Boolean(isHost && state.hostControlsAllPlayers)}
+          onChooseLand={(cardId) => sendAction({
+            type: 'RESOLVE_LAND_EFFECT',
+            playerId: state.pendingLandEffectChoice?.playerId ?? myPlayerId,
+            sourceCardId: state.pendingLandEffectChoice?.sourceCardId ?? '',
+            effect: 'bounce_land',
+            targetCardId: cardId,
+          })}
+          onChoosePlayer={(playerId) => sendAction({
+            type: 'RESOLVE_LAND_EFFECT',
+            playerId: state.pendingLandEffectChoice?.playerId ?? myPlayerId,
+            sourceCardId: state.pendingLandEffectChoice?.sourceCardId ?? '',
+            effect: 'exile_graveyard',
+            targetPlayerId: playerId,
+          })}
         />
       )}
 

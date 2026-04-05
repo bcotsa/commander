@@ -1,6 +1,6 @@
 import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeckCard, PlayerZones, TurnPhase, StackItem, TokenTemplateKey, TriggerEffectPayload } from '@/types/game-state'
 import { checkEliminations } from './game-engine'
-import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getActivatedAbilities, getLandManaOptions, getSimpleSpellDefinition, getTokenTemplate, getTriggeredAbilities, type TriggeredAbilityDefinition, type TriggerEffectDefinition } from './card-rules'
+import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getActivatedAbilities, getLandEntryEffect, getLandManaOptions, getSimpleSpellDefinition, getTokenTemplate, getTriggeredAbilities, landEntersTapped, type TriggeredAbilityDefinition, type TriggerEffectDefinition } from './card-rules'
 
 const MAX_LOG = 50
 const TURN_PHASES: TurnPhase[] = ['untap', 'upkeep', 'draw', 'main1', 'combat', 'main2', 'end']
@@ -18,6 +18,7 @@ export function createInitialGameState(roomCode: string, roomId = ''): GameState
     currentPhase: 'untap',
     combat: { attackers: [] },
     stack: [],
+    pendingLandEffectChoice: null,
     pendingExploreChoice: null,
     priorityPlayerId: null,
     priorityPassedIds: [],
@@ -225,6 +226,7 @@ function beginActiveGame(state: GameState): GameState {
     currentTurnIndex: 0,
     currentPhase: 'untap',
     stack: [],
+    pendingLandEffectChoice: null,
     pendingExploreChoice: null,
     priorityPlayerId: null,
     priorityPassedIds: [],
@@ -317,6 +319,16 @@ function applyTappedManaCards(player: Player, cards: GameCard[]): Pick<Player, '
       battlefield: player.zones.battlefield.map(card => byId.get(card.instanceId) ?? card),
     },
   }
+}
+
+function mergePaidCardsIntoZones(player: Player, paidCards?: GameCard[]): Pick<Player, 'zones'> {
+  if (!paidCards) {
+    return { zones: player.zones }
+  }
+  return applyTappedManaCards(player, [
+    ...player.zones.lands.map(card => paidCards.find(entry => entry.instanceId === card.instanceId) ?? card),
+    ...player.zones.battlefield.map(card => paidCards.find(entry => entry.instanceId === card.instanceId) ?? card),
+  ])
 }
 
 function removeCardFromBattlefieldOrLands(player: Player, cardId: string): Player['zones'] {
@@ -888,6 +900,15 @@ function describe(state: GameState, action: ActionPayload): string {
         state.players.find(p => p.id === action.playerId)?.zones.lands.find(card => card.instanceId === action.cardId)
       return `${player(action.playerId)} activated ${source?.name ?? 'an ability'}`
     }
+    case 'RESOLVE_LAND_EFFECT': {
+      const choice = state.pendingLandEffectChoice
+      if (action.effect === 'bounce_land') {
+        const card = state.players.find(p => p.id === action.playerId)?.zones.lands.find(c => c.instanceId === action.targetCardId)
+        return `${player(action.playerId)} returned ${card?.name ?? 'a land'} to hand`
+      }
+      const targetPlayer = action.targetPlayerId ? state.players.find(p => p.id === action.targetPlayerId)?.name ?? 'a player' : 'a player'
+      return `${player(action.playerId)} exiled ${targetPlayer}'s graveyard with ${choice?.sourceName ?? 'a land'}`
+    }
     case 'RESOLVE_EXPLORE_CHOICE': {
       const choice = state.pendingExploreChoice
       return `${player(action.playerId)} chose to ${action.putInGraveyard ? 'put' : 'leave'} ${choice?.revealedCard.name ?? 'the revealed card'} ${action.putInGraveyard ? 'in the graveyard' : 'on top'}`
@@ -1004,6 +1025,20 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       'RESET_GAME',
     ])
     if (!allowedDuringExploreChoice.has(action.type)) {
+      return state
+    }
+  }
+
+  if (state.pendingLandEffectChoice) {
+    const allowedDuringLandEffectChoice = new Set<ActionPayload['type']>([
+      'RESOLVE_LAND_EFFECT',
+      'PLAYER_CONNECTED',
+      'PLAYER_JOIN',
+      'SET_PLAYER_NAME',
+      'UNDO',
+      'RESET_GAME',
+    ])
+    if (!allowedDuringLandEffectChoice.has(action.type)) {
       return state
     }
   }
@@ -1337,6 +1372,63 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       }
     }
 
+    case 'RESOLVE_LAND_EFFECT': {
+      const choice = state.pendingLandEffectChoice
+      if (!choice || choice.playerId !== action.playerId || choice.sourceCardId !== action.sourceCardId || choice.effect !== action.effect) {
+        return state
+      }
+
+      let changed = false
+      const players = state.players.map(player => {
+        if (action.effect === 'bounce_land') {
+          if (player.id !== action.playerId || !action.targetCardId) return player
+          const target = player.zones.lands.find(card => card.instanceId === action.targetCardId)
+          if (!target) return player
+          changed = true
+          return {
+            ...player,
+            zones: {
+              ...player.zones,
+              lands: player.zones.lands.filter(card => card.instanceId !== action.targetCardId),
+              hand: [...player.zones.hand, { ...target, tapped: false }],
+            },
+          }
+        }
+
+        if (action.effect === 'exile_graveyard') {
+          if (player.id !== action.targetPlayerId) return player
+          changed = true
+          return {
+            ...player,
+            zones: {
+              ...player.zones,
+              exile: [...player.zones.exile, ...player.zones.graveyard],
+              graveyard: [],
+            },
+          }
+        }
+
+        return player
+      })
+
+      if (!changed) return state
+
+      return {
+        ...state,
+        players,
+        pendingLandEffectChoice: null,
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }
+    }
+
     case 'MOVE_CARD': {
       const players = state.players.map(p => {
         if (p.id !== action.playerId) return p
@@ -1503,14 +1595,15 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           const sourceInLands = player.zones.lands.some(entry => entry.instanceId === action.cardId)
           const drawn = player.zones.library.slice(0, 1)
           const manaPool = payment?.manaPool ?? player.manaPool
+          const paidZones = mergePaidCardsIntoZones(player, payment?.cards).zones
 
           return {
             ...player,
             manaPool,
             zones: {
-              ...player.zones,
-              battlefield: sourceInBattlefield ? player.zones.battlefield.filter(entry => entry.instanceId !== action.cardId) : player.zones.battlefield,
-              lands: sourceInLands ? player.zones.lands.filter(entry => entry.instanceId !== action.cardId) : player.zones.lands,
+              ...paidZones,
+              battlefield: sourceInBattlefield ? paidZones.battlefield.filter(entry => entry.instanceId !== action.cardId) : paidZones.battlefield,
+              lands: sourceInLands ? paidZones.lands.filter(entry => entry.instanceId !== action.cardId) : paidZones.lands,
               library: player.zones.library.slice(drawn.length),
               hand: [...player.zones.hand, ...drawn],
               graveyard: ability.sacrifice && !card.isToken ? [...player.zones.graveyard, { ...card, tapped: false }] : player.zones.graveyard,
@@ -1521,14 +1614,15 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         if (ability.kind === 'gain_life') {
           const sourceInBattlefield = player.zones.battlefield.some(entry => entry.instanceId === action.cardId)
           const sourceInLands = player.zones.lands.some(entry => entry.instanceId === action.cardId)
+          const paidZones = mergePaidCardsIntoZones(player, payment?.cards).zones
           return {
             ...player,
             life: player.life + ability.amount,
             manaPool: payment?.manaPool ?? player.manaPool,
             zones: {
-              ...player.zones,
-              battlefield: sourceInBattlefield ? player.zones.battlefield.filter(entry => entry.instanceId !== action.cardId) : player.zones.battlefield,
-              lands: sourceInLands ? player.zones.lands.filter(entry => entry.instanceId !== action.cardId) : player.zones.lands,
+              ...paidZones,
+              battlefield: sourceInBattlefield ? paidZones.battlefield.filter(entry => entry.instanceId !== action.cardId) : paidZones.battlefield,
+              lands: sourceInLands ? paidZones.lands.filter(entry => entry.instanceId !== action.cardId) : paidZones.lands,
               graveyard: ability.sacrifice && !card.isToken ? [...player.zones.graveyard, { ...card, tapped: false }] : player.zones.graveyard,
             },
           }
@@ -1551,20 +1645,21 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
               revealedCard: { ...topCard },
             }
           }
+          const paidZones = mergePaidCardsIntoZones(player, payment?.cards).zones
 
           return {
             ...player,
             manaPool: payment?.manaPool ?? player.manaPool,
             zones: {
-              ...player.zones,
-              battlefield: player.zones.battlefield
+              ...paidZones,
+              battlefield: paidZones.battlefield
                 .filter(entry => !(sourceInBattlefield && entry.instanceId === action.cardId))
                 .map(entry =>
                   entry.instanceId === action.targetCardId && !isTopLand
                     ? { ...entry, plusOneCounters: entry.plusOneCounters + 1 }
                     : entry
                 ),
-              lands: sourceInLands ? player.zones.lands.filter(entry => entry.instanceId !== action.cardId) : player.zones.lands,
+              lands: sourceInLands ? paidZones.lands.filter(entry => entry.instanceId !== action.cardId) : paidZones.lands,
               library: topCard ? player.zones.library.slice(1) : player.zones.library,
               hand: topCard && isTopLand ? [...player.zones.hand, topCard] : player.zones.hand,
               graveyard: [
@@ -1600,18 +1695,31 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       if (currentPlayerId !== action.playerId || !isMainPhase(state.currentPhase)) return state
 
       let changed = false
+      let pendingLandEffectChoice = state.pendingLandEffectChoice
       const players = state.players.map(player => {
         if (player.id !== action.playerId || player.landsPlayedThisTurn >= 1) return player
         const card = player.zones.hand.find(c => c.instanceId === action.cardId)
         if (!card || !isLandCard(card)) return player
+        const entryEffect = getLandEntryEffect(card)
+        const playedLand = { ...card, tapped: landEntersTapped(card) }
+
+        if (entryEffect?.kind === 'bounce_land' || entryEffect?.kind === 'exile_graveyard') {
+          pendingLandEffectChoice = {
+            playerId: player.id,
+            sourceCardId: action.cardId,
+            sourceName: card.name,
+            effect: entryEffect.kind,
+          }
+        }
         changed = true
         return {
           ...player,
           landsPlayedThisTurn: player.landsPlayedThisTurn + 1,
+          life: entryEffect?.kind === 'gain_life' ? player.life + entryEffect.amount : player.life,
           zones: {
             ...player.zones,
             hand: player.zones.hand.filter(c => c.instanceId !== action.cardId),
-            lands: [...player.zones.lands, { ...card }],
+            lands: [...player.zones.lands, playedLand],
           },
         }
       })
@@ -1620,6 +1728,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       return {
         ...state,
         players,
+        pendingLandEffectChoice,
         actionSeq: state.actionSeq + 1,
         log: appendLog(state.log, {
           timestamp: new Date().toISOString(),
@@ -2236,6 +2345,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         currentPhase: 'untap',
         combat: { attackers: [] },
         stack: [],
+        pendingLandEffectChoice: null,
+        pendingExploreChoice: null,
         priorityPlayerId: null,
         priorityPassedIds: [],
         actionSeq: state.actionSeq + 1,
@@ -2261,6 +2372,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         currentPhase: 'untap',
         combat: { attackers: [] },
         stack: [],
+        pendingLandEffectChoice: null,
+        pendingExploreChoice: null,
         priorityPlayerId: null,
         priorityPassedIds: [],
         round: 1,

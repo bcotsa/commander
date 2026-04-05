@@ -135,6 +135,7 @@ export interface GameState {
   currentPhase: TurnPhase
   combat: CombatState
   stack: StackItem[]
+  pendingLandEffectChoice: LandEffectChoiceState | null
   pendingExploreChoice: ExploreChoiceState | null
   priorityPlayerId: string | null
   priorityPassedIds: string[]
@@ -176,6 +177,13 @@ export interface ExploreChoiceState {
   revealedCard: GameCard
 }
 
+export interface LandEffectChoiceState {
+  playerId: string
+  sourceCardId: string
+  sourceName: string
+  effect: 'bounce_land' | 'exile_graveyard'
+}
+
 // Discriminated union of all possible game actions
 export type ActionPayload =
   | { type: 'LIFE_CHANGE'; targetId: string; delta: number }
@@ -200,6 +208,7 @@ export type ActionPayload =
   | { type: 'TOGGLE_CARD_TAPPED'; playerId: string; cardId: string }
   | { type: 'ADD_MANA'; playerId: string; cardId: string; color: ColorSymbol }
   | { type: 'ACTIVATE_ABILITY'; playerId: string; cardId: string; abilityId: string; targetCardId?: string }
+  | { type: 'RESOLVE_LAND_EFFECT'; playerId: string; sourceCardId: string; effect: 'bounce_land' | 'exile_graveyard'; targetCardId?: string; targetPlayerId?: string }
   | { type: 'RESOLVE_EXPLORE_CHOICE'; playerId: string; putInGraveyard: boolean }
   | { type: 'PLAY_LAND'; playerId: string; cardId: string }
   | { type: 'CAST_COMMANDER'; playerId: string; cardId: string }
