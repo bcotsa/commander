@@ -20,6 +20,10 @@ export type SimpleSpellDefinition =
   | { kind: 'return_graveyard_creature_to_battlefield'; target: 'own_graveyard_creature' }
   | { kind: 'return_graveyard_creature_to_hand'; target: 'own_graveyard_creature' }
 
+export type ActivatedAbilityDefinition =
+  | { id: string; label: string; kind: 'add_mana'; color: ColorSymbol; amount: number; requiresTap: boolean }
+  | { id: string; label: string; kind: 'draw_card'; requiresTap: boolean; sacrifice: boolean }
+
 export function emptyManaPool(): ManaPool {
   return { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 }
 }
@@ -60,11 +64,11 @@ export function canPayManaCost(pool: ManaPool, manaCost: string | null): boolean
 
 export function canAutoPayManaCost(
   pool: ManaPool,
-  lands: GameCard[],
+  manaCards: GameCard[],
   manaCost: string | null,
   player: Pick<Player, 'commander'>
 ): boolean {
-  return autoPayManaCost(pool, lands, manaCost, player) !== null
+  return autoPayManaCost(pool, manaCards, manaCost, player) !== null
 }
 
 export function spendManaCost(pool: ManaPool, manaCost: string | null): ManaPool | null {
@@ -89,79 +93,85 @@ export function spendManaCost(pool: ManaPool, manaCost: string | null): ManaPool
 
 export function autoPayManaCost(
   pool: ManaPool,
-  lands: GameCard[],
+  manaCards: GameCard[],
   manaCost: string | null,
   player: Pick<Player, 'commander'>
-): { manaPool: ManaPool; lands: GameCard[] } | null {
+): { manaPool: ManaPool; cards: GameCard[] } | null {
   const directPayment = spendManaCost(pool, manaCost)
   if (directPayment) {
-    return { manaPool: directPayment, lands }
+    return { manaPool: directPayment, cards: manaCards }
   }
 
-  const untappedLands = lands
-    .filter(land => !land.tapped)
-    .map(land => ({ land, options: getLandManaOptions(land, player) }))
-    .filter(entry => entry.options.length > 0)
+  const untappedManaCards = manaCards
+    .filter(card => !card.tapped)
+    .map(card => ({
+      card,
+      abilities: getActivatedAbilities(card, player).filter(
+        (ability): ability is Extract<ActivatedAbilityDefinition, { kind: 'add_mana' }> => ability.kind === 'add_mana'
+      ),
+    }))
+    .filter(entry => entry.abilities.length > 0)
 
   // Cap search to avoid exponential blowup on large boards with many duals.
   // Beyond this limit, fall back to a greedy approach.
   const MAX_SEARCH_LANDS = 12
 
-  if (untappedLands.length > MAX_SEARCH_LANDS) {
-    return greedyPayManaCost(pool, untappedLands, lands, manaCost)
+  if (untappedManaCards.length > MAX_SEARCH_LANDS) {
+    return greedyPayManaCost(pool, untappedManaCards, manaCards, manaCost)
   }
 
   const search = (
     index: number,
     currentPool: ManaPool,
-    currentLands: GameCard[]
-  ): { manaPool: ManaPool; lands: GameCard[] } | null => {
+    currentCards: GameCard[]
+  ): { manaPool: ManaPool; cards: GameCard[] } | null => {
     const paidPool = spendManaCost(currentPool, manaCost)
-    if (paidPool) return { manaPool: paidPool, lands: currentLands }
-    if (index >= untappedLands.length) return null
+    if (paidPool) return { manaPool: paidPool, cards: currentCards }
+    if (index >= untappedManaCards.length) return null
 
-    const { land, options } = untappedLands[index]
+    const { card, abilities } = untappedManaCards[index]
 
-    const skipResult = search(index + 1, currentPool, currentLands)
+    const skipResult = search(index + 1, currentPool, currentCards)
     if (skipResult) return skipResult
 
-    for (const color of options) {
-      const nextPool = { ...currentPool, [color]: currentPool[color] + 1 }
-      const nextLands = currentLands.map(entry =>
-        entry.instanceId === land.instanceId ? { ...entry, tapped: true } : entry
+    for (const ability of abilities) {
+      const nextPool = { ...currentPool, [ability.color]: currentPool[ability.color] + ability.amount }
+      const nextCards = currentCards.map(entry =>
+        entry.instanceId === card.instanceId ? { ...entry, tapped: ability.requiresTap ? true : entry.tapped } : entry
       )
-      const result = search(index + 1, nextPool, nextLands)
+      const result = search(index + 1, nextPool, nextCards)
       if (result) return result
     }
 
     return null
   }
 
-  return search(0, { ...pool }, lands)
+  return search(0, { ...pool }, manaCards)
 }
 
 function greedyPayManaCost(
   pool: ManaPool,
-  untappedLands: Array<{ land: GameCard; options: ColorSymbol[] }>,
-  allLands: GameCard[],
+  untappedManaCards: Array<{ card: GameCard; abilities: Extract<ActivatedAbilityDefinition, { kind: 'add_mana' }>[] }>,
+  allCards: GameCard[],
   manaCost: string | null,
-): { manaPool: ManaPool; lands: GameCard[] } | null {
+): { manaPool: ManaPool; cards: GameCard[] } | null {
   const { colored, generic } = parseManaCost(manaCost)
   const currentPool = { ...pool }
   const tappedIds = new Set<string>()
 
   // First pass: tap lands for colored requirements, preferring single-color lands
-  const sorted = [...untappedLands].sort((a, b) => a.options.length - b.options.length)
+  const sorted = [...untappedManaCards].sort((a, b) => a.abilities.length - b.abilities.length)
   for (const color of COLOR_ORDER) {
     let needed = colored[color] - currentPool[color]
     if (needed <= 0) continue
     for (const entry of sorted) {
       if (needed <= 0) break
-      if (tappedIds.has(entry.land.instanceId)) continue
-      if (!entry.options.includes(color)) continue
-      tappedIds.add(entry.land.instanceId)
-      currentPool[color] += 1
-      needed -= 1
+      if (tappedIds.has(entry.card.instanceId)) continue
+      const ability = entry.abilities.find(option => option.color === color)
+      if (!ability) continue
+      tappedIds.add(entry.card.instanceId)
+      currentPool[color] += ability.amount
+      needed -= ability.amount
     }
   }
 
@@ -179,20 +189,22 @@ function greedyPayManaCost(
   }
   for (const entry of sorted) {
     if (genericNeeded <= 0) break
-    if (tappedIds.has(entry.land.instanceId)) continue
-    tappedIds.add(entry.land.instanceId)
-    currentPool[entry.options[0]] += 1
-    genericNeeded -= 1
+    if (tappedIds.has(entry.card.instanceId)) continue
+    const ability = entry.abilities[0]
+    if (!ability) continue
+    tappedIds.add(entry.card.instanceId)
+    currentPool[ability.color] += ability.amount
+    genericNeeded -= ability.amount
   }
   if (genericNeeded > 0) return null
 
   const resultPool = spendManaCost(currentPool, manaCost)
   if (!resultPool) return null
 
-  const resultLands = allLands.map(land =>
-    tappedIds.has(land.instanceId) ? { ...land, tapped: true } : land
+  const resultCards = allCards.map(card =>
+    tappedIds.has(card.instanceId) ? { ...card, tapped: true } : card
   )
-  return { manaPool: resultPool, lands: resultLands }
+  return { manaPool: resultPool, cards: resultCards }
 }
 
 export function getLandManaOptions(card: Pick<GameCard, 'name' | 'typeLine' | 'oracleText'>, player: Pick<Player, 'commander'>): ColorSymbol[] {
@@ -217,6 +229,85 @@ export function getLandManaOptions(card: Pick<GameCard, 'name' | 'typeLine' | 'o
   }
 
   return COLOR_ORDER.filter(color => options.has(color))
+}
+
+export function getActivatedAbilities(card: Pick<GameCard, 'name' | 'typeLine' | 'oracleText' | 'tapped'>, player: Pick<Player, 'commander'>): ActivatedAbilityDefinition[] {
+  const abilities: ActivatedAbilityDefinition[] = []
+  const lowerName = card.name.toLowerCase()
+  const lowerType = card.typeLine.toLowerCase()
+  const oracleText = card.oracleText ?? ''
+
+  if (lowerType.includes('land')) {
+    for (const color of getLandManaOptions(card, player)) {
+      abilities.push({
+        id: `mana-${color}-1`,
+        label: `Tap for ${color}`,
+        kind: 'add_mana',
+        color,
+        amount: 1,
+        requiresTap: true,
+      })
+    }
+    return abilities
+  }
+
+  if (lowerName === 'sol ring') {
+    abilities.push({ id: 'mana-C-2', label: 'Tap for CC', kind: 'add_mana', color: 'C', amount: 2, requiresTap: true })
+  }
+
+  if (lowerName === 'arcane signet' || lowerName === "commander's sphere") {
+    const colors: ColorSymbol[] = player.commander?.colorIdentity?.length ? player.commander.colorIdentity : ['W', 'U', 'B', 'R', 'G']
+    for (const color of colors) {
+      abilities.push({
+        id: `mana-${color}-1`,
+        label: `Tap for ${color}`,
+        kind: 'add_mana',
+        color,
+        amount: 1,
+        requiresTap: true,
+      })
+    }
+  }
+
+  if (lowerName === "commander's sphere") {
+    abilities.push({ id: 'draw-sac', label: 'Sacrifice: Draw', kind: 'draw_card', requiresTap: false, sacrifice: true })
+  }
+
+  if (lowerName === 'devoted druid') {
+    abilities.push({ id: 'mana-G-1', label: 'Tap for G', kind: 'add_mana', color: 'G', amount: 1, requiresTap: true })
+  }
+
+  if (lowerName === 'ignoble hierarch') {
+    for (const color of ['B', 'R', 'G'] as const) {
+      abilities.push({ id: `mana-${color}-1`, label: `Tap for ${color}`, kind: 'add_mana', color, amount: 1, requiresTap: true })
+    }
+  }
+
+  if (lowerName === 'llanowar elves' || lowerName === 'elvish mystic' || lowerName === 'fyndhorn elves') {
+    abilities.push({ id: 'mana-G-1', label: 'Tap for G', kind: 'add_mana', color: 'G', amount: 1, requiresTap: true })
+  }
+
+  const genericTapMana = oracleText.match(/\{T\}:\s*Add ((?:\{[WUBRGC]\})+)/i)
+  if (abilities.length === 0 && genericTapMana) {
+    const symbols = genericTapMana[1]?.match(/\{([WUBRGC])\}/g) ?? []
+    const counts = new Map<ColorSymbol, number>()
+    for (const symbol of symbols) {
+      const color = symbol.replace(/[{}]/g, '') as ColorSymbol
+      counts.set(color, (counts.get(color) ?? 0) + 1)
+    }
+    for (const [color, amount] of counts.entries()) {
+      abilities.push({
+        id: `mana-${color}-${amount}`,
+        label: `Tap for ${color}${amount > 1 ? amount : ''}`,
+        kind: 'add_mana',
+        color,
+        amount,
+        requiresTap: true,
+      })
+    }
+  }
+
+  return abilities
 }
 
 export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine' | 'oracleText'>): SimpleSpellDefinition | null {

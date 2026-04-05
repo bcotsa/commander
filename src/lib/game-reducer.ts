@@ -1,6 +1,6 @@
 import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeckCard, PlayerZones, TurnPhase, StackItem } from '@/types/game-state'
 import { checkEliminations } from './game-engine'
-import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getLandManaOptions, getSimpleSpellDefinition } from './card-rules'
+import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getActivatedAbilities, getLandManaOptions, getSimpleSpellDefinition } from './card-rules'
 
 const MAX_LOG = 50
 const TURN_PHASES: TurnPhase[] = ['untap', 'upkeep', 'draw', 'main1', 'combat', 'main2', 'end']
@@ -200,6 +200,17 @@ function moveBattlefieldCardToGraveyard(player: Player, cardId: string): Player 
       ...player.zones,
       lands: player.zones.lands.filter(card => card.instanceId !== cardId),
       graveyard: [...player.zones.graveyard, { ...fromLands, tapped: false, markedDamage: 0 }],
+    },
+  }
+}
+
+function applyTappedManaCards(player: Player, cards: GameCard[]): Pick<Player, 'zones'> {
+  const byId = new Map(cards.map(card => [card.instanceId, card]))
+  return {
+    zones: {
+      ...player.zones,
+      lands: player.zones.lands.map(card => byId.get(card.instanceId) ?? card),
+      battlefield: player.zones.battlefield.map(card => byId.get(card.instanceId) ?? card),
     },
   }
 }
@@ -561,6 +572,12 @@ function describe(state: GameState, action: ActionPayload): string {
     case 'ADD_MANA': {
       const land = state.players.find(p => p.id === action.playerId)?.zones.lands.find(card => card.instanceId === action.cardId)
       return `${player(action.playerId)} added {${action.color}} with ${land?.name ?? 'a land'}`
+    }
+    case 'ACTIVATE_ABILITY': {
+      const source =
+        state.players.find(p => p.id === action.playerId)?.zones.battlefield.find(card => card.instanceId === action.cardId) ??
+        state.players.find(p => p.id === action.playerId)?.zones.lands.find(card => card.instanceId === action.cardId)
+      return `${player(action.playerId)} activated ${source?.name ?? 'an ability'}`
     }
     case 'TOGGLE_CARD_TAPPED': {
       const currentPlayer = state.players.find(p => p.id === action.playerId)
@@ -939,6 +956,79 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       }
     }
 
+    case 'ACTIVATE_ABILITY': {
+      const currentPlayerId = state.turnOrder[state.currentTurnIndex]
+      if (state.stack.length > 0 && state.priorityPlayerId !== action.playerId) return state
+      if (state.stack.length === 0 && currentPlayerId !== action.playerId) return state
+
+      let changed = false
+      const players = state.players.map(player => {
+        if (player.id !== action.playerId) return player
+        const card =
+          player.zones.battlefield.find(entry => entry.instanceId === action.cardId) ??
+          player.zones.lands.find(entry => entry.instanceId === action.cardId)
+        if (!card) return player
+
+        const ability = getActivatedAbilities(card, player).find(entry => entry.id === action.abilityId)
+        if (!ability) return player
+        if (ability.requiresTap && card.tapped) return player
+
+        changed = true
+
+        if (ability.kind === 'add_mana') {
+          const updatedCards = [
+            ...player.zones.lands.map(entry =>
+              entry.instanceId === action.cardId ? { ...entry, tapped: ability.requiresTap ? true : entry.tapped } : entry
+            ),
+            ...player.zones.battlefield.map(entry =>
+              entry.instanceId === action.cardId ? { ...entry, tapped: ability.requiresTap ? true : entry.tapped } : entry
+            ),
+          ]
+
+          return {
+            ...player,
+            manaPool: { ...player.manaPool, [ability.color]: player.manaPool[ability.color] + ability.amount },
+            zones: applyTappedManaCards(player, updatedCards).zones,
+          }
+        }
+
+        if (ability.kind === 'draw_card') {
+          const sourceInBattlefield = player.zones.battlefield.some(entry => entry.instanceId === action.cardId)
+          const sourceInLands = player.zones.lands.some(entry => entry.instanceId === action.cardId)
+          const drawn = player.zones.library.slice(0, 1)
+
+          return {
+            ...player,
+            zones: {
+              ...player.zones,
+              battlefield: sourceInBattlefield ? player.zones.battlefield.filter(entry => entry.instanceId !== action.cardId) : player.zones.battlefield,
+              lands: sourceInLands ? player.zones.lands.filter(entry => entry.instanceId !== action.cardId) : player.zones.lands,
+              library: player.zones.library.slice(drawn.length),
+              hand: [...player.zones.hand, ...drawn],
+              graveyard: ability.sacrifice ? [...player.zones.graveyard, { ...card, tapped: false }] : player.zones.graveyard,
+            },
+          }
+        }
+
+        return player
+      })
+      if (!changed) return state
+
+      return {
+        ...state,
+        players,
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          description: `${state.players.find(p => p.id === action.playerId)?.name ?? 'Player'} activated an ability`,
+          action,
+          undoable: true,
+        }),
+      }
+    }
+
     case 'PLAY_LAND': {
       const currentPlayerId = state.turnOrder[state.currentTurnIndex]
       if (currentPlayerId !== action.playerId || !isMainPhase(state.currentPhase)) return state
@@ -987,7 +1077,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         if (player.id !== action.playerId) return player
         const card = player.zones.commandZone.find(c => c.instanceId === action.cardId)
         if (!card) return player
-        const payment = autoPayManaCost(player.manaPool, player.zones.lands, card.manaCost, player)
+        const payment = autoPayManaCost(player.manaPool, [...player.zones.lands, ...player.zones.battlefield], card.manaCost, player)
         if (!payment) return player
         changed = true
         return {
@@ -995,7 +1085,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           manaPool: payment.manaPool,
           zones: {
             ...player.zones,
-            lands: payment.lands,
+            ...applyTappedManaCards(player, payment.cards).zones,
             commandZone: player.zones.commandZone.filter(c => c.instanceId !== action.cardId),
           },
         }
@@ -1042,7 +1132,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         if (player.id !== action.playerId) return player
         const card = player.zones.hand.find(c => c.instanceId === action.cardId)
         if (!card || isLandCard(card) || !isPermanentCard(card)) return player
-        const payment = autoPayManaCost(player.manaPool, player.zones.lands, card.manaCost, player)
+        const payment = autoPayManaCost(player.manaPool, [...player.zones.lands, ...player.zones.battlefield], card.manaCost, player)
         if (!payment) return player
         changed = true
         return {
@@ -1050,7 +1140,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           manaPool: payment.manaPool,
           zones: {
             ...player.zones,
-            lands: payment.lands,
+            ...applyTappedManaCards(player, payment.cards).zones,
             hand: player.zones.hand.filter(c => c.instanceId !== action.cardId),
           },
         }
@@ -1094,7 +1184,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       if (!caster || !card || isPermanentCard(card) || isLandCard(card)) return state
 
       const definition = getSimpleSpellDefinition(card)
-      if (!definition || !canAutoPayManaCost(caster.manaPool, caster.zones.lands, card.manaCost, caster)) return state
+      if (!definition || !canAutoPayManaCost(caster.manaPool, [...caster.zones.lands, ...caster.zones.battlefield], card.manaCost, caster)) return state
 
       const targetPlayer = action.targetPlayerId
         ? state.players.find(player => player.id === action.targetPlayerId) ?? null
@@ -1139,14 +1229,14 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
 
       const players = state.players.map(player => {
         if (player.id !== action.playerId) return player
-        const payment = autoPayManaCost(player.manaPool, player.zones.lands, card.manaCost, player)
+        const payment = autoPayManaCost(player.manaPool, [...player.zones.lands, ...player.zones.battlefield], card.manaCost, player)
         if (!payment) return player
         return {
           ...player,
           manaPool: payment.manaPool,
           zones: {
             ...player.zones,
-            lands: payment.lands,
+            ...applyTappedManaCards(player, payment.cards).zones,
             hand: player.zones.hand.filter(entry => entry.instanceId !== action.cardId),
           },
         }

@@ -11,7 +11,7 @@ interface PlayerGridProps {
   onDrawCard: (playerId: string) => void
   onMoveCard: (playerId: string, from: import('@/types/game-state').ZoneName, to: import('@/types/game-state').ZoneName, cardId: string) => void
   onToggleTapped: (playerId: string, cardId: string) => void
-  onAddMana: (playerId: string, cardId: string, color: import('@/types/game-state').ColorSymbol) => void
+  onActivateAbility: (playerId: string, cardId: string, abilityId: string) => void
   onPlayLand: (playerId: string, cardId: string) => void
   onCastCommander: (playerId: string, cardId: string) => void
   onCastPermanent: (playerId: string, cardId: string) => void
@@ -32,7 +32,7 @@ const GRID_CLASSES: Record<number, string> = {
   6: 'grid-cols-2',
 }
 
-export function PlayerGrid({ players, currentTurnPlayerId, currentPhase, combat, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onAddMana, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker }: PlayerGridProps) {
+export function PlayerGrid({ players, currentTurnPlayerId, currentPhase, combat, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onActivateAbility, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker }: PlayerGridProps) {
   const openModal = useUiStore(s => s.openModal)
   const count = players.length
 
@@ -55,7 +55,7 @@ export function PlayerGrid({ players, currentTurnPlayerId, currentPhase, combat,
             onDrawCard={() => onDrawCard(player.id)}
             onMoveCard={(from, to, cardId) => onMoveCard(player.id, from, to, cardId)}
             onToggleTapped={(cardId) => onToggleTapped(player.id, cardId)}
-            onAddMana={(cardId, color) => onAddMana(player.id, cardId, color)}
+            onActivateAbility={(cardId, abilityId) => onActivateAbility(player.id, cardId, abilityId)}
             onPlayLand={(cardId) => onPlayLand(player.id, cardId)}
             onCastCommander={(cardId) => onCastCommander(player.id, cardId)}
             onCastPermanent={(cardId) => onCastPermanent(player.id, cardId)}

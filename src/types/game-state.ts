@@ -163,6 +163,7 @@ export type ActionPayload =
   | { type: 'MOVE_CARD'; playerId: string; from: ZoneName; to: ZoneName; cardId: string }
   | { type: 'TOGGLE_CARD_TAPPED'; playerId: string; cardId: string }
   | { type: 'ADD_MANA'; playerId: string; cardId: string; color: ColorSymbol }
+  | { type: 'ACTIVATE_ABILITY'; playerId: string; cardId: string; abilityId: string }
   | { type: 'PLAY_LAND'; playerId: string; cardId: string }
   | { type: 'CAST_COMMANDER'; playerId: string; cardId: string }
   | { type: 'CAST_PERMANENT'; playerId: string; cardId: string }

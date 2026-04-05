@@ -80,7 +80,7 @@ export function Game() {
           onDrawCard={(pid) => sendAction({ type: 'DRAW_CARD', playerId: pid })}
           onMoveCard={(pid, from, to, cardId) => sendAction({ type: 'MOVE_CARD', playerId: pid, from, to, cardId })}
           onToggleTapped={(pid, cardId) => sendAction({ type: 'TOGGLE_CARD_TAPPED', playerId: pid, cardId })}
-          onAddMana={(pid, cardId, color) => sendAction({ type: 'ADD_MANA', playerId: pid, cardId, color })}
+          onActivateAbility={(pid, cardId, abilityId) => sendAction({ type: 'ACTIVATE_ABILITY', playerId: pid, cardId, abilityId })}
           onPlayLand={(pid, cardId) => sendAction({ type: 'PLAY_LAND', playerId: pid, cardId })}
           onCastCommander={(pid, cardId) => sendAction({ type: 'CAST_COMMANDER', playerId: pid, cardId })}
           onCastPermanent={(pid, cardId) => sendAction({ type: 'CAST_PERMANENT', playerId: pid, cardId })}

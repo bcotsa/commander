@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ColorPips } from '@/components/ui/ColorPips'
 import { CardPreview } from '@/components/ui/CardPreview'
-import type { Player, GameCard, ZoneName, TurnPhase, CombatState, ColorSymbol } from '@/types/game-state'
-import { canAutoPayManaCost, formatManaPool, getLandManaOptions, getSimpleSpellDefinition } from '@/lib/card-rules'
+import type { Player, GameCard, ZoneName, TurnPhase, CombatState } from '@/types/game-state'
+import { canAutoPayManaCost, formatManaPool, getActivatedAbilities, getSimpleSpellDefinition } from '@/lib/card-rules'
 
 function CardThumb({
   card,
@@ -210,7 +210,7 @@ interface PlayerTileProps {
   onDrawCard: () => void
   onMoveCard: (from: ZoneName, to: ZoneName, cardId: string) => void
   onToggleTapped: (cardId: string) => void
-  onAddMana: (cardId: string, color: ColorSymbol) => void
+  onActivateAbility: (cardId: string, abilityId: string) => void
   onPlayLand: (cardId: string) => void
   onCastCommander: (cardId: string) => void
   onCastPermanent: (cardId: string) => void
@@ -224,7 +224,7 @@ interface PlayerTileProps {
 }
 
 export function PlayerTile({
-  player, allPlayers, isCurrentTurn, currentTurnPlayerId, currentPhase, combat, rotated, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onAddMana, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker, onOpenDamage, onOpenCounters
+  player, allPlayers, isCurrentTurn, currentTurnPlayerId, currentPhase, combat, rotated, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onActivateAbility, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker, onOpenDamage, onOpenCounters
 }: PlayerTileProps) {
   const borderColor = isCurrentTurn ? 'border-violet-500' : 'border-slate-700'
   const { library, hand, lands, battlefield, graveyard, exile, commandZone } = player.zones
@@ -237,8 +237,10 @@ export function PlayerTile({
   const selectedIsPermanent = selected ? !selected.card.typeLine.toLowerCase().includes('instant') && !selected.card.typeLine.toLowerCase().includes('sorcery') : false
   const selectedIsCreature = selected ? selected.card.typeLine.toLowerCase().includes('creature') && selected.card.power !== null && selected.card.toughness !== null : false
   const selectedSpell = selected ? getSimpleSpellDefinition(selected.card) : null
-  const selectedCanPay = selected ? canAutoPayManaCost(player.manaPool, lands, selected.card.manaCost, player) : false
-  const landManaOptions = selected?.zone === 'lands' ? getLandManaOptions(selected.card, player) : []
+  const selectedCanPay = selected ? canAutoPayManaCost(player.manaPool, [...lands, ...battlefield], selected.card.manaCost, player) : false
+  const activatedAbilities = selected && (selected.zone === 'battlefield' || selected.zone === 'lands')
+    ? getActivatedAbilities(selected.card, player)
+    : []
   const activeAttack = selected ? combat.attackers.find(a => a.attackerId === selected.card.instanceId) : null
   const defendableAttacks = combat.attackers.filter(a => a.defendingPlayerId === player.id)
   const spellCardTargets = selectedSpell && selected
@@ -313,16 +315,16 @@ export function PlayerTile({
       >
         <div className="mb-1 truncate text-[10px] font-medium text-violet-200">{card.name}</div>
         <div className="flex flex-wrap gap-1">
-          {selected.zone === 'lands' && !card.tapped && landManaOptions.map(color => (
+          {(selected.zone === 'battlefield' || selected.zone === 'lands') && activatedAbilities.map(ability => (
             <button
-              key={color}
+              key={ability.id}
               onClick={() => {
-                onAddMana(card.instanceId, color)
+                onActivateAbility(card.instanceId, ability.id)
                 setSelected(null)
               }}
               className="rounded-md bg-emerald-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-emerald-600"
             >
-              Tap {color}
+              {ability.label}
             </button>
           ))}
           {selected.zone === 'hand' && selectedIsLand && (
