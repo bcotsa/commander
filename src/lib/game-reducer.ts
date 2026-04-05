@@ -120,8 +120,14 @@ function createTokenCard(tokenKey: TokenTemplateKey, tapped = false): GameCard {
 
 type TriggerOccurrence =
   | { type: 'enters_battlefield'; controllerId: string; card: GameCard }
+  | { type: 'creature_enters'; controllerId: string; card: GameCard }
+  | { type: 'token_created'; controllerId: string; card: GameCard }
+  | { type: 'token_sacrificed'; controllerId: string; card: GameCard }
   | { type: 'attacks'; controllerId: string; card: GameCard }
   | { type: 'creature_dies'; controllerId: string; card: GameCard }
+  | { type: 'upkeep'; activePlayerId: string }
+  | { type: 'end_step'; activePlayerId: string }
+  | { type: 'spell_cast'; controllerId: string; card: GameCard }
 
 function createTokensForPlayer(player: Player, tokenKey: TokenTemplateKey, count: number, tapped = false): GameCard[] {
   if (count <= 0) return []
@@ -382,6 +388,10 @@ function resolveTriggerEffect(effect: TriggerEffectDefinition, state: GameState,
     return { kind: 'draw_cards', amount: effect.amount }
   }
 
+  if (effect.kind === 'gain_life') {
+    return { kind: 'gain_life', amount: effect.amount }
+  }
+
   return {
     kind: 'drain_each_opponent',
     amount: effect.amount,
@@ -401,12 +411,42 @@ function matchesTriggeredAbility(
     return ability.match === 'self' && sourceCard.instanceId === occurrence.card.instanceId
   }
 
+  if (occurrence.type === 'creature_enters') {
+    return ability.match === 'another_creature_you_control_enters'
+      && occurrence.controllerId === sourceControllerId
+      && occurrence.card.instanceId !== sourceCard.instanceId
+  }
+
+  if (occurrence.type === 'token_created') {
+    if (ability.match === 'token_you_create' || ability.match === 'token_you_create_or_sacrifice') {
+      return occurrence.controllerId === sourceControllerId
+    }
+    return false
+  }
+
+  if (occurrence.type === 'token_sacrificed') {
+    return ability.match === 'token_you_create_or_sacrifice' && occurrence.controllerId === sourceControllerId
+  }
+
   if (occurrence.type === 'creature_dies') {
     if (!isCreatureCard(occurrence.card)) return false
     if (ability.match === 'another_creature_you_control') {
       return occurrence.controllerId === sourceControllerId && occurrence.card.instanceId !== sourceCard.instanceId
     }
     return ability.match === 'any_creature'
+  }
+
+  if (occurrence.type === 'upkeep') {
+    if (ability.match === 'each_upkeep') return true
+    return ability.match === 'your_upkeep' && occurrence.activePlayerId === sourceControllerId
+  }
+
+  if (occurrence.type === 'end_step') {
+    return ability.match === 'your_end_step' && occurrence.activePlayerId === sourceControllerId
+  }
+
+  if (occurrence.type === 'spell_cast') {
+    return ability.match === 'spell_you_cast' && occurrence.controllerId === sourceControllerId
   }
 
   return false
@@ -484,6 +524,21 @@ function pushStackItem(
   }
 }
 
+function queuePhaseTriggers(state: GameState, phase: TurnPhase, turnIndex = state.currentTurnIndex): GameState {
+  const activePlayerId = state.turnOrder[turnIndex]
+  if (!activePlayerId) return state
+
+  if (phase === 'upkeep') {
+    return queueTriggeredAbilities(state, [{ type: 'upkeep', activePlayerId }])
+  }
+
+  if (phase === 'end') {
+    return queueTriggeredAbilities(state, [{ type: 'end_step', activePlayerId }])
+  }
+
+  return state
+}
+
 function applyPhaseEntry(state: GameState, phase: TurnPhase, turnIndex = state.currentTurnIndex): GameState {
   const currentPlayerId = state.turnOrder[turnIndex]
   if (!currentPlayerId) return state
@@ -535,6 +590,10 @@ function advanceThroughAutomaticPhases(state: GameState): GameState {
   let nextState = state
 
   while (AUTO_ADVANCE_PHASES.has(nextState.currentPhase)) {
+    nextState = queuePhaseTriggers(nextState, nextState.currentPhase, nextState.currentTurnIndex)
+    if (nextState.stack.length > 0) {
+      break
+    }
     nextState = applyPhaseEntry(nextState, nextState.currentPhase, nextState.currentTurnIndex)
     const currentIndex = TURN_PHASES.indexOf(nextState.currentPhase)
     const followingPhase = TURN_PHASES[currentIndex + 1]
@@ -591,6 +650,9 @@ function resolveStackTop(state: GameState): GameState {
         : player
     )
     triggerOccurrences.push({ type: 'enters_battlefield', controllerId: stackItem.casterId, card: enteredCard })
+    if (isCreatureCard(enteredCard)) {
+      triggerOccurrences.push({ type: 'creature_enters', controllerId: stackItem.casterId, card: enteredCard })
+    }
   } else if (stackItem.kind === 'permanent') {
     const enteredCard = entersBattlefield(stackItem.card)
     players = players.map(player =>
@@ -605,6 +667,9 @@ function resolveStackTop(state: GameState): GameState {
         : player
     )
     triggerOccurrences.push({ type: 'enters_battlefield', controllerId: stackItem.casterId, card: enteredCard })
+    if (isCreatureCard(enteredCard)) {
+      triggerOccurrences.push({ type: 'creature_enters', controllerId: stackItem.casterId, card: enteredCard })
+    }
   } else if (stackItem.kind === 'trigger' && stackItem.triggerEffect) {
     const effect = stackItem.triggerEffect
     switch (effect.kind) {
@@ -624,8 +689,14 @@ function resolveStackTop(state: GameState): GameState {
               }
             : player
         )
+        if (createdTokens.length > 0) {
+          triggerOccurrences.push({ type: 'token_created', controllerId: stackItem.casterId, card: createdTokens[0] })
+        }
         for (const token of createdTokens) {
           triggerOccurrences.push({ type: 'enters_battlefield', controllerId: stackItem.casterId, card: token })
+          if (isCreatureCard(token)) {
+            triggerOccurrences.push({ type: 'creature_enters', controllerId: stackItem.casterId, card: token })
+          }
         }
         break
       }
@@ -640,6 +711,13 @@ function resolveStackTop(state: GameState): GameState {
                   hand: [...player.zones.hand, ...player.zones.library.slice(0, effect.amount)],
                 },
               }
+            : player
+        )
+        break
+      case 'gain_life':
+        players = players.map(player =>
+          player.id === stackItem.casterId
+            ? { ...player, life: player.life + effect.amount }
             : player
         )
         break
@@ -718,8 +796,14 @@ function resolveStackTop(state: GameState): GameState {
                 }
               : player
           )
+          if (createdTokens.length > 0) {
+            triggerOccurrences.push({ type: 'token_created', controllerId: stackItem.casterId, card: createdTokens[0] })
+          }
           for (const token of createdTokens) {
             triggerOccurrences.push({ type: 'enters_battlefield', controllerId: stackItem.casterId, card: token })
+            if (isCreatureCard(token)) {
+              triggerOccurrences.push({ type: 'creature_enters', controllerId: stackItem.casterId, card: token })
+            }
           }
           break
         }
@@ -828,6 +912,9 @@ function resolveStackTop(state: GameState): GameState {
             const reanimated = state.players.find(player => player.id === stackItem.casterId)?.zones.graveyard.find(entry => entry.instanceId === stackItem.targetCardId)
             if (reanimated) {
               triggerOccurrences.push({ type: 'enters_battlefield', controllerId: stackItem.casterId, card: entersBattlefield(reanimated) })
+              if (isCreatureCard(reanimated)) {
+                triggerOccurrences.push({ type: 'creature_enters', controllerId: stackItem.casterId, card: entersBattlefield(reanimated) })
+              }
             }
           }
           break
@@ -1211,6 +1298,10 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         actionSeq: state.actionSeq + 1,
       }
 
+      if (nextPhase === 'end') {
+        nextState = queuePhaseTriggers(nextState, nextPhase, nextTurnIndex)
+      }
+
       nextState = advanceThroughAutomaticPhases(nextState)
 
       return {
@@ -1544,6 +1635,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
 
       let changed = false
       let pendingExploreChoice = state.pendingExploreChoice
+      const triggerOccurrences: TriggerOccurrence[] = []
       const players = state.players.map(player => {
         if (player.id !== action.playerId) return player
         const card =
@@ -1580,7 +1672,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           const zonesWithTap = applyTappedManaCards(player, updatedCards).zones
           const zones = ability.sacrifice ? removeCardFromBattlefieldOrLands({ ...player, zones: zonesWithTap }, action.cardId) : zonesWithTap
 
-          return {
+          const nextPlayer = {
             ...player,
             manaPool: {
               ...(payment?.manaPool ?? player.manaPool),
@@ -1588,6 +1680,10 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
             },
             zones,
           }
+          if (ability.sacrifice && card.isToken) {
+            triggerOccurrences.push({ type: 'token_sacrificed', controllerId: player.id, card })
+          }
+          return nextPlayer
         }
 
         if (ability.kind === 'draw_card') {
@@ -1597,7 +1693,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           const manaPool = payment?.manaPool ?? player.manaPool
           const paidZones = mergePaidCardsIntoZones(player, payment?.cards).zones
 
-          return {
+          const nextPlayer = {
             ...player,
             manaPool,
             zones: {
@@ -1609,13 +1705,17 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
               graveyard: ability.sacrifice && !card.isToken ? [...player.zones.graveyard, { ...card, tapped: false }] : player.zones.graveyard,
             },
           }
+          if (ability.sacrifice && card.isToken) {
+            triggerOccurrences.push({ type: 'token_sacrificed', controllerId: player.id, card })
+          }
+          return nextPlayer
         }
 
         if (ability.kind === 'gain_life') {
           const sourceInBattlefield = player.zones.battlefield.some(entry => entry.instanceId === action.cardId)
           const sourceInLands = player.zones.lands.some(entry => entry.instanceId === action.cardId)
           const paidZones = mergePaidCardsIntoZones(player, payment?.cards).zones
-          return {
+          const nextPlayer = {
             ...player,
             life: player.life + ability.amount,
             manaPool: payment?.manaPool ?? player.manaPool,
@@ -1626,6 +1726,10 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
               graveyard: ability.sacrifice && !card.isToken ? [...player.zones.graveyard, { ...card, tapped: false }] : player.zones.graveyard,
             },
           }
+          if (ability.sacrifice && card.isToken) {
+            triggerOccurrences.push({ type: 'token_sacrificed', controllerId: player.id, card })
+          }
+          return nextPlayer
         }
 
         if (ability.kind === 'explore_target_creature') {
@@ -1644,6 +1748,9 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
               targetCardId: action.targetCardId,
               revealedCard: { ...topCard },
             }
+          }
+          if (ability.sacrifice && card.isToken) {
+            triggerOccurrences.push({ type: 'token_sacrificed', controllerId: player.id, card })
           }
           const paidZones = mergePaidCardsIntoZones(player, payment?.cards).zones
 
@@ -1674,7 +1781,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       })
       if (!changed) return state
 
-      return {
+      const nextState = queueTriggeredAbilities({
         ...state,
         players,
         pendingExploreChoice,
@@ -1687,7 +1794,9 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           action,
           undoable: true,
         }),
-      }
+      }, triggerOccurrences)
+
+      return nextState
     }
 
     case 'PLAY_LAND': {
@@ -1780,6 +1889,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           kind: 'commander',
         }
       )
+      nextState = queueTriggeredAbilities(nextState, [{ type: 'spell_cast', controllerId: action.playerId, card: state.players.find(p => p.id === action.playerId)?.zones.commandZone.find(c => c.instanceId === action.cardId)! }])
 
       return {
         ...nextState,
@@ -1822,7 +1932,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       })
       if (!changed) return state
 
-      const nextState = pushStackItem(
+      let nextState = pushStackItem(
         {
           ...state,
           players,
@@ -1835,6 +1945,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           kind: 'permanent',
         }
       )
+      nextState = queueTriggeredAbilities(nextState, [{ type: 'spell_cast', controllerId: action.playerId, card: originalCard! }])
 
       return {
         ...nextState,
@@ -1917,7 +2028,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         }
       })
 
-      const nextState = pushStackItem(
+      let nextState = pushStackItem(
         {
           ...state,
           players,
@@ -1932,6 +2043,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           targetPlayerId: action.targetPlayerId,
         }
       )
+      nextState = queueTriggeredAbilities(nextState, [{ type: 'spell_cast', controllerId: action.playerId, card }])
 
       return {
         ...nextState,

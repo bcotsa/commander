@@ -27,17 +27,40 @@ export type ActivatedAbilityDefinition =
   | { id: string; label: string; kind: 'gain_life'; requiresTap: boolean; sacrifice: boolean; genericCost: number; amount: number }
   | { id: string; label: string; kind: 'explore_target_creature'; requiresTap: boolean; sacrifice: boolean; genericCost: number }
 
-export type TriggerEventType = 'enters_battlefield' | 'attacks' | 'creature_dies'
+export type TriggerEventType =
+  | 'enters_battlefield'
+  | 'creature_enters'
+  | 'token_created'
+  | 'token_sacrificed'
+  | 'attacks'
+  | 'creature_dies'
+  | 'upkeep'
+  | 'end_step'
+  | 'spell_cast'
 
 export type TriggerEffectDefinition =
   | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number | 'opponents'; tapped?: boolean }
   | { kind: 'draw_cards'; amount: number }
+  | { kind: 'gain_life'; amount: number }
   | { kind: 'drain_each_opponent'; amount: number; gainLife: number }
 
-export type TriggeredAbilityDefinition =
-  | { id: string; label: string; event: 'enters_battlefield'; effect: TriggerEffectDefinition; match: 'self' }
-  | { id: string; label: string; event: 'attacks'; effect: TriggerEffectDefinition; match: 'self' }
-  | { id: string; label: string; event: 'creature_dies'; effect: TriggerEffectDefinition; match: 'another_creature_you_control' | 'any_creature' }
+export interface TriggeredAbilityDefinition {
+  id: string
+  label: string
+  event: TriggerEventType
+  effect: TriggerEffectDefinition
+  match:
+    | 'self'
+    | 'another_creature_you_control'
+    | 'any_creature'
+    | 'your_upkeep'
+    | 'each_upkeep'
+    | 'your_end_step'
+    | 'spell_you_cast'
+    | 'another_creature_you_control_enters'
+    | 'token_you_create'
+    | 'token_you_create_or_sacrifice'
+}
 
 export type LandEntryEffectDefinition =
   | { kind: 'gain_life'; amount: number }
@@ -141,6 +164,24 @@ const TOKEN_TEMPLATES: Record<TokenTemplateKey, TokenTemplate> = {
     name: 'Pest',
     typeLine: 'Token Creature — Pest',
     oracleText: 'When this creature dies, you gain 1 life.',
+    colorIdentity: ['B', 'G'],
+    power: 1,
+    toughness: 1,
+  },
+  saproling: {
+    key: 'saproling',
+    name: 'Saproling',
+    typeLine: 'Token Creature — Saproling',
+    oracleText: null,
+    colorIdentity: ['G'],
+    power: 1,
+    toughness: 1,
+  },
+  worm: {
+    key: 'worm',
+    name: 'Worm',
+    typeLine: 'Token Creature — Worm',
+    oracleText: null,
     colorIdentity: ['B', 'G'],
     power: 1,
     toughness: 1,
@@ -564,6 +605,101 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
     })
   }
 
+  const upkeepTokens = parseCreateTokenEffect(oracleText, /at the beginning of your upkeep, create ([^.]+?) tokens?/i)
+  if (upkeepTokens) {
+    abilities.push({
+      id: 'upkeep-create-tokens',
+      label: 'Upkeep trigger',
+      event: 'upkeep',
+      match: 'your_upkeep',
+      effect: upkeepTokens,
+    })
+  }
+
+  const eachUpkeepTokens = parseCreateTokenEffect(oracleText, /at the beginning of each upkeep, create ([^.]+?) tokens?/i)
+  if (eachUpkeepTokens) {
+    abilities.push({
+      id: 'each-upkeep-create-tokens',
+      label: 'Upkeep trigger',
+      event: 'upkeep',
+      match: 'each_upkeep',
+      effect: eachUpkeepTokens,
+    })
+  }
+
+  const endStepTokens = parseCreateTokenEffect(oracleText, /at the beginning of your end step, create ([^.]+?) tokens?/i)
+  if (endStepTokens) {
+    abilities.push({
+      id: 'end-step-create-tokens',
+      label: 'End step trigger',
+      event: 'end_step',
+      match: 'your_end_step',
+      effect: endStepTokens,
+    })
+  }
+
+  if (oracleText.includes('whenever another creature enters the battlefield under your control, you gain 1 life')) {
+    abilities.push({
+      id: 'creature-enters-gain-1',
+      label: 'Creature ETB trigger',
+      event: 'creature_enters',
+      match: 'another_creature_you_control_enters',
+      effect: { kind: 'gain_life', amount: 1 },
+    })
+  }
+
+  if (oracleText.includes('whenever you cast a spell, create')) {
+    const castTokens = parseCreateTokenEffect(oracleText, /whenever you cast a spell, create ([^.]+?) tokens?/i)
+    if (castTokens) {
+      abilities.push({
+        id: 'cast-create-tokens',
+        label: 'Cast trigger',
+        event: 'spell_cast',
+        match: 'spell_you_cast',
+        effect: castTokens,
+      })
+    }
+  }
+
+  if (oracleText.includes('whenever you cast a spell, draw a card')) {
+    abilities.push({
+      id: 'cast-draw',
+      label: 'Cast trigger',
+      event: 'spell_cast',
+      match: 'spell_you_cast',
+      effect: { kind: 'draw_cards', amount: 1 },
+    })
+  }
+
+  if (oracleText.includes('whenever you create or sacrifice a token')) {
+    abilities.push({
+      id: 'token-create-or-sac-drain',
+      label: 'Token trigger',
+      event: 'token_created',
+      match: 'token_you_create_or_sacrifice',
+      effect: { kind: 'drain_each_opponent', amount: 1, gainLife: 0 },
+    })
+    abilities.push({
+      id: 'token-sac-drain',
+      label: 'Token trigger',
+      event: 'token_sacrificed',
+      match: 'token_you_create_or_sacrifice',
+      effect: { kind: 'drain_each_opponent', amount: 1, gainLife: 0 },
+    })
+  }
+
+  if (oracleText.includes('whenever one or more tokens enter the battlefield under your control')) {
+    if (oracleText.includes('each opponent loses 1 life')) {
+      abilities.push({
+        id: 'token-create-drain',
+        label: 'Token trigger',
+        event: 'token_created',
+        match: 'token_you_create',
+        effect: { kind: 'drain_each_opponent', amount: 1, gainLife: oracleText.includes('you gain 1 life') ? 1 : 0 },
+      })
+    }
+  }
+
   return abilities
 }
 
@@ -743,5 +879,7 @@ function inferTokenKey(fragment: string): TokenTemplateKey | null {
   if (fragment.includes('zombie')) return 'zombie'
   if (fragment.includes('snake')) return 'snake'
   if (fragment.includes('pest')) return 'pest'
+  if (fragment.includes('saproling')) return 'saproling'
+  if (fragment.includes('worm')) return 'worm'
   return null
 }

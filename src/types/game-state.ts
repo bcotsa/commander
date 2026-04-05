@@ -68,10 +68,13 @@ export type TokenTemplateKey =
   | 'zombie'
   | 'snake'
   | 'pest'
+  | 'saproling'
+  | 'worm'
 
 export type TriggerEffectPayload =
   | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number; tapped?: boolean }
   | { kind: 'draw_cards'; amount: number }
+  | { kind: 'gain_life'; amount: number }
   | { kind: 'drain_each_opponent'; amount: number; gainLife: number }
 
 export type ZoneName = keyof PlayerZones

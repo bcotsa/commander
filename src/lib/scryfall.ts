@@ -13,6 +13,8 @@ const TOKEN_QUERY_BY_KEY: Record<TokenTemplateKey, string> = {
   zombie: '"Zombie" t:token',
   snake: '"Snake" t:token',
   pest: '"Pest" t:token',
+  saproling: '"Saproling" t:token',
+  worm: '"Worm" t:token',
 }
 const tokenImageCache = new Map<TokenTemplateKey, string>()
 const tokenImageInflight = new Map<TokenTemplateKey, Promise<string>>()
