@@ -164,18 +164,16 @@ function buildPlayerZones(player: Player): PlayerZones {
   let library = player.deck.mainboard.flatMap(importedCardToGameCards)
   const commandZone: GameCard[] = []
 
-  if (player.deck.commanders.length > 0) {
+  const commanderCard = commanderToGameCard(player)
+  if (commanderCard) {
+    commandZone.push(commanderCard)
+    const matchIndex = library.findIndex(card => card.name.toLowerCase() === commanderCard.name.toLowerCase())
+    if (matchIndex >= 0) {
+      library.splice(matchIndex, 1)
+    }
+  } else if (player.deck.commanders.length > 0) {
     for (const commander of player.deck.commanders) {
       commandZone.push(...importedCardToGameCards({ ...commander, quantity: 1 }))
-    }
-  } else {
-    const commanderCard = commanderToGameCard(player)
-    if (commanderCard) {
-      commandZone.push(commanderCard)
-      const matchIndex = library.findIndex(card => card.name.toLowerCase() === commanderCard.name.toLowerCase())
-      if (matchIndex >= 0) {
-        library.splice(matchIndex, 1)
-      }
     }
   }
 
