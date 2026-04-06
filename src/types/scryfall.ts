@@ -6,6 +6,7 @@ export interface ScryfallCard {
   oracle_text?: string
   power?: string
   toughness?: string
+  loyalty?: string
   color_identity: string[]
   image_uris?: ScryfallImageUris
   card_faces?: ScryfallCardFace[]
@@ -22,6 +23,7 @@ export interface ScryfallCardFace {
   oracle_text?: string
   power?: string
   toughness?: string
+  loyalty?: string
   image_uris?: ScryfallImageUris
 }
 

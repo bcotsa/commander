@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { ColorPips } from '@/components/ui/ColorPips'
 import { CardPreview } from '@/components/ui/CardPreview'
 import type { Player, GameCard, ZoneName, TurnPhase, CombatState } from '@/types/game-state'
-import { canAutoPayManaCost, formatManaPool, getActivatedAbilities, getSimpleSpellDefinition } from '@/lib/card-rules'
+import { canAutoPayManaCost, formatManaPool, getActivatedAbilities, getPlaneswalkerAbilities, getSimpleSpellDefinition } from '@/lib/card-rules'
 import { getTokenImageUri } from '@/lib/scryfall'
 
 function CardThumb({
@@ -61,8 +61,13 @@ function CardThumb({
           +{card.plusOneCounters}
         </div>
       )}
+      {card.loyalty !== null && (
+        <div className="absolute top-1 left-1 rounded bg-violet-500/90 px-1 py-0.5 text-[9px] font-semibold text-white">
+          {card.loyalty}
+        </div>
+      )}
       {card.summoningSick && (
-        <div className="absolute top-1 left-1 rounded bg-amber-500/90 px-1 py-0.5 text-[9px] font-semibold text-black">
+        <div className={`absolute rounded bg-amber-500/90 px-1 py-0.5 text-[9px] font-semibold text-black ${card.loyalty !== null ? 'top-7 left-1' : 'top-1 left-1'}`}>
           Sick
         </div>
       )}
@@ -303,11 +308,12 @@ interface PlayerTileProps {
   onMoveCard: (from: ZoneName, to: ZoneName, cardId: string) => void
   onToggleTapped: (cardId: string) => void
   onActivateAbility: (cardId: string, abilityId: string, targetCardId?: string) => void
+  onActivatePlaneswalkerAbility: (cardId: string, abilityId: string, targetCardId?: string, targetPlayerId?: string) => void
   onPlayLand: (cardId: string) => void
   onCastCommander: (cardId: string) => void
   onCastPermanent: (cardId: string) => void
   onCastSpell: (cardId: string, targetCardId?: string, targetPlayerId?: string) => void
-  onDeclareAttacker: (cardId: string, defendingPlayerId: string) => void
+  onDeclareAttacker: (cardId: string, defendingPlayerId: string, defendingCardId?: string) => void
   onRemoveAttacker: (cardId: string) => void
   onAssignBlocker: (blockerId: string, attackerId: string) => void
   onRemoveBlocker: (blockerId: string, attackerId: string) => void
@@ -316,7 +322,7 @@ interface PlayerTileProps {
 }
 
 export function PlayerTile({
-  player, allPlayers, isCurrentTurn, canControlPlayer, isPriorityProxy, currentTurnPlayerId, currentPhase, combat, rotated, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onActivateAbility, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker, onOpenDamage, onOpenCounters
+  player, allPlayers, isCurrentTurn, canControlPlayer, isPriorityProxy, currentTurnPlayerId, currentPhase, combat, rotated, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onActivateAbility, onActivatePlaneswalkerAbility, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker, onOpenDamage, onOpenCounters
 }: PlayerTileProps) {
   const borderColor = isPriorityProxy ? 'border-emerald-500' : isCurrentTurn ? 'border-violet-500' : 'border-slate-700'
   const { library, hand, lands, battlefield, graveyard, exile, commandZone } = player.zones
@@ -328,10 +334,14 @@ export function PlayerTile({
   const selectedIsLand = selected ? selected.card.typeLine.toLowerCase().includes('land') : false
   const selectedIsPermanent = selected ? !selected.card.typeLine.toLowerCase().includes('instant') && !selected.card.typeLine.toLowerCase().includes('sorcery') : false
   const selectedIsCreature = selected ? selected.card.typeLine.toLowerCase().includes('creature') && selected.card.power !== null && selected.card.toughness !== null : false
+  const selectedIsPlaneswalker = selected ? selected.card.typeLine.toLowerCase().includes('planeswalker') : false
   const selectedSpell = selected ? getSimpleSpellDefinition(selected.card) : null
   const selectedCanPay = selected ? canAutoPayManaCost(player.manaPool, [...lands, ...battlefield], selected.card.manaCost, player) : false
   const activatedAbilities = selected && (selected.zone === 'battlefield' || selected.zone === 'lands')
     ? getActivatedAbilities(selected.card, player)
+    : []
+  const planeswalkerAbilities = selected && selected.zone === 'battlefield' && selectedIsPlaneswalker
+    ? getPlaneswalkerAbilities(selected.card)
     : []
   const ownBattlefieldCreatureTargets = player.zones.battlefield.filter(card => card.typeLine.toLowerCase().includes('creature'))
   const activeAttack = selected ? combat.attackers.find(a => a.attackerId === selected.card.instanceId) : null
@@ -339,7 +349,7 @@ export function PlayerTile({
   const spellCardTargets = selectedSpell && selected
     ? allPlayers.flatMap(otherPlayer => otherPlayer.zones.battlefield.filter(card => {
         if (selectedSpell.target === 'battlefield_creature' || selectedSpell.target === 'creature_or_player') {
-          return card.typeLine.toLowerCase().includes('creature')
+          return card.typeLine.toLowerCase().includes('creature') || card.typeLine.toLowerCase().includes('planeswalker')
         }
         if (selectedSpell.target === 'battlefield_nonland_permanent') {
           return !card.typeLine.toLowerCase().includes('land')
@@ -548,7 +558,7 @@ export function PlayerTile({
           {canControlPlayer && selected.zone === 'battlefield' && currentPhase === 'combat' && currentTurnPlayerId === player.id && selectedIsCreature && !card.tapped && !card.summoningSick && !activeAttack && (
             allPlayers
               .filter(p => p.id !== player.id && !p.isEliminated)
-              .map(opponent => (
+              .flatMap(opponent => ([
                 <button
                   key={opponent.id}
                   onClick={() => {
@@ -558,9 +568,151 @@ export function PlayerTile({
                   className="rounded-md bg-red-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-red-600"
                 >
                   Attack {opponent.name || `P${opponent.seat + 1}`}
-                </button>
-              ))
+                </button>,
+                ...opponent.zones.battlefield
+                  .filter(opponentCard => opponentCard.typeLine.toLowerCase().includes('planeswalker'))
+                  .map(opponentCard => (
+                    <button
+                      key={`${opponent.id}-${opponentCard.instanceId}`}
+                      onClick={() => {
+                        onDeclareAttacker(card.instanceId, opponent.id, opponentCard.instanceId)
+                        setSelected(null)
+                      }}
+                      className="rounded-md bg-red-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-red-600"
+                    >
+                      Attack {opponentCard.name}
+                    </button>
+                  )),
+              ]))
           )}
+          {canControlPlayer && selected.zone === 'battlefield' && selectedIsPlaneswalker &&
+            planeswalkerAbilities.filter(ability => ability.supported && ability.target === 'none').map(ability => (
+              <button
+                key={ability.id}
+                onClick={() => {
+                  onActivatePlaneswalkerAbility(card.instanceId, ability.id)
+                  setSelected(null)
+                }}
+                className="rounded-md bg-violet-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-violet-600"
+              >
+                {ability.label}
+              </button>
+            ))}
+          {canControlPlayer && selected.zone === 'battlefield' && selectedIsPlaneswalker &&
+            planeswalkerAbilities.filter(ability => ability.supported && ability.target === 'battlefield_creature').flatMap(ability =>
+              allPlayers.flatMap(otherPlayer =>
+                otherPlayer.zones.battlefield
+                  .filter(target => target.typeLine.toLowerCase().includes('creature'))
+                  .map(target => (
+                    <button
+                      key={`${ability.id}-${target.instanceId}`}
+                      onClick={() => {
+                        onActivatePlaneswalkerAbility(card.instanceId, ability.id, target.instanceId)
+                        setSelected(null)
+                      }}
+                      className="rounded-md bg-violet-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-violet-600"
+                    >
+                      {ability.label}: {target.name}
+                    </button>
+                  ))
+              )
+            )}
+          {canControlPlayer && selected.zone === 'battlefield' && selectedIsPlaneswalker &&
+            planeswalkerAbilities.filter(ability => ability.supported && ability.target === 'battlefield_nonland_permanent').flatMap(ability =>
+              allPlayers.flatMap(otherPlayer =>
+                otherPlayer.zones.battlefield
+                  .filter(target => !target.typeLine.toLowerCase().includes('land'))
+                  .map(target => (
+                    <button
+                      key={`${ability.id}-${target.instanceId}`}
+                      onClick={() => {
+                        onActivatePlaneswalkerAbility(card.instanceId, ability.id, target.instanceId)
+                        setSelected(null)
+                      }}
+                      className="rounded-md bg-violet-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-violet-600"
+                    >
+                      {ability.label}: {target.name}
+                    </button>
+                  ))
+              )
+            )}
+          {canControlPlayer && selected.zone === 'battlefield' && selectedIsPlaneswalker &&
+            planeswalkerAbilities.filter(ability => ability.supported && ability.target === 'battlefield_permanent').flatMap(ability =>
+              [...allPlayers.flatMap(otherPlayer => otherPlayer.zones.battlefield), ...allPlayers.flatMap(otherPlayer => otherPlayer.zones.lands)]
+                .map(target => (
+                  <button
+                    key={`${ability.id}-${target.instanceId}`}
+                    onClick={() => {
+                      onActivatePlaneswalkerAbility(card.instanceId, ability.id, target.instanceId)
+                      setSelected(null)
+                    }}
+                    className="rounded-md bg-violet-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-violet-600"
+                  >
+                    {ability.label}: {target.name}
+                  </button>
+                ))
+            )}
+          {canControlPlayer && selected.zone === 'battlefield' && selectedIsPlaneswalker &&
+            planeswalkerAbilities.filter(ability => ability.supported && ability.target === 'creature_or_player').flatMap(ability => ([
+              ...allPlayers.filter(otherPlayer => !otherPlayer.isEliminated).map(otherPlayer => (
+                <button
+                  key={`${ability.id}-player-${otherPlayer.id}`}
+                  onClick={() => {
+                    onActivatePlaneswalkerAbility(card.instanceId, ability.id, undefined, otherPlayer.id)
+                    setSelected(null)
+                  }}
+                  className="rounded-md bg-violet-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-violet-600"
+                >
+                  {ability.label}: {otherPlayer.name || `P${otherPlayer.seat + 1}`}
+                </button>
+              )),
+              ...allPlayers.flatMap(otherPlayer =>
+                otherPlayer.zones.battlefield
+                  .filter(target => target.typeLine.toLowerCase().includes('creature') || target.typeLine.toLowerCase().includes('planeswalker'))
+                  .map(target => (
+                    <button
+                      key={`${ability.id}-${target.instanceId}`}
+                      onClick={() => {
+                        onActivatePlaneswalkerAbility(card.instanceId, ability.id, target.instanceId)
+                        setSelected(null)
+                      }}
+                      className="rounded-md bg-violet-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-violet-600"
+                    >
+                      {ability.label}: {target.name}
+                    </button>
+                  ))
+              ),
+            ]))}
+          {canControlPlayer && selected.zone === 'battlefield' && selectedIsPlaneswalker &&
+            planeswalkerAbilities.filter(ability => ability.supported && ability.target === 'own_graveyard_creature').flatMap(ability =>
+              graveyard
+                .filter(target => target.typeLine.toLowerCase().includes('creature'))
+                .map(target => (
+                  <button
+                    key={`${ability.id}-${target.instanceId}`}
+                    onClick={() => {
+                      onActivatePlaneswalkerAbility(card.instanceId, ability.id, target.instanceId)
+                      setSelected(null)
+                    }}
+                    className="rounded-md bg-violet-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-violet-600"
+                  >
+                    {ability.label}: {target.name}
+                  </button>
+                ))
+            )}
+          {canControlPlayer && selected.zone === 'battlefield' && selectedIsPlaneswalker &&
+            planeswalkerAbilities.filter(ability => !ability.supported).map(ability => (
+              <button
+                key={ability.id}
+                onClick={() => {
+                  onActivatePlaneswalkerAbility(card.instanceId, ability.id)
+                  setSelected(null)
+                }}
+                className="rounded-md border border-violet-700 px-2 py-1 text-[10px] font-medium text-violet-200 transition-colors hover:bg-violet-950/60"
+              >
+                {ability.label} (Manual)
+              </button>
+            ))}
           {canControlPlayer && selected.zone === 'battlefield' && currentPhase === 'combat' && currentTurnPlayerId === player.id && activeAttack && (
             <button
               onClick={() => {

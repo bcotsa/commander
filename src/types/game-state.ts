@@ -21,6 +21,7 @@ export interface ImportedDeckCard {
   typeLine: string
   power: number | null
   toughness: number | null
+  loyalty: number | null
 }
 
 export interface ImportedDeck {
@@ -48,6 +49,9 @@ export interface GameCard {
   typeLine: string
   power: number | null
   toughness: number | null
+  startingLoyalty: number | null
+  loyalty: number | null
+  loyaltyActivatedThisTurn: boolean
   plusOneCounters: number
   tapped: boolean
   markedDamage: number
@@ -70,6 +74,7 @@ export type TokenTemplateKey =
   | 'pest'
   | 'saproling'
   | 'worm'
+  | 'wolf'
 
 export type TriggerEffectPayload =
   | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number; tapped?: boolean }
@@ -153,6 +158,7 @@ export interface CombatAttack {
   attackerName: string
   attackingPlayerId: string
   defendingPlayerId: string
+  defendingCardId?: string
   blockerIds: string[]
 }
 
@@ -217,7 +223,8 @@ export type ActionPayload =
   | { type: 'CAST_COMMANDER'; playerId: string; cardId: string }
   | { type: 'CAST_PERMANENT'; playerId: string; cardId: string }
   | { type: 'CAST_SPELL'; playerId: string; cardId: string; targetCardId?: string; targetPlayerId?: string }
-  | { type: 'DECLARE_ATTACKER'; playerId: string; cardId: string; defendingPlayerId: string }
+  | { type: 'DECLARE_ATTACKER'; playerId: string; cardId: string; defendingPlayerId: string; defendingCardId?: string }
+  | { type: 'ACTIVATE_PLANESWALKER_ABILITY'; playerId: string; cardId: string; abilityId: string; targetCardId?: string; targetPlayerId?: string }
   | { type: 'REMOVE_ATTACKER'; playerId: string; cardId: string }
   | { type: 'ASSIGN_BLOCKER'; playerId: string; blockerId: string; attackerId: string }
   | { type: 'REMOVE_BLOCKER'; playerId: string; blockerId: string; attackerId: string }

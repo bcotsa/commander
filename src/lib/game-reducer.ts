@@ -1,6 +1,6 @@
 import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeckCard, PlayerZones, TurnPhase, StackItem, TokenTemplateKey, TriggerEffectPayload } from '@/types/game-state'
 import { checkEliminations } from './game-engine'
-import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getActivatedAbilities, getLandEntryEffect, getLandManaOptions, getSimpleSpellDefinition, getTokenTemplate, getTriggeredAbilities, landEntersTapped, type TriggeredAbilityDefinition, type TriggerEffectDefinition } from './card-rules'
+import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getActivatedAbilities, getLandEntryEffect, getLandManaOptions, getPlaneswalkerAbilities, getSimpleSpellDefinition, getTokenTemplate, getTriggeredAbilities, landEntersTapped, type PlaneswalkerAbilityEffect, type TriggeredAbilityDefinition, type TriggerEffectDefinition } from './card-rules'
 
 const MAX_LOG = 50
 const TURN_PHASES: TurnPhase[] = ['untap', 'upkeep', 'draw', 'main1', 'combat', 'main2', 'end']
@@ -63,6 +63,9 @@ function importedCardToGameCards(card: ImportedDeckCard): GameCard[] {
     typeLine: card.typeLine,
     power: card.power,
     toughness: card.toughness,
+    startingLoyalty: card.loyalty,
+    loyalty: card.loyalty,
+    loyaltyActivatedThisTurn: false,
     plusOneCounters: 0,
     tapped: false,
     markedDamage: 0,
@@ -86,6 +89,9 @@ function commanderToGameCard(player: Player): GameCard | null {
     typeLine: player.commander.typeLine,
     power: null,
     toughness: null,
+    startingLoyalty: null,
+    loyalty: null,
+    loyaltyActivatedThisTurn: false,
     plusOneCounters: 0,
     tapped: false,
     markedDamage: 0,
@@ -108,6 +114,9 @@ function createTokenCard(tokenKey: TokenTemplateKey, tapped = false): GameCard {
     typeLine: template.typeLine,
     power: template.power,
     toughness: template.toughness,
+    startingLoyalty: null,
+    loyalty: null,
+    loyaltyActivatedThisTurn: false,
     plusOneCounters: 0,
     tapped,
     markedDamage: 0,
@@ -263,6 +272,10 @@ function isCreatureCard(card: GameCard): boolean {
   return card.typeLine.toLowerCase().includes('creature') && card.power !== null && card.toughness !== null
 }
 
+function isPlaneswalkerCard(card: GameCard): boolean {
+  return card.typeLine.toLowerCase().includes('planeswalker')
+}
+
 function effectivePower(card: GameCard): number {
   return (card.power ?? 0) + card.plusOneCounters
 }
@@ -276,6 +289,8 @@ function entersBattlefield(card: GameCard): GameCard {
     ...card,
     tapped: false,
     markedDamage: 0,
+    loyalty: isPlaneswalkerCard(card) ? card.startingLoyalty : card.loyalty,
+    loyaltyActivatedThisTurn: false,
     summoningSick: isCreatureCard(card),
   }
 }
@@ -311,6 +326,215 @@ function moveBattlefieldCardToGraveyard(player: Player, cardId: string): Player 
         ? player.zones.graveyard
         : [...player.zones.graveyard, { ...fromLands, tapped: false, markedDamage: 0 }],
     },
+  }
+}
+
+function cleanupBattlefieldState(players: Player[]): { players: Player[]; triggerOccurrences: TriggerOccurrence[] } {
+  const triggerOccurrences: TriggerOccurrence[] = []
+
+  const nextPlayers = players.map(player => {
+    const deadCreatures = player.zones.battlefield.filter(
+      card => isCreatureCard(card) && card.markedDamage >= effectiveToughness(card)
+    )
+    const spentPlaneswalkers = player.zones.battlefield.filter(
+      card => isPlaneswalkerCard(card) && (card.loyalty ?? 0) <= 0
+    )
+    const removed = [...deadCreatures, ...spentPlaneswalkers]
+
+    for (const deadCreature of deadCreatures) {
+      triggerOccurrences.push({ type: 'creature_dies', controllerId: player.id, card: deadCreature })
+    }
+
+    if (removed.length === 0) return player
+
+    const removedIds = new Set(removed.map(card => card.instanceId))
+    return {
+      ...player,
+      zones: {
+        ...player.zones,
+        battlefield: player.zones.battlefield.filter(card => !removedIds.has(card.instanceId)),
+        graveyard: [
+          ...player.zones.graveyard,
+          ...removed
+            .filter(card => !card.isToken)
+            .map(card => ({ ...card, tapped: false, markedDamage: 0 })),
+        ],
+      },
+    }
+  })
+
+  return { players: nextPlayers, triggerOccurrences }
+}
+
+function applyPlaneswalkerEffect(
+  players: Player[],
+  sourcePlayerId: string,
+  effect: PlaneswalkerAbilityEffect,
+  targetCardId?: string,
+  targetPlayerId?: string
+): { players: Player[]; triggerOccurrences: TriggerOccurrence[] } {
+  const triggerOccurrences: TriggerOccurrence[] = []
+  const targetPlayer = targetPlayerId ? players.find(player => player.id === targetPlayerId) ?? null : null
+  const targetBattlefieldOwner = targetCardId
+    ? players.find(player =>
+        player.zones.battlefield.some(entry => entry.instanceId === targetCardId) ||
+        player.zones.lands.some(entry => entry.instanceId === targetCardId)
+      ) ?? null
+    : null
+
+  switch (effect.kind) {
+    case 'draw_cards':
+      return {
+        players: players.map(player =>
+          player.id === sourcePlayerId
+            ? {
+                ...player,
+                life: player.life - (effect.loseLife ?? 0),
+                zones: {
+                  ...player.zones,
+                  library: player.zones.library.slice(Math.min(effect.amount, player.zones.library.length)),
+                  hand: [...player.zones.hand, ...player.zones.library.slice(0, effect.amount)],
+                },
+              }
+            : player
+        ),
+        triggerOccurrences,
+      }
+    case 'create_tokens': {
+      const count = effect.count === 'opponents'
+        ? players.filter(player => player.id !== sourcePlayerId && !player.isEliminated).length
+        : effect.count
+      const tokenController = players.find(player => player.id === sourcePlayerId)
+      const createdTokens = tokenController
+        ? createTokensForPlayer(tokenController, effect.tokenKey, count, effect.tapped ?? false)
+        : []
+      const nextPlayers = players.map(player =>
+        player.id === sourcePlayerId
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                battlefield: [...player.zones.battlefield, ...createdTokens],
+              },
+            }
+          : player
+      )
+      if (createdTokens.length > 0) {
+        triggerOccurrences.push({ type: 'token_created', controllerId: sourcePlayerId, card: createdTokens[0] })
+      }
+      for (const token of createdTokens) {
+        triggerOccurrences.push({ type: 'enters_battlefield', controllerId: sourcePlayerId, card: token })
+        if (isCreatureCard(token)) {
+          triggerOccurrences.push({ type: 'creature_enters', controllerId: sourcePlayerId, card: token })
+        }
+      }
+      return { players: nextPlayers, triggerOccurrences }
+    }
+    case 'destroy_target_creature':
+    case 'destroy_target_nonland_permanent':
+    case 'destroy_target_permanent': {
+      const deadCard = targetBattlefieldOwner && targetCardId
+        ? targetBattlefieldOwner.zones.battlefield.find(entry => entry.instanceId === targetCardId) ??
+          targetBattlefieldOwner.zones.lands.find(entry => entry.instanceId === targetCardId) ??
+          null
+        : null
+      const nextPlayers = players.map(player =>
+        player.id === targetBattlefieldOwner?.id && targetCardId
+          ? moveBattlefieldCardToGraveyard(player, targetCardId)
+          : player
+      )
+      if (deadCard && isCreatureCard(deadCard)) {
+        triggerOccurrences.push({ type: 'creature_dies', controllerId: targetBattlefieldOwner!.id, card: deadCard })
+      }
+      return { players: nextPlayers, triggerOccurrences }
+    }
+    case 'damage_target_creature':
+    case 'damage_target_creature_or_player': {
+      const nextPlayers = players.map(player => {
+        if (effect.kind === 'damage_target_creature_or_player' && player.id === targetPlayer?.id) {
+          return { ...player, life: player.life - effect.amount }
+        }
+        if (player.id !== targetBattlefieldOwner?.id || !targetCardId) return player
+
+        const updatedBattlefield = player.zones.battlefield.map(entry => {
+          if (entry.instanceId !== targetCardId) return entry
+          if (isPlaneswalkerCard(entry)) {
+            return { ...entry, loyalty: (entry.loyalty ?? 0) - effect.amount }
+          }
+          return { ...entry, markedDamage: entry.markedDamage + effect.amount }
+        })
+        return {
+          ...player,
+          zones: {
+            ...player.zones,
+            battlefield: updatedBattlefield,
+          },
+        }
+      })
+      return { players: nextPlayers, triggerOccurrences }
+    }
+    case 'return_graveyard_creature_to_battlefield':
+    case 'return_graveyard_creature_to_hand': {
+      const nextPlayers = players.map(player => {
+        if (player.id !== sourcePlayerId || !targetCardId) return player
+        const target = player.zones.graveyard.find(entry => entry.instanceId === targetCardId)
+        if (!target) return player
+        const destination = effect.kind === 'return_graveyard_creature_to_battlefield' ? 'battlefield' : 'hand'
+        return {
+          ...player,
+          zones: {
+            ...player.zones,
+            graveyard: player.zones.graveyard.filter(entry => entry.instanceId !== targetCardId),
+            [destination]: [
+              ...player.zones[destination],
+              destination === 'battlefield' ? entersBattlefield(target) : { ...target },
+            ],
+          },
+        }
+      })
+      if (effect.kind === 'return_graveyard_creature_to_battlefield') {
+        const reanimated = players.find(player => player.id === sourcePlayerId)?.zones.graveyard.find(entry => entry.instanceId === targetCardId)
+        if (reanimated) {
+          const entered = entersBattlefield(reanimated)
+          triggerOccurrences.push({ type: 'enters_battlefield', controllerId: sourcePlayerId, card: entered })
+          if (isCreatureCard(entered)) {
+            triggerOccurrences.push({ type: 'creature_enters', controllerId: sourcePlayerId, card: entered })
+          }
+        }
+      }
+      return { players: nextPlayers, triggerOccurrences }
+    }
+    case 'mass_damage_creatures': {
+      const amount = effect.amount === 'creature_count'
+        ? players.reduce((sum, player) => sum + player.zones.battlefield.filter(isCreatureCard).length, 0)
+        : effect.amount
+      const nextPlayers = players.map(player => ({
+        ...player,
+        zones: {
+          ...player.zones,
+          battlefield: player.zones.battlefield.map(entry =>
+            isCreatureCard(entry) ? { ...entry, markedDamage: entry.markedDamage + amount } : entry
+          ),
+        },
+      }))
+      return { players: nextPlayers, triggerOccurrences }
+    }
+    case 'put_minus_one_counter_target_creature': {
+      const nextPlayers = players.map(player =>
+        player.id === targetBattlefieldOwner?.id && targetCardId
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                battlefield: player.zones.battlefield.map(entry =>
+                  entry.instanceId === targetCardId ? { ...entry, plusOneCounters: entry.plusOneCounters - effect.amount } : entry
+                ),
+              },
+            }
+          : player
+      )
+      return { players: nextPlayers, triggerOccurrences }
+    }
   }
 }
 
@@ -557,7 +781,13 @@ function applyPhaseEntry(state: GameState, phase: TurnPhase, turnIndex = state.c
                 zones: {
                   ...player.zones,
                   lands: player.zones.lands.map(card => ({ ...card, tapped: false })),
-                  battlefield: player.zones.battlefield.map(card => ({ ...card, tapped: false, summoningSick: false, markedDamage: 0 })),
+                  battlefield: player.zones.battlefield.map(card => ({
+                    ...card,
+                    tapped: false,
+                    summoningSick: false,
+                    markedDamage: 0,
+                    loyaltyActivatedThisTurn: false,
+                  })),
                 },
               }
             : player
@@ -832,7 +1062,11 @@ function resolveStackTop(state: GameState): GameState {
             if (player.id !== targetBattlefieldOwner?.id || !stackItem.targetCardId) return player
 
             const updatedBattlefield = player.zones.battlefield.map(entry =>
-              entry.instanceId === stackItem.targetCardId ? { ...entry, markedDamage: entry.markedDamage + definition.amount } : entry
+              entry.instanceId === stackItem.targetCardId
+                ? isPlaneswalkerCard(entry)
+                  ? { ...entry, loyalty: (entry.loyalty ?? 0) - definition.amount }
+                  : { ...entry, markedDamage: entry.markedDamage + definition.amount }
+                : entry
             )
             return {
               ...player,
@@ -920,9 +1154,12 @@ function resolveStackTop(state: GameState): GameState {
     }
   }
 
+  const cleaned = cleanupBattlefieldState(players)
+  triggerOccurrences.push(...cleaned.triggerOccurrences)
+
   const nextBase = {
     ...state,
-    players,
+    players: cleaned.players,
     stack: state.stack.slice(0, -1),
     priorityPlayerId: state.turnOrder[state.currentTurnIndex] ?? null,
     priorityPassedIds: [],
@@ -985,6 +1222,11 @@ function describe(state: GameState, action: ActionPayload): string {
         state.players.find(p => p.id === action.playerId)?.zones.lands.find(card => card.instanceId === action.cardId)
       return `${player(action.playerId)} activated ${source?.name ?? 'an ability'}`
     }
+    case 'ACTIVATE_PLANESWALKER_ABILITY': {
+      const source = state.players.find(p => p.id === action.playerId)?.zones.battlefield.find(card => card.instanceId === action.cardId)
+      const ability = source ? getPlaneswalkerAbilities(source).find(entry => entry.id === action.abilityId) : null
+      return `${player(action.playerId)} activated ${source?.name ?? 'a planeswalker'} ${ability ? `(${ability.label})` : ''}`.trim()
+    }
     case 'RESOLVE_LAND_EFFECT': {
       const choice = state.pendingLandEffectChoice
       if (action.effect === 'bounce_land') {
@@ -1024,7 +1266,11 @@ function describe(state: GameState, action: ActionPayload): string {
     }
     case 'DECLARE_ATTACKER': {
       const card = state.players.find(p => p.id === action.playerId)?.zones.battlefield.find(c => c.instanceId === action.cardId)
-      const defender = state.players.find(p => p.id === action.defendingPlayerId)?.name ?? 'a player'
+      const defendingPlayer = state.players.find(p => p.id === action.defendingPlayerId)
+      const defendingCard = action.defendingCardId
+        ? defendingPlayer?.zones.battlefield.find(c => c.instanceId === action.defendingCardId)
+        : null
+      const defender = defendingCard?.name ?? defendingPlayer?.name ?? 'a player'
       return `${player(action.playerId)} attacked ${defender} with ${card?.name ?? 'a creature'}`
     }
     case 'ASSIGN_BLOCKER': {
@@ -1797,6 +2043,100 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       return nextState
     }
 
+    case 'ACTIVATE_PLANESWALKER_ABILITY': {
+      const currentPlayerId = state.turnOrder[state.currentTurnIndex]
+      if (currentPlayerId !== action.playerId || !isMainPhase(state.currentPhase) || state.stack.length > 0) return state
+
+      const player = state.players.find(entry => entry.id === action.playerId)
+      const card = player?.zones.battlefield.find(entry => entry.instanceId === action.cardId)
+      if (!player || !card || !isPlaneswalkerCard(card) || card.loyaltyActivatedThisTurn) return state
+
+      const ability = getPlaneswalkerAbilities(card).find(entry => entry.id === action.abilityId)
+      if (!ability) return state
+      if ((card.loyalty ?? 0) + ability.loyaltyDelta < 0) return state
+
+      const targetBattlefieldOwner = action.targetCardId
+        ? state.players.find(entry =>
+            entry.zones.battlefield.some(card => card.instanceId === action.targetCardId) ||
+            entry.zones.lands.some(card => card.instanceId === action.targetCardId)
+          ) ?? null
+        : null
+
+      if (ability.target === 'battlefield_creature') {
+        const target = targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
+        if (!target || !isCreatureCard(target)) return state
+      }
+      if (ability.target === 'battlefield_nonland_permanent') {
+        const target = targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
+        if (!target || !isNonlandPermanent(target)) return state
+      }
+      if (ability.target === 'battlefield_permanent') {
+        const target =
+          targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ??
+          targetBattlefieldOwner?.zones.lands.find(entry => entry.instanceId === action.targetCardId) ??
+          null
+        if (!target || (!isPermanentCard(target) && !isLandCard(target))) return state
+      }
+      if (ability.target === 'own_graveyard_creature') {
+        const target = player.zones.graveyard.find(entry => entry.instanceId === action.targetCardId) ?? null
+        if (!target || !isCreatureCard(target)) return state
+      }
+      if (ability.target === 'creature_or_player' && !action.targetPlayerId) {
+        const target = targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
+        if (!target || (!isCreatureCard(target) && !isPlaneswalkerCard(target))) return state
+      }
+
+      let players = state.players.map(entry =>
+        entry.id === action.playerId
+          ? {
+              ...entry,
+              zones: {
+                ...entry.zones,
+                battlefield: entry.zones.battlefield.map(battlefieldCard =>
+                  battlefieldCard.instanceId === action.cardId
+                    ? {
+                        ...battlefieldCard,
+                        loyalty: (battlefieldCard.loyalty ?? 0) + ability.loyaltyDelta,
+                        loyaltyActivatedThisTurn: true,
+                      }
+                    : battlefieldCard
+                ),
+              },
+            }
+          : entry
+      )
+
+      let triggerOccurrences: TriggerOccurrence[] = []
+      let manualOnly = !ability.supported || !ability.effect
+      if (ability.supported && ability.effect) {
+        const resolved = applyPlaneswalkerEffect(players, action.playerId, ability.effect, action.targetCardId, action.targetPlayerId)
+        players = resolved.players
+        triggerOccurrences = resolved.triggerOccurrences
+        manualOnly = false
+      }
+
+      const cleaned = cleanupBattlefieldState(players)
+      triggerOccurrences.push(...cleaned.triggerOccurrences)
+
+      const nextState = queueTriggeredAbilities({
+        ...state,
+        players: cleaned.players,
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: player.name,
+          description: manualOnly
+            ? `${player.name} activated ${card.name} — apply effect manually`
+            : describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }, triggerOccurrences)
+
+      return checkEliminations(nextState)
+    }
+
     case 'PLAY_LAND': {
       const currentPlayerId = state.turnOrder[state.currentTurnIndex]
       if (currentPlayerId !== action.playerId || !isMainPhase(state.currentPhase)) return state
@@ -1808,7 +2148,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         const card = player.zones.hand.find(c => c.instanceId === action.cardId)
         if (!card || !isLandCard(card)) return player
         const entryEffect = getLandEntryEffect(card)
-        const playedLand = { ...card, tapped: landEntersTapped(card) }
+        const basicLandsControlled = player.zones.lands.filter(land => land.typeLine.toLowerCase().includes('basic')).length
+        const playedLand = { ...card, tapped: landEntersTapped(card, { basicLandsControlled }) }
 
         if (entryEffect?.kind === 'bounce_land' || entryEffect?.kind === 'exile_graveyard') {
           pendingLandEffectChoice = {
@@ -2008,7 +2349,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       if (definition.target === 'creature_or_player' && !targetPlayer) {
         const targetCard =
           targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
-        if (!targetCard || !isCreatureCard(targetCard)) return state
+        if (!targetCard || (!isCreatureCard(targetCard) && !isPlaneswalkerCard(targetCard))) return state
       }
 
       const players = state.players.map(player => {
@@ -2063,8 +2404,12 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       const activePlayer = state.players.find(p => p.id === action.playerId)
       const attacker = activePlayer?.zones.battlefield.find(c => c.instanceId === action.cardId)
       const defender = state.players.find(p => p.id === action.defendingPlayerId)
+      const defendingPlaneswalker = action.defendingCardId
+        ? defender?.zones.battlefield.find(c => c.instanceId === action.defendingCardId) ?? null
+        : null
       if (!attacker || !defender || attacker.tapped || attacker.summoningSick || !isCreatureCard(attacker)) return state
       if (action.defendingPlayerId === action.playerId || defender.isEliminated) return state
+      if (action.defendingCardId && (!defendingPlaneswalker || !isPlaneswalkerCard(defendingPlaneswalker))) return state
 
       const nextState = queueTriggeredAbilities({
         ...state,
@@ -2089,6 +2434,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
               attackerName: attacker.name,
               attackingPlayerId: action.playerId,
               defendingPlayerId: action.defendingPlayerId,
+              defendingCardId: action.defendingCardId,
               blockerIds: [],
             },
           ],
@@ -2204,17 +2550,29 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           .filter(isCreatureCard)
 
         if (blockers.length === 0) {
-          players = players.map(player =>
-            player.id === attack.defendingPlayerId
-              ? {
-                  ...player,
-                  life: player.life - effectivePower(attacker),
-                  commanderDamage: attacker.isCommander
-                    ? { ...player.commanderDamage, [attack.attackingPlayerId]: (player.commanderDamage[attack.attackingPlayerId] ?? 0) + effectivePower(attacker) }
-                    : player.commanderDamage,
-                }
-              : player
-          )
+          players = players.map(player => {
+            if (player.id !== attack.defendingPlayerId) return player
+            if (attack.defendingCardId) {
+              return {
+                ...player,
+                zones: {
+                  ...player.zones,
+                  battlefield: player.zones.battlefield.map(card =>
+                    card.instanceId === attack.defendingCardId && isPlaneswalkerCard(card)
+                      ? { ...card, loyalty: (card.loyalty ?? 0) - effectivePower(attacker) }
+                      : card
+                  ),
+                },
+              }
+            }
+            return {
+              ...player,
+              life: player.life - effectivePower(attacker),
+              commanderDamage: attacker.isCommander
+                ? { ...player.commanderDamage, [attack.attackingPlayerId]: (player.commanderDamage[attack.attackingPlayerId] ?? 0) + effectivePower(attacker) }
+                : player.commanderDamage,
+            }
+          })
           continue
         }
 
@@ -2272,43 +2630,35 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
 
         // Trample: excess damage goes to defending player
         if (attackerDamageRemaining > 0) {
-          players = players.map(player =>
-            player.id === attack.defendingPlayerId
-              ? { ...player, life: player.life - attackerDamageRemaining }
-              : player
-          )
+          players = players.map(player => {
+            if (player.id !== attack.defendingPlayerId) return player
+            if (attack.defendingCardId) {
+              return {
+                ...player,
+                zones: {
+                  ...player.zones,
+                  battlefield: player.zones.battlefield.map(card =>
+                    card.instanceId === attack.defendingCardId && isPlaneswalkerCard(card)
+                      ? { ...card, loyalty: (card.loyalty ?? 0) - attackerDamageRemaining }
+                      : card
+                  ),
+                },
+              }
+            }
+            return { ...player, life: player.life - attackerDamageRemaining }
+          })
         }
       }
 
-      const deadCreatures: TriggerOccurrence[] = []
-      players = players.map(player => ({
-        ...player,
-        zones: {
-          ...player.zones,
-          graveyard: [
-            ...player.zones.graveyard,
-            ...player.zones.battlefield
-              .filter(card => isCreatureCard(card) && card.markedDamage >= effectiveToughness(card))
-              .map(card => {
-                deadCreatures.push({ type: 'creature_dies', controllerId: player.id, card })
-                return card
-              })
-              .filter(card => !card.isToken)
-              .map(card => ({ ...card, tapped: false, markedDamage: 0 })),
-          ],
-          battlefield: player.zones.battlefield.filter(
-            card => !(isCreatureCard(card) && card.markedDamage >= effectiveToughness(card))
-          ),
-        },
-      }))
+      const cleaned = cleanupBattlefieldState(players)
 
       const next = queueTriggeredAbilities({
         ...state,
-        players: players.map(player => ({ ...player, manaPool: emptyManaPool() })),
+        players: cleaned.players.map(player => ({ ...player, manaPool: emptyManaPool() })),
         currentPhase: 'main2' as const,
         combat: { attackers: [] },
         actionSeq: state.actionSeq + 1,
-      }, deadCreatures)
+      }, cleaned.triggerOccurrences)
       const withElim = checkEliminations(next)
       return {
         ...withElim,

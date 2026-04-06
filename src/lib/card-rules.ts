@@ -27,6 +27,19 @@ export type ActivatedAbilityDefinition =
   | { id: string; label: string; kind: 'gain_life'; requiresTap: boolean; sacrifice: boolean; genericCost: number; amount: number }
   | { id: string; label: string; kind: 'explore_target_creature'; requiresTap: boolean; sacrifice: boolean; genericCost: number }
 
+export type PlaneswalkerAbilityEffect =
+  | SimpleSpellDefinition
+  | { kind: 'put_minus_one_counter_target_creature'; amount: number; target: 'battlefield_creature' }
+
+export interface PlaneswalkerAbilityDefinition {
+  id: string
+  label: string
+  loyaltyDelta: number
+  target: 'none' | 'battlefield_creature' | 'battlefield_nonland_permanent' | 'battlefield_permanent' | 'creature_or_player' | 'own_graveyard_creature'
+  effect: PlaneswalkerAbilityEffect | null
+  supported: boolean
+}
+
 export type TriggerEventType =
   | 'enters_battlefield'
   | 'creature_enters'
@@ -186,6 +199,15 @@ const TOKEN_TEMPLATES: Record<TokenTemplateKey, TokenTemplate> = {
     power: 1,
     toughness: 1,
   },
+  wolf: {
+    key: 'wolf',
+    name: 'Wolf',
+    typeLine: 'Token Creature — Wolf',
+    oracleText: 'When this creature dies, you gain 1 life.',
+    colorIdentity: ['B', 'G'],
+    power: 2,
+    toughness: 2,
+  },
 }
 
 export function emptyManaPool(): ManaPool {
@@ -279,6 +301,12 @@ export function autoPayManaCost(
       ),
     }))
     .filter(entry => entry.abilities.length > 0)
+    .sort((a, b) => {
+      const aIsLand = a.card.typeLine.toLowerCase().includes('land')
+      const bIsLand = b.card.typeLine.toLowerCase().includes('land')
+      if (aIsLand !== bIsLand) return aIsLand ? -1 : 1
+      return a.abilities.length - b.abilities.length
+    })
 
   // Cap search to avoid exponential blowup on large boards with many duals.
   // Beyond this limit, fall back to a greedy approach.
@@ -328,7 +356,12 @@ function greedyPayManaCost(
   const tappedIds = new Set<string>()
 
   // First pass: tap lands for colored requirements, preferring single-color lands
-  const sorted = [...untappedManaCards].sort((a, b) => a.abilities.length - b.abilities.length)
+  const sorted = [...untappedManaCards].sort((a, b) => {
+    const aIsLand = a.card.typeLine.toLowerCase().includes('land')
+    const bIsLand = b.card.typeLine.toLowerCase().includes('land')
+    if (aIsLand !== bIsLand) return aIsLand ? -1 : 1
+    return a.abilities.length - b.abilities.length
+  })
   for (const color of COLOR_ORDER) {
     let needed = colored[color] - currentPool[color]
     if (needed <= 0) continue
@@ -795,9 +828,81 @@ export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine
   return null
 }
 
-export function landEntersTapped(card: Pick<GameCard, 'typeLine' | 'oracleText'>): boolean {
+export function getPlaneswalkerAbilities(card: Pick<GameCard, 'oracleText' | 'typeLine'>): PlaneswalkerAbilityDefinition[] {
+  if (!card.typeLine.toLowerCase().includes('planeswalker')) return []
+
+  const abilities: PlaneswalkerAbilityDefinition[] = []
+
+  for (const [index, rawLine] of (card.oracleText ?? '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .entries()) {
+    const match = rawLine.match(/^([+-]?\d+|0):\s*(.+)$/)
+    if (!match) continue
+
+    const loyaltyDelta = Number(match[1])
+    const body = match[2].trim()
+    const lowerBody = body.toLowerCase()
+    const simpleEffect = getSimpleSpellDefinition({
+      name: '',
+      typeLine: 'Sorcery',
+      oracleText: body,
+    })
+
+    if (simpleEffect) {
+      abilities.push({
+        id: `loyalty-${index}-${loyaltyDelta}`,
+        label: rawLine,
+        loyaltyDelta,
+        target: simpleEffect.target,
+        effect: simpleEffect,
+        supported: true,
+      })
+      continue
+    }
+
+    const minusCounterMatch = lowerBody.match(/put (\d+) -1\/-1 counters? on (?:up to )?one target creature|put a -1\/-1 counter on (?:up to )?one target creature|put a -1\/-1 counter on target creature/)
+    if (minusCounterMatch) {
+      abilities.push({
+        id: `loyalty-${index}-${loyaltyDelta}`,
+        label: rawLine,
+        loyaltyDelta,
+        target: 'battlefield_creature',
+        effect: {
+          kind: 'put_minus_one_counter_target_creature',
+          amount: minusCounterMatch[1] ? Number(minusCounterMatch[1]) : 1,
+          target: 'battlefield_creature',
+        },
+        supported: true,
+      })
+      continue
+    }
+
+    abilities.push({
+      id: `loyalty-${index}-${loyaltyDelta}`,
+      label: rawLine,
+      loyaltyDelta,
+      target: 'none',
+      effect: null,
+      supported: false,
+    })
+  }
+
+  return abilities
+}
+
+export function landEntersTapped(
+  card: Pick<GameCard, 'typeLine' | 'oracleText'>,
+  context?: { basicLandsControlled?: number }
+): boolean {
   if (!card.typeLine.toLowerCase().includes('land')) return false
   const oracleText = (card.oracleText ?? '').replace(/\n/g, ' ').toLowerCase()
+
+  if (oracleText.includes('enters the battlefield tapped unless you control two or more basic lands')) {
+    return (context?.basicLandsControlled ?? 0) < 2
+  }
+
   return oracleText.includes('enters tapped') || oracleText.includes('enters the battlefield tapped')
 }
 
@@ -881,5 +986,6 @@ function inferTokenKey(fragment: string): TokenTemplateKey | null {
   if (fragment.includes('pest')) return 'pest'
   if (fragment.includes('saproling')) return 'saproling'
   if (fragment.includes('worm')) return 'worm'
+  if (fragment.includes('wolf')) return 'wolf'
   return null
 }

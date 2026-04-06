@@ -16,11 +16,12 @@ interface PlayerGridProps {
   onMoveCard: (playerId: string, from: import('@/types/game-state').ZoneName, to: import('@/types/game-state').ZoneName, cardId: string) => void
   onToggleTapped: (playerId: string, cardId: string) => void
   onActivateAbility: (playerId: string, cardId: string, abilityId: string, targetCardId?: string) => void
+  onActivatePlaneswalkerAbility: (playerId: string, cardId: string, abilityId: string, targetCardId?: string, targetPlayerId?: string) => void
   onPlayLand: (playerId: string, cardId: string) => void
   onCastCommander: (playerId: string, cardId: string) => void
   onCastPermanent: (playerId: string, cardId: string) => void
   onCastSpell: (playerId: string, cardId: string, targetCardId?: string, targetPlayerId?: string) => void
-  onDeclareAttacker: (playerId: string, cardId: string, defendingPlayerId: string) => void
+  onDeclareAttacker: (playerId: string, cardId: string, defendingPlayerId: string, defendingCardId?: string) => void
   onRemoveAttacker: (playerId: string, cardId: string) => void
   onAssignBlocker: (playerId: string, blockerId: string, attackerId: string) => void
   onRemoveBlocker: (playerId: string, blockerId: string, attackerId: string) => void
@@ -36,7 +37,7 @@ const GRID_CLASSES: Record<number, string> = {
   6: 'grid-cols-2',
 }
 
-export function PlayerGrid({ players, currentTurnPlayerId, priorityPlayerId, isHost, myPlayerId, hostControlsAllPlayers, currentPhase, combat, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onActivateAbility, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker }: PlayerGridProps) {
+export function PlayerGrid({ players, currentTurnPlayerId, priorityPlayerId, isHost, myPlayerId, hostControlsAllPlayers, currentPhase, combat, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onActivateAbility, onActivatePlaneswalkerAbility, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker }: PlayerGridProps) {
   const openModal = useUiStore(s => s.openModal)
   const count = players.length
 
@@ -62,11 +63,12 @@ export function PlayerGrid({ players, currentTurnPlayerId, priorityPlayerId, isH
             onMoveCard={(from, to, cardId) => onMoveCard(player.id, from, to, cardId)}
             onToggleTapped={(cardId) => onToggleTapped(player.id, cardId)}
             onActivateAbility={(cardId, abilityId, targetCardId) => onActivateAbility(player.id, cardId, abilityId, targetCardId)}
+            onActivatePlaneswalkerAbility={(cardId, abilityId, targetCardId, targetPlayerId) => onActivatePlaneswalkerAbility(player.id, cardId, abilityId, targetCardId, targetPlayerId)}
             onPlayLand={(cardId) => onPlayLand(player.id, cardId)}
             onCastCommander={(cardId) => onCastCommander(player.id, cardId)}
             onCastPermanent={(cardId) => onCastPermanent(player.id, cardId)}
             onCastSpell={(cardId, targetCardId, targetPlayerId) => onCastSpell(player.id, cardId, targetCardId, targetPlayerId)}
-            onDeclareAttacker={(cardId, defendingPlayerId) => onDeclareAttacker(player.id, cardId, defendingPlayerId)}
+            onDeclareAttacker={(cardId, defendingPlayerId, defendingCardId) => onDeclareAttacker(player.id, cardId, defendingPlayerId, defendingCardId)}
             onRemoveAttacker={(cardId) => onRemoveAttacker(player.id, cardId)}
             onAssignBlocker={(blockerId, attackerId) => onAssignBlocker(player.id, blockerId, attackerId)}
             onRemoveBlocker={(blockerId, attackerId) => onRemoveBlocker(player.id, blockerId, attackerId)}

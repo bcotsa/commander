@@ -15,6 +15,7 @@ const TOKEN_QUERY_BY_KEY: Record<TokenTemplateKey, string> = {
   pest: '"Pest" t:token',
   saproling: '"Saproling" t:token',
   worm: '"Worm" t:token',
+  wolf: '"Wolf" t:token',
 }
 const tokenImageCache = new Map<TokenTemplateKey, string>()
 const tokenImageInflight = new Map<TokenTemplateKey, Promise<string>>()
@@ -200,6 +201,7 @@ export function scryfallCardToImportedDeckCard(card: ScryfallCard, quantity: num
     typeLine: card.type_line,
     power: parseCardStat(card.power ?? card.card_faces?.[0]?.power),
     toughness: parseCardStat(card.toughness ?? card.card_faces?.[0]?.toughness),
+    loyalty: parseCardStat(card.loyalty ?? card.card_faces?.[0]?.loyalty),
   }
 }
 
