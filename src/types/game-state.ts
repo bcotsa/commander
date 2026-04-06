@@ -7,7 +7,11 @@ export interface CommanderCard {
   imageUri: string
   colorIdentity: ColorSymbol[]
   manaCost: string | null
+  oracleText: string | null
   typeLine: string
+  power: number | null
+  toughness: number | null
+  loyalty: number | null
 }
 
 export interface ImportedDeckCard {

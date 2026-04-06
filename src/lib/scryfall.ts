@@ -180,7 +180,11 @@ export function scryfallCardToCommander(card: ScryfallCard): CommanderCard {
     imageUri,
     colorIdentity: card.color_identity as ColorSymbol[],
     manaCost: card.mana_cost ?? card.card_faces?.[0]?.mana_cost ?? null,
+    oracleText: card.oracle_text ?? card.card_faces?.map(face => face.oracle_text ?? '').join('\n') ?? null,
     typeLine: card.type_line,
+    power: parseCardStat(card.power ?? card.card_faces?.[0]?.power),
+    toughness: parseCardStat(card.toughness ?? card.card_faces?.[0]?.toughness),
+    loyalty: parseCardStat(card.loyalty ?? card.card_faces?.[0]?.loyalty),
   }
 }
 
@@ -371,7 +375,11 @@ export async function importDecklistText(raw: string): Promise<{
           imageUri: inferredCommander.imageUri,
           colorIdentity: inferredCommander.colorIdentity,
           manaCost: inferredCommander.manaCost,
+          oracleText: inferredCommander.oracleText,
           typeLine: inferredCommander.typeLine,
+          power: inferredCommander.power,
+          toughness: inferredCommander.toughness,
+          loyalty: inferredCommander.loyalty,
         }
       : null,
   }

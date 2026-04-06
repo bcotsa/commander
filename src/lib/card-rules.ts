@@ -258,6 +258,48 @@ export function parseManaCost(manaCost: string | null): { colored: ManaPool; gen
   return { colored, generic }
 }
 
+function spendGenericFromPool(pool: ManaPool, amount: number): ManaPool | null {
+  const next = { ...pool }
+  let genericLeft = amount
+
+  for (const color of COLOR_ORDER) {
+    if (genericLeft <= 0) break
+    const spend = Math.min(next[color], genericLeft)
+    next[color] -= spend
+    genericLeft -= spend
+  }
+
+  return genericLeft === 0 ? next : null
+}
+
+function spendSymbol(pool: ManaPool, symbol: string): ManaPool | null {
+  if (symbol in pool) {
+    const color = symbol as ColorSymbol
+    if (pool[color] <= 0) return null
+    return { ...pool, [color]: pool[color] - 1 }
+  }
+
+  const hybridParts = symbol.split('/')
+  if (hybridParts.length > 1) {
+    for (const part of hybridParts) {
+      if (part in pool) {
+        const color = part as ColorSymbol
+        if (pool[color] <= 0) continue
+        return { ...pool, [color]: pool[color] - 1 }
+      }
+
+      const numeric = Number(part)
+      if (Number.isFinite(numeric)) {
+        const paid = spendGenericFromPool(pool, numeric)
+        if (paid) return paid
+      }
+    }
+    return null
+  }
+
+  return null
+}
+
 export function canPayManaCost(pool: ManaPool, manaCost: string | null): boolean {
   const payment = spendManaCost(pool, manaCost)
   return payment !== null
@@ -273,23 +315,41 @@ export function canAutoPayManaCost(
 }
 
 export function spendManaCost(pool: ManaPool, manaCost: string | null): ManaPool | null {
-  const { colored, generic } = parseManaCost(manaCost)
-  const next = { ...pool }
+  if (!manaCost) return { ...pool }
 
-  for (const color of COLOR_ORDER) {
-    if (next[color] < colored[color]) return null
-    next[color] -= colored[color]
+  const symbols = (manaCost.match(/\{[^}]+\}/g) ?? []).map(symbol => symbol.replace(/[{}]/g, ''))
+  const specialSymbols = symbols
+    .filter(symbol => symbol !== 'X' && !Number.isFinite(Number(symbol)))
+    .sort((a, b) => a.split('/').length - b.split('/').length)
+  const genericCost = symbols.reduce((sum, symbol) => {
+    const numeric = Number(symbol)
+    return Number.isFinite(numeric) ? sum + numeric : sum
+  }, 0)
+
+  const paySpecial = (index: number, currentPool: ManaPool): ManaPool | null => {
+    if (index >= specialSymbols.length) {
+      return spendGenericFromPool(currentPool, genericCost)
+    }
+
+    const symbol = specialSymbols[index]
+    if (!symbol.includes('/')) {
+      const paid = spendSymbol(currentPool, symbol)
+      if (!paid) return null
+      return paySpecial(index + 1, paid)
+    }
+
+    const parts = symbol.split('/')
+    for (const part of parts) {
+      const paid = spendSymbol(currentPool, part)
+      if (!paid) continue
+      const result = paySpecial(index + 1, paid)
+      if (result) return result
+    }
+
+    return null
   }
 
-  let genericLeft = generic
-  for (const color of COLOR_ORDER) {
-    if (genericLeft <= 0) break
-    const spend = Math.min(next[color], genericLeft)
-    next[color] -= spend
-    genericLeft -= spend
-  }
-
-  return genericLeft === 0 ? next : null
+  return paySpecial(0, { ...pool })
 }
 
 export function autoPayManaCost(
@@ -362,53 +422,28 @@ function greedyPayManaCost(
   allCards: GameCard[],
   manaCost: string | null,
 ): { manaPool: ManaPool; cards: GameCard[] } | null {
-  const { colored, generic } = parseManaCost(manaCost)
   const currentPool = { ...pool }
   const tappedIds = new Set<string>()
 
-  // First pass: tap lands for colored requirements, preferring single-color lands
   const sorted = [...untappedManaCards].sort((a, b) => {
     const aIsLand = a.card.typeLine.toLowerCase().includes('land')
     const bIsLand = b.card.typeLine.toLowerCase().includes('land')
     if (aIsLand !== bIsLand) return aIsLand ? -1 : 1
     return a.abilities.length - b.abilities.length
   })
-  for (const color of COLOR_ORDER) {
-    let needed = colored[color] - currentPool[color]
-    if (needed <= 0) continue
-    for (const entry of sorted) {
-      if (needed <= 0) break
-      if (tappedIds.has(entry.card.instanceId)) continue
-      const ability = entry.abilities.find(option => option.color === color)
-      if (!ability) continue
-      tappedIds.add(entry.card.instanceId)
-      currentPool[color] += ability.amount
-      needed -= ability.amount
-    }
-  }
 
-  // Check colored requirements met
-  for (const color of COLOR_ORDER) {
-    if (currentPool[color] < colored[color]) return null
-  }
-
-  // Second pass: tap lands for generic, preferring single-color lands
-  let genericNeeded = generic
-  for (const color of COLOR_ORDER) {
-    const excess = currentPool[color] - colored[color]
-    const spend = Math.min(excess, genericNeeded)
-    genericNeeded -= spend
-  }
   for (const entry of sorted) {
-    if (genericNeeded <= 0) break
+    if (spendManaCost(currentPool, manaCost)) break
     if (tappedIds.has(entry.card.instanceId)) continue
-    const ability = entry.abilities[0]
-    if (!ability) continue
+
+    const bestAbility = entry.abilities.find(ability =>
+      spendManaCost({ ...currentPool, [ability.color]: currentPool[ability.color] + ability.amount }, manaCost)
+    ) ?? entry.abilities[0]
+
+    if (!bestAbility) continue
     tappedIds.add(entry.card.instanceId)
-    currentPool[ability.color] += ability.amount
-    genericNeeded -= ability.amount
+    currentPool[bestAbility.color] += bestAbility.amount
   }
-  if (genericNeeded > 0) return null
 
   const resultPool = spendManaCost(currentPool, manaCost)
   if (!resultPool) return null

@@ -1,3 +1,4 @@
+import { CardPreview } from '@/components/ui/CardPreview'
 import type { Player, StackItem } from '@/types/game-state'
 
 interface StackPanelProps {
@@ -65,11 +66,21 @@ export function StackPanel({ stack, players, priorityPlayerId, passedIds }: Stac
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-semibold text-white">
-                    {stackItem.kind === 'trigger'
-                      ? `${stackItem.card.name} — ${stackItem.abilityLabel ?? 'Trigger'}`
-                      : stackItem.card.name}
-                  </span>
+                  {stackItem.card.imageUri ? (
+                    <CardPreview imageUri={stackItem.card.imageUri} name={stackItem.card.name}>
+                      <span className="truncate text-sm font-semibold text-white underline decoration-dotted underline-offset-2 cursor-help">
+                        {stackItem.kind === 'trigger'
+                          ? `${stackItem.card.name} — ${stackItem.abilityLabel ?? 'Trigger'}`
+                          : stackItem.card.name}
+                      </span>
+                    </CardPreview>
+                  ) : (
+                    <span className="truncate text-sm font-semibold text-white">
+                      {stackItem.kind === 'trigger'
+                        ? `${stackItem.card.name} — ${stackItem.abilityLabel ?? 'Trigger'}`
+                        : stackItem.card.name}
+                    </span>
+                  )}
                   <span className="flex-shrink-0 text-[10px] uppercase tracking-wide text-slate-500">
                     {isTop ? 'Top' : `#${stack.length - index}`}
                   </span>
