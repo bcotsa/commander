@@ -53,6 +53,7 @@ export interface GameCard {
   loyalty: number | null
   loyaltyActivatedThisTurn: boolean
   plusOneCounters: number
+  minusOneCounters: number
   tapped: boolean
   markedDamage: number
   summoningSick: boolean
@@ -80,6 +81,7 @@ export type TriggerEffectPayload =
   | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number; tapped?: boolean }
   | { kind: 'draw_cards'; amount: number }
   | { kind: 'gain_life'; amount: number }
+  | { kind: 'proliferate' }
   | { kind: 'drain_each_opponent'; amount: number; gainLife: number }
 
 export type ZoneName = keyof PlayerZones
@@ -145,6 +147,7 @@ export interface GameState {
   stack: StackItem[]
   pendingLandEffectChoice: LandEffectChoiceState | null
   pendingExploreChoice: ExploreChoiceState | null
+  pendingProliferateChoice: ProliferateChoiceState | null
   priorityPlayerId: string | null
   priorityPassedIds: string[]
   round: number
@@ -186,6 +189,11 @@ export interface ExploreChoiceState {
   revealedCard: GameCard
 }
 
+export interface ProliferateChoiceState {
+  playerId: string
+  sourceName: string
+}
+
 export interface LandEffectChoiceState {
   playerId: string
   sourceCardId: string
@@ -198,6 +206,7 @@ export type ActionPayload =
   | { type: 'LIFE_CHANGE'; targetId: string; delta: number }
   | { type: 'COMMANDER_DAMAGE'; fromId: string; toId: string; delta: number }
   | { type: 'COUNTER_CHANGE'; targetId: string; counter: keyof PlayerCounters; delta: number }
+  | { type: 'CARD_COUNTER_CHANGE'; playerId: string; cardId: string; counter: 'plusOne' | 'minusOne' | 'loyalty'; delta: number }
   | { type: 'SET_MONARCH'; playerId: string }
   | { type: 'CLEAR_MONARCH' }
   | { type: 'SET_INITIATIVE'; playerId: string }
@@ -219,6 +228,7 @@ export type ActionPayload =
   | { type: 'ACTIVATE_ABILITY'; playerId: string; cardId: string; abilityId: string; targetCardId?: string }
   | { type: 'RESOLVE_LAND_EFFECT'; playerId: string; sourceCardId: string; effect: 'bounce_land' | 'exile_graveyard'; targetCardId?: string; targetPlayerId?: string }
   | { type: 'RESOLVE_EXPLORE_CHOICE'; playerId: string; putInGraveyard: boolean }
+  | { type: 'RESOLVE_PROLIFERATE_CHOICE'; playerId: string; targetPlayerIds: string[]; targetCardIds: string[] }
   | { type: 'PLAY_LAND'; playerId: string; cardId: string }
   | { type: 'CAST_COMMANDER'; playerId: string; cardId: string }
   | { type: 'CAST_PERMANENT'; playerId: string; cardId: string }

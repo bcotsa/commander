@@ -13,6 +13,7 @@ interface PlayerGridProps {
   combat: CombatState
   onLifeDelta: (playerId: string, delta: number) => void
   onDrawCard: (playerId: string) => void
+  onCardCounterChange: (playerId: string, cardId: string, counter: 'plusOne' | 'minusOne' | 'loyalty', delta: number) => void
   onMoveCard: (playerId: string, from: import('@/types/game-state').ZoneName, to: import('@/types/game-state').ZoneName, cardId: string) => void
   onToggleTapped: (playerId: string, cardId: string) => void
   onActivateAbility: (playerId: string, cardId: string, abilityId: string, targetCardId?: string) => void
@@ -37,7 +38,7 @@ const GRID_CLASSES: Record<number, string> = {
   6: 'grid-cols-2',
 }
 
-export function PlayerGrid({ players, currentTurnPlayerId, priorityPlayerId, isHost, myPlayerId, hostControlsAllPlayers, currentPhase, combat, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onActivateAbility, onActivatePlaneswalkerAbility, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker }: PlayerGridProps) {
+export function PlayerGrid({ players, currentTurnPlayerId, priorityPlayerId, isHost, myPlayerId, hostControlsAllPlayers, currentPhase, combat, onLifeDelta, onDrawCard, onCardCounterChange, onMoveCard, onToggleTapped, onActivateAbility, onActivatePlaneswalkerAbility, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker }: PlayerGridProps) {
   const openModal = useUiStore(s => s.openModal)
   const count = players.length
 
@@ -60,6 +61,7 @@ export function PlayerGrid({ players, currentTurnPlayerId, priorityPlayerId, isH
             rotated={rotated}
             onLifeDelta={(delta) => onLifeDelta(player.id, delta)}
             onDrawCard={() => onDrawCard(player.id)}
+            onCardCounterChange={(cardId, counter, delta) => onCardCounterChange(player.id, cardId, counter, delta)}
             onMoveCard={(from, to, cardId) => onMoveCard(player.id, from, to, cardId)}
             onToggleTapped={(cardId) => onToggleTapped(player.id, cardId)}
             onActivateAbility={(cardId, abilityId, targetCardId) => onActivateAbility(player.id, cardId, abilityId, targetCardId)}

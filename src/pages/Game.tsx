@@ -4,6 +4,7 @@ import { PlayerGrid } from '@/components/game/PlayerGrid'
 import { ExploreChoiceOverlay } from '@/components/game/ExploreChoiceOverlay'
 import { LandEffectOverlay } from '@/components/game/LandEffectOverlay'
 import { MulliganOverlay } from '@/components/game/MulliganOverlay'
+import { ProliferateChoiceOverlay } from '@/components/game/ProliferateChoiceOverlay'
 import { StackPanel } from '@/components/game/StackPanel'
 import { TurnTracker } from '@/components/game/TurnTracker'
 import { CommanderDamageModal } from '@/components/modals/CommanderDamageModal'
@@ -86,6 +87,7 @@ export function Game() {
           combat={state.combat}
           onLifeDelta={(pid, delta) => sendAction({ type: 'LIFE_CHANGE', targetId: pid, delta })}
           onDrawCard={(pid) => sendAction({ type: 'DRAW_CARD', playerId: pid })}
+          onCardCounterChange={(pid, cardId, counter, delta) => sendAction({ type: 'CARD_COUNTER_CHANGE', playerId: pid, cardId, counter, delta })}
           onMoveCard={(pid, from, to, cardId) => sendAction({ type: 'MOVE_CARD', playerId: pid, from, to, cardId })}
           onToggleTapped={(pid, cardId) => sendAction({ type: 'TOGGLE_CARD_TAPPED', playerId: pid, cardId })}
           onActivateAbility={(pid, cardId, abilityId, targetCardId) => sendAction({ type: 'ACTIVATE_ABILITY', playerId: pid, cardId, abilityId, targetCardId })}
@@ -145,6 +147,21 @@ export function Game() {
             type: 'RESOLVE_EXPLORE_CHOICE',
             playerId: state.pendingExploreChoice?.playerId ?? myPlayerId,
             putInGraveyard,
+          })}
+        />
+      )}
+
+      {state.pendingProliferateChoice && (
+        <ProliferateChoiceOverlay
+          choice={state.pendingProliferateChoice}
+          players={state.players}
+          myPlayerId={myPlayerId}
+          canControlAllPlayers={Boolean(isHost && state.hostControlsAllPlayers)}
+          onConfirm={(targetPlayerIds, targetCardIds) => sendAction({
+            type: 'RESOLVE_PROLIFERATE_CHOICE',
+            playerId: state.pendingProliferateChoice?.playerId ?? myPlayerId,
+            targetPlayerIds,
+            targetCardIds,
           })}
         />
       )}

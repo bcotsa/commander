@@ -53,12 +53,17 @@ function CardThumb({
       />
       {(card.power !== null || card.toughness !== null) && (
         <div className="absolute bottom-1 right-1 rounded bg-black/80 px-1 py-0.5 text-[10px] font-semibold text-white">
-          {(card.power ?? 0) + card.plusOneCounters} / {(card.toughness ?? 0) + card.plusOneCounters}
+          {(card.power ?? 0) + card.plusOneCounters - card.minusOneCounters} / {(card.toughness ?? 0) + card.plusOneCounters - card.minusOneCounters}
         </div>
       )}
       {card.plusOneCounters > 0 && (
         <div className="absolute top-1 right-1 rounded bg-emerald-500/90 px-1 py-0.5 text-[9px] font-semibold text-black">
           +{card.plusOneCounters}
+        </div>
+      )}
+      {card.minusOneCounters > 0 && (
+        <div className={`absolute rounded bg-rose-500/90 px-1 py-0.5 text-[9px] font-semibold text-white ${card.plusOneCounters > 0 ? 'top-6 right-1' : 'top-1 right-1'}`}>
+          -{card.minusOneCounters}
         </div>
       )}
       {card.loyalty !== null && (
@@ -305,6 +310,7 @@ interface PlayerTileProps {
   rotated?: boolean
   onLifeDelta: (delta: number) => void
   onDrawCard: () => void
+  onCardCounterChange: (cardId: string, counter: 'plusOne' | 'minusOne' | 'loyalty', delta: number) => void
   onMoveCard: (from: ZoneName, to: ZoneName, cardId: string) => void
   onToggleTapped: (cardId: string) => void
   onActivateAbility: (cardId: string, abilityId: string, targetCardId?: string) => void
@@ -322,7 +328,7 @@ interface PlayerTileProps {
 }
 
 export function PlayerTile({
-  player, allPlayers, isCurrentTurn, canControlPlayer, isPriorityProxy, currentTurnPlayerId, currentPhase, combat, rotated, onLifeDelta, onDrawCard, onMoveCard, onToggleTapped, onActivateAbility, onActivatePlaneswalkerAbility, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker, onOpenDamage, onOpenCounters
+  player, allPlayers, isCurrentTurn, canControlPlayer, isPriorityProxy, currentTurnPlayerId, currentPhase, combat, rotated, onLifeDelta, onDrawCard, onCardCounterChange, onMoveCard, onToggleTapped, onActivateAbility, onActivatePlaneswalkerAbility, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker, onOpenDamage, onOpenCounters
 }: PlayerTileProps) {
   const borderColor = isPriorityProxy ? 'border-emerald-500' : isCurrentTurn ? 'border-violet-500' : 'border-slate-700'
   const { library, hand, lands, battlefield, graveyard, exile, commandZone } = player.zones
@@ -348,7 +354,10 @@ export function PlayerTile({
   const defendableAttacks = combat.attackers.filter(a => a.defendingPlayerId === player.id)
   const spellCardTargets = selectedSpell && selected
     ? allPlayers.flatMap(otherPlayer => otherPlayer.zones.battlefield.filter(card => {
-        if (selectedSpell.target === 'battlefield_creature' || selectedSpell.target === 'creature_or_player') {
+        if (selectedSpell.target === 'battlefield_creature') {
+          return card.typeLine.toLowerCase().includes('creature')
+        }
+        if (selectedSpell.target === 'creature_or_player') {
           return card.typeLine.toLowerCase().includes('creature') || card.typeLine.toLowerCase().includes('planeswalker')
         }
         if (selectedSpell.target === 'battlefield_nonland_permanent') {
@@ -754,6 +763,68 @@ export function PlayerTile({
             >
               {card.tapped ? 'Untap' : 'Tap'}
             </button>
+          )}
+          {canControlPlayer && selected.zone === 'battlefield' && (
+            <>
+              <button
+                onClick={() => {
+                  onCardCounterChange(card.instanceId, 'plusOne', 1)
+                  setSelected(null)
+                }}
+                className="rounded-md bg-emerald-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-emerald-600"
+              >
+                +1/+1
+              </button>
+              <button
+                onClick={() => {
+                  onCardCounterChange(card.instanceId, 'plusOne', -1)
+                  setSelected(null)
+                }}
+                className="rounded-md bg-emerald-900 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-emerald-800"
+              >
+                Remove +1/+1
+              </button>
+              <button
+                onClick={() => {
+                  onCardCounterChange(card.instanceId, 'minusOne', 1)
+                  setSelected(null)
+                }}
+                className="rounded-md bg-rose-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-rose-600"
+              >
+                -1/-1
+              </button>
+              <button
+                onClick={() => {
+                  onCardCounterChange(card.instanceId, 'minusOne', -1)
+                  setSelected(null)
+                }}
+                className="rounded-md bg-rose-900 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-rose-800"
+              >
+                Remove -1/-1
+              </button>
+              {card.loyalty !== null && (
+                <>
+                  <button
+                    onClick={() => {
+                      onCardCounterChange(card.instanceId, 'loyalty', 1)
+                      setSelected(null)
+                    }}
+                    className="rounded-md bg-violet-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-violet-600"
+                  >
+                    + Loyalty
+                  </button>
+                  <button
+                    onClick={() => {
+                      onCardCounterChange(card.instanceId, 'loyalty', -1)
+                      setSelected(null)
+                    }}
+                    className="rounded-md bg-violet-900 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-violet-800"
+                  >
+                    - Loyalty
+                  </button>
+                </>
+              )}
+            </>
           )}
           {canControlPlayer && selected.zone !== 'library' && selected.zone !== 'battlefield' && selected.zone !== 'lands' && (selected.zone !== 'hand' || selectedIsPermanent || selectedIsLand) && (
             <button

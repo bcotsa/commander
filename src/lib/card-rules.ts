@@ -12,11 +12,14 @@ const BASIC_LAND_TYPES: Array<{ pattern: RegExp; color: ColorSymbol }> = [
 export type SimpleSpellDefinition =
   | { kind: 'draw_cards'; amount: number; loseLife?: number; target: 'none' }
   | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number | 'opponents'; tapped?: boolean; target: 'none' }
+  | { kind: 'proliferate'; target: 'none' }
   | { kind: 'destroy_target_creature'; target: 'battlefield_creature' }
   | { kind: 'destroy_target_nonland_permanent'; target: 'battlefield_nonland_permanent' }
   | { kind: 'destroy_target_permanent'; target: 'battlefield_permanent' }
   | { kind: 'damage_target_creature'; amount: number; target: 'battlefield_creature' }
   | { kind: 'damage_target_creature_or_player'; amount: number; target: 'creature_or_player' }
+  | { kind: 'put_minus_one_counter_target_creature'; amount: number; target: 'battlefield_creature' }
+  | { kind: 'put_minus_one_counters_each_creature'; amount: number; target: 'none' }
   | { kind: 'mass_damage_creatures'; amount: number | 'creature_count'; target: 'none' }
   | { kind: 'return_graveyard_creature_to_battlefield'; target: 'own_graveyard_creature' }
   | { kind: 'return_graveyard_creature_to_hand'; target: 'own_graveyard_creature' }
@@ -26,6 +29,8 @@ export type ActivatedAbilityDefinition =
   | { id: string; label: string; kind: 'draw_card'; requiresTap: boolean; sacrifice: boolean; genericCost: number }
   | { id: string; label: string; kind: 'gain_life'; requiresTap: boolean; sacrifice: boolean; genericCost: number; amount: number }
   | { id: string; label: string; kind: 'explore_target_creature'; requiresTap: boolean; sacrifice: boolean; genericCost: number }
+  | { id: string; label: string; kind: 'untap_self_add_minus_one_counter'; requiresTap: boolean; genericCost?: number }
+  | { id: string; label: string; kind: 'remove_minus_one_counter_add_mana'; color: ColorSymbol; amount: number; requiresTap: boolean; genericCost?: number }
 
 export type PlaneswalkerAbilityEffect =
   | SimpleSpellDefinition
@@ -42,9 +47,11 @@ export interface PlaneswalkerAbilityDefinition {
 
 export type TriggerEventType =
   | 'enters_battlefield'
+  | 'land_enters'
   | 'creature_enters'
   | 'token_created'
   | 'token_sacrificed'
+  | 'minus_one_counters_placed'
   | 'attacks'
   | 'creature_dies'
   | 'upkeep'
@@ -53,8 +60,10 @@ export type TriggerEventType =
 
 export type TriggerEffectDefinition =
   | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number | 'opponents'; tapped?: boolean }
+  | { kind: 'create_tokens_from_counter_placement'; tokenKey: TokenTemplateKey; mode: 'once' | 'per_counter'; tapped?: boolean }
   | { kind: 'draw_cards'; amount: number }
   | { kind: 'gain_life'; amount: number }
+  | { kind: 'proliferate' }
   | { kind: 'drain_each_opponent'; amount: number; gainLife: number }
 
 export interface TriggeredAbilityDefinition {
@@ -69,10 +78,12 @@ export interface TriggeredAbilityDefinition {
     | 'your_upkeep'
     | 'each_upkeep'
     | 'your_end_step'
+    | 'land_you_control_enters'
     | 'spell_you_cast'
     | 'another_creature_you_control_enters'
     | 'token_you_create'
     | 'token_you_create_or_sacrifice'
+    | 'minus_one_counters_you_put_on_creature'
 }
 
 export type LandEntryEffectDefinition =
@@ -526,6 +537,7 @@ export function getActivatedAbilities(card: Pick<GameCard, 'name' | 'typeLine' |
 
   if (lowerName === 'devoted druid') {
     abilities.push({ id: 'mana-G-1', label: 'Tap for G', kind: 'add_mana', color: 'G', amount: 1, requiresTap: true })
+    abilities.push({ id: 'untap-minus-one', label: 'Put -1/-1: Untap', kind: 'untap_self_add_minus_one_counter', requiresTap: false })
   }
 
   if (lowerName === 'ignoble hierarch') {
@@ -536,6 +548,19 @@ export function getActivatedAbilities(card: Pick<GameCard, 'name' | 'typeLine' |
 
   if (lowerName === 'llanowar elves' || lowerName === 'elvish mystic' || lowerName === 'fyndhorn elves') {
     abilities.push({ id: 'mana-G-1', label: 'Tap for G', kind: 'add_mana', color: 'G', amount: 1, requiresTap: true })
+  }
+
+  if (lowerName === 'channeler initiate') {
+    for (const color of ['W', 'U', 'B', 'R', 'G'] as const) {
+      abilities.push({
+        id: `remove-minus-one-${color}`,
+        label: `Remove -1/-1: Add ${color}`,
+        kind: 'remove_minus_one_counter_add_mana',
+        color,
+        amount: 1,
+        requiresTap: true,
+      })
+    }
   }
 
   const genericTapMana = oracleText.match(/\{T\}:\s*Add ((?:\{[WUBRGC]\})+)/i)
@@ -671,6 +696,16 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
     })
   }
 
+  if (oracleText.includes('whenever a land enters the battlefield under your control, proliferate')) {
+    abilities.push({
+      id: 'landfall-proliferate',
+      label: 'Landfall trigger',
+      event: 'land_enters',
+      match: 'land_you_control_enters',
+      effect: { kind: 'proliferate' },
+    })
+  }
+
   if (oracleText.includes('whenever another creature enters the battlefield under your control, you gain 1 life')) {
     abilities.push({
       id: 'creature-enters-gain-1',
@@ -733,6 +768,27 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
     }
   }
 
+  if (oracleText.includes('whenever you put one or more -1/-1 counters on a creature')) {
+    if (oracleText.includes('create a 1/1 green snake creature token')) {
+      abilities.push({
+        id: 'minus-one-snake',
+        label: 'Counter trigger',
+        event: 'minus_one_counters_placed',
+        match: 'minus_one_counters_you_put_on_creature',
+        effect: { kind: 'create_tokens_from_counter_placement', tokenKey: 'snake', mode: 'once' },
+      })
+    }
+    if (oracleText.includes('create that many 1/1 black insect creature tokens')) {
+      abilities.push({
+        id: 'minus-one-insects',
+        label: 'Counter trigger',
+        event: 'minus_one_counters_placed',
+        match: 'minus_one_counters_you_put_on_creature',
+        effect: { kind: 'create_tokens_from_counter_placement', tokenKey: 'insect', mode: 'per_counter' },
+      })
+    }
+  }
+
   return abilities
 }
 
@@ -763,6 +819,24 @@ export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine
       tapped: tokenSpell.tapped,
       target: 'none',
     }
+  }
+
+  if (oracleText.includes('proliferate')) {
+    return { kind: 'proliferate', target: 'none' }
+  }
+
+  const minusOneEach = oracleText.match(/put (a|one|two|three|four|five|six|seven|\d+) -1\/-1 counters? on each creature/)
+  if (minusOneEach) {
+    const rawAmount = minusOneEach[1] ?? '1'
+    const amount = rawAmount === 'a' ? 1 : wordToNumber(rawAmount)
+    return { kind: 'put_minus_one_counters_each_creature', amount, target: 'none' }
+  }
+
+  const minusOneTarget = oracleText.match(/put (a|one|two|three|four|five|six|seven|\d+) -1\/-1 counters? on target creature/)
+  if (minusOneTarget) {
+    const rawAmount = minusOneTarget[1] ?? '1'
+    const amount = rawAmount === 'a' ? 1 : wordToNumber(rawAmount)
+    return { kind: 'put_minus_one_counter_target_creature', amount, target: 'battlefield_creature' }
   }
 
   if (oracleText.includes('destroy target creature')) {
@@ -890,6 +964,23 @@ export function getPlaneswalkerAbilities(card: Pick<GameCard, 'oracleText' | 'ty
   }
 
   return abilities
+}
+
+export function getEtbCounters(card: Pick<GameCard, 'oracleText'>): { plusOne: number; minusOne: number } {
+  const oracleText = (card.oracleText ?? '').replace(/\n/g, ' ').toLowerCase()
+
+  const plusMatch = oracleText.match(/enters(?: the battlefield)? with (a|one|two|three|four|five|six|seven|\d+) \+1\/\+1 counters? on it/)
+  const minusMatch = oracleText.match(/enters(?: the battlefield)? with (a|one|two|three|four|five|six|seven|\d+) -1\/-1 counters? on it/)
+
+  const parseCount = (value?: string) => {
+    if (!value) return 0
+    return value === 'a' ? 1 : wordToNumber(value)
+  }
+
+  return {
+    plusOne: parseCount(plusMatch?.[1]),
+    minusOne: parseCount(minusMatch?.[1]),
+  }
 }
 
 export function landEntersTapped(
