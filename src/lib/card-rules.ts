@@ -1,4 +1,4 @@
-import type { ColorSymbol, GameCard, ManaPool, Player, TokenTemplateKey } from '@/types/game-state'
+import type { CastOptions, ColorSymbol, GameCard, ManaPool, Player, TokenTemplateKey } from '@/types/game-state'
 
 const COLOR_ORDER: ColorSymbol[] = ['W', 'U', 'B', 'R', 'G', 'C']
 const BASIC_LAND_TYPES: Array<{ pattern: RegExp; color: ColorSymbol }> = [
@@ -23,6 +23,11 @@ export type SimpleSpellDefinition =
   | { kind: 'mass_damage_creatures'; amount: number | 'creature_count'; target: 'none' }
   | { kind: 'return_graveyard_creature_to_battlefield'; target: 'own_graveyard_creature' }
   | { kind: 'return_graveyard_creature_to_hand'; target: 'own_graveyard_creature' }
+
+export type CastChoiceSpec =
+  | { kind: 'x_value'; title: string; min: number; max: number }
+  | { kind: 'sacrifice_cost'; title: string; filter: 'artifact_or_creature' }
+  | { kind: 'modal'; title: string; modes: Array<{ id: string; label: string }> }
 
 export type ActivatedAbilityDefinition =
   | { id: string; label: string; kind: 'add_mana'; color: ColorSymbol; amount: number; requiresTap: boolean; sacrifice?: boolean; genericCost?: number }
@@ -237,6 +242,10 @@ export function formatManaPool(pool: ManaPool): string {
 }
 
 export function parseManaCost(manaCost: string | null): { colored: ManaPool; generic: number } {
+  return parseManaCostWithOptions(manaCost)
+}
+
+export function parseManaCostWithOptions(manaCost: string | null, options?: Pick<CastOptions, 'xValue'>): { colored: ManaPool; generic: number } {
   const colored = emptyManaPool()
   let generic = 0
   if (!manaCost) return { colored, generic }
@@ -244,6 +253,10 @@ export function parseManaCost(manaCost: string | null): { colored: ManaPool; gen
   const symbols = manaCost.match(/\{[^}]+\}/g) ?? []
   for (const symbol of symbols) {
     const value = symbol.replace(/[{}]/g, '')
+    if (value === 'X') {
+      generic += Math.max(0, options?.xValue ?? 0)
+      continue
+    }
     if (value in colored) {
       colored[value as ColorSymbol] += 1
       continue
@@ -253,30 +266,49 @@ export function parseManaCost(manaCost: string | null): { colored: ManaPool; gen
       generic += numeric
       continue
     }
-    if (value === 'X') generic += 0
   }
   return { colored, generic }
 }
 
-function spendGenericFromPool(pool: ManaPool, amount: number): ManaPool | null {
+type ManaPaymentSummary = {
+  manaPool: ManaPool
+  spent: ManaPool
+}
+
+export interface ManaPaymentResult extends ManaPaymentSummary {
+  cards: GameCard[]
+}
+
+function addSpentColor(spent: ManaPool, color: ColorSymbol, amount: number): ManaPool {
+  return { ...spent, [color]: spent[color] + amount }
+}
+
+function spendGenericFromPoolDetailed(pool: ManaPool, amount: number): ManaPaymentSummary | null {
   const next = { ...pool }
+  let spent = emptyManaPool()
   let genericLeft = amount
 
   for (const color of COLOR_ORDER) {
     if (genericLeft <= 0) break
     const spend = Math.min(next[color], genericLeft)
     next[color] -= spend
+    if (spend > 0) {
+      spent = addSpentColor(spent, color, spend)
+    }
     genericLeft -= spend
   }
 
-  return genericLeft === 0 ? next : null
+  return genericLeft === 0 ? { manaPool: next, spent } : null
 }
 
-function spendSymbol(pool: ManaPool, symbol: string): ManaPool | null {
+function spendSymbolDetailed(pool: ManaPool, symbol: string): ManaPaymentSummary | null {
   if (symbol in pool) {
     const color = symbol as ColorSymbol
     if (pool[color] <= 0) return null
-    return { ...pool, [color]: pool[color] - 1 }
+    return {
+      manaPool: { ...pool, [color]: pool[color] - 1 },
+      spent: addSpentColor(emptyManaPool(), color, 1),
+    }
   }
 
   const hybridParts = symbol.split('/')
@@ -285,12 +317,15 @@ function spendSymbol(pool: ManaPool, symbol: string): ManaPool | null {
       if (part in pool) {
         const color = part as ColorSymbol
         if (pool[color] <= 0) continue
-        return { ...pool, [color]: pool[color] - 1 }
+        return {
+          manaPool: { ...pool, [color]: pool[color] - 1 },
+          spent: addSpentColor(emptyManaPool(), color, 1),
+        }
       }
 
       const numeric = Number(part)
       if (Number.isFinite(numeric)) {
-        const paid = spendGenericFromPool(pool, numeric)
+        const paid = spendGenericFromPoolDetailed(pool, numeric)
         if (paid) return paid
       }
     }
@@ -300,8 +335,8 @@ function spendSymbol(pool: ManaPool, symbol: string): ManaPool | null {
   return null
 }
 
-export function canPayManaCost(pool: ManaPool, manaCost: string | null): boolean {
-  const payment = spendManaCost(pool, manaCost)
+export function canPayManaCost(pool: ManaPool, manaCost: string | null, options?: Pick<CastOptions, 'xValue'>): boolean {
+  const payment = spendManaCost(pool, manaCost, options)
   return payment !== null
 }
 
@@ -309,58 +344,76 @@ export function canAutoPayManaCost(
   pool: ManaPool,
   manaCards: GameCard[],
   manaCost: string | null,
-  player: Pick<Player, 'commander'>
+  player: Pick<Player, 'commander'>,
+  options?: Pick<CastOptions, 'xValue'>
 ): boolean {
-  return autoPayManaCost(pool, manaCards, manaCost, player) !== null
+  return autoPayManaCost(pool, manaCards, manaCost, player, options) !== null
 }
 
-export function spendManaCost(pool: ManaPool, manaCost: string | null): ManaPool | null {
-  if (!manaCost) return { ...pool }
+export function spendManaCost(pool: ManaPool, manaCost: string | null, options?: Pick<CastOptions, 'xValue'>): ManaPool | null {
+  return spendManaCostDetailed(pool, manaCost, options)?.manaPool ?? null
+}
+
+export function spendManaCostDetailed(
+  pool: ManaPool,
+  manaCost: string | null,
+  options?: Pick<CastOptions, 'xValue'>
+): ManaPaymentSummary | null {
+  if (!manaCost) return { manaPool: { ...pool }, spent: emptyManaPool() }
 
   const symbols = (manaCost.match(/\{[^}]+\}/g) ?? []).map(symbol => symbol.replace(/[{}]/g, ''))
   const specialSymbols = symbols
     .filter(symbol => symbol !== 'X' && !Number.isFinite(Number(symbol)))
     .sort((a, b) => a.split('/').length - b.split('/').length)
   const genericCost = symbols.reduce((sum, symbol) => {
+    if (symbol === 'X') return sum + Math.max(0, options?.xValue ?? 0)
     const numeric = Number(symbol)
     return Number.isFinite(numeric) ? sum + numeric : sum
   }, 0)
 
-  const paySpecial = (index: number, currentPool: ManaPool): ManaPool | null => {
+  const paySpecial = (index: number, currentPool: ManaPool, spent: ManaPool): ManaPaymentSummary | null => {
     if (index >= specialSymbols.length) {
-      return spendGenericFromPool(currentPool, genericCost)
+      const genericPaid = spendGenericFromPoolDetailed(currentPool, genericCost)
+      if (!genericPaid) return null
+      return {
+        manaPool: genericPaid.manaPool,
+        spent: COLOR_ORDER.reduce((acc, color) => ({ ...acc, [color]: spent[color] + genericPaid.spent[color] }), emptyManaPool()),
+      }
     }
 
     const symbol = specialSymbols[index]
     if (!symbol.includes('/')) {
-      const paid = spendSymbol(currentPool, symbol)
+      const paid = spendSymbolDetailed(currentPool, symbol)
       if (!paid) return null
-      return paySpecial(index + 1, paid)
+      const nextSpent = COLOR_ORDER.reduce((acc, color) => ({ ...acc, [color]: spent[color] + paid.spent[color] }), emptyManaPool())
+      return paySpecial(index + 1, paid.manaPool, nextSpent)
     }
 
     const parts = symbol.split('/')
     for (const part of parts) {
-      const paid = spendSymbol(currentPool, part)
+      const paid = spendSymbolDetailed(currentPool, part)
       if (!paid) continue
-      const result = paySpecial(index + 1, paid)
+      const nextSpent = COLOR_ORDER.reduce((acc, color) => ({ ...acc, [color]: spent[color] + paid.spent[color] }), emptyManaPool())
+      const result = paySpecial(index + 1, paid.manaPool, nextSpent)
       if (result) return result
     }
 
     return null
   }
 
-  return paySpecial(0, { ...pool })
+  return paySpecial(0, { ...pool }, emptyManaPool())
 }
 
 export function autoPayManaCost(
   pool: ManaPool,
   manaCards: GameCard[],
   manaCost: string | null,
-  player: Pick<Player, 'commander'>
-): { manaPool: ManaPool; cards: GameCard[] } | null {
-  const directPayment = spendManaCost(pool, manaCost)
+  player: Pick<Player, 'commander'>,
+  options?: Pick<CastOptions, 'xValue'>
+): ManaPaymentResult | null {
+  const directPayment = spendManaCostDetailed(pool, manaCost, options)
   if (directPayment) {
-    return { manaPool: directPayment, cards: manaCards }
+    return { manaPool: directPayment.manaPool, spent: directPayment.spent, cards: manaCards }
   }
 
   const untappedManaCards = manaCards
@@ -384,16 +437,16 @@ export function autoPayManaCost(
   const MAX_SEARCH_LANDS = 12
 
   if (untappedManaCards.length > MAX_SEARCH_LANDS) {
-    return greedyPayManaCost(pool, untappedManaCards, manaCards, manaCost)
+    return greedyPayManaCost(pool, untappedManaCards, manaCards, manaCost, options)
   }
 
   const search = (
     index: number,
     currentPool: ManaPool,
     currentCards: GameCard[]
-  ): { manaPool: ManaPool; cards: GameCard[] } | null => {
-    const paidPool = spendManaCost(currentPool, manaCost)
-    if (paidPool) return { manaPool: paidPool, cards: currentCards }
+  ): ManaPaymentResult | null => {
+    const paidPool = spendManaCostDetailed(currentPool, manaCost, options)
+    if (paidPool) return { manaPool: paidPool.manaPool, spent: paidPool.spent, cards: currentCards }
     if (index >= untappedManaCards.length) return null
 
     const { card, abilities } = untappedManaCards[index]
@@ -421,7 +474,8 @@ function greedyPayManaCost(
   untappedManaCards: Array<{ card: GameCard; abilities: Extract<ActivatedAbilityDefinition, { kind: 'add_mana' }>[] }>,
   allCards: GameCard[],
   manaCost: string | null,
-): { manaPool: ManaPool; cards: GameCard[] } | null {
+  options?: Pick<CastOptions, 'xValue'>,
+): ManaPaymentResult | null {
   const currentPool = { ...pool }
   const tappedIds = new Set<string>()
 
@@ -433,11 +487,11 @@ function greedyPayManaCost(
   })
 
   for (const entry of sorted) {
-    if (spendManaCost(currentPool, manaCost)) break
+    if (spendManaCost(currentPool, manaCost, options)) break
     if (tappedIds.has(entry.card.instanceId)) continue
 
     const bestAbility = entry.abilities.find(ability =>
-      spendManaCost({ ...currentPool, [ability.color]: currentPool[ability.color] + ability.amount }, manaCost)
+      spendManaCost({ ...currentPool, [ability.color]: currentPool[ability.color] + ability.amount }, manaCost, options)
     ) ?? entry.abilities[0]
 
     if (!bestAbility) continue
@@ -445,13 +499,45 @@ function greedyPayManaCost(
     currentPool[bestAbility.color] += bestAbility.amount
   }
 
-  const resultPool = spendManaCost(currentPool, manaCost)
-  if (!resultPool) return null
+  const result = spendManaCostDetailed(currentPool, manaCost, options)
+  if (!result) return null
 
   const resultCards = allCards.map(card =>
     tappedIds.has(card.instanceId) ? { ...card, tapped: true } : card
   )
-  return { manaPool: resultPool, cards: resultCards }
+  return { manaPool: result.manaPool, spent: result.spent, cards: resultCards }
+}
+
+export function resolveManaCost(manaCost: string | null, xValue = 0): string | null {
+  if (!manaCost) return manaCost
+  return manaCost.replace(/\{X\}/g, `{${Math.max(0, xValue)}}`)
+}
+
+export function getCastChoiceSpec(card: Pick<GameCard, 'name' | 'manaCost'>, _player: Pick<Player, 'life'>): CastChoiceSpec | null {
+  if (card.name === "Black Sun's Zenith") {
+    return { kind: 'x_value', title: card.name, min: 0, max: 20 }
+  }
+
+  if (card.name === 'Deadly Dispute') {
+    return { kind: 'sacrifice_cost', title: card.name, filter: 'artifact_or_creature' }
+  }
+
+  if (card.name === 'Cathartic Pyre') {
+    return {
+      kind: 'modal',
+      title: card.name,
+      modes: [
+        { id: 'damage', label: '3 damage to target creature or planeswalker' },
+        { id: 'loot', label: 'Discard up to two cards, then draw that many' },
+      ],
+    }
+  }
+
+  if (card.manaCost?.includes('{X}')) {
+    return { kind: 'x_value', title: card.name, min: 0, max: 20 }
+  }
+
+  return null
 }
 
 export function getLandManaOptions(card: Pick<GameCard, 'name' | 'typeLine' | 'oracleText'>, player: Pick<Player, 'commander'>): ColorSymbol[] {

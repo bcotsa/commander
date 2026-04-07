@@ -88,6 +88,19 @@ export type TriggerEffectPayload =
   | { kind: 'proliferate' }
   | { kind: 'drain_each_opponent'; amount: number; gainLife: number }
 
+export interface TargetDistributionChoice {
+  cardId: string
+  amount: number
+}
+
+export interface CastOptions {
+  xValue?: number
+  mode?: string
+  selectedCardIds?: string[]
+  sacrificedCardId?: string
+  distributedTargets?: TargetDistributionChoice[]
+}
+
 export type ZoneName = keyof PlayerZones
 export type TurnPhase = 'untap' | 'upkeep' | 'draw' | 'main1' | 'combat' | 'main2' | 'end'
 
@@ -184,6 +197,8 @@ export interface StackItem {
   targetPlayerId?: string
   abilityLabel?: string
   triggerEffect?: TriggerEffectPayload
+  castOptions?: CastOptions
+  spentMana?: ManaPool
 }
 
 export interface ExploreChoiceState {
@@ -234,9 +249,9 @@ export type ActionPayload =
   | { type: 'RESOLVE_EXPLORE_CHOICE'; playerId: string; putInGraveyard: boolean }
   | { type: 'RESOLVE_PROLIFERATE_CHOICE'; playerId: string; targetPlayerIds: string[]; targetCardIds: string[] }
   | { type: 'PLAY_LAND'; playerId: string; cardId: string }
-  | { type: 'CAST_COMMANDER'; playerId: string; cardId: string }
-  | { type: 'CAST_PERMANENT'; playerId: string; cardId: string }
-  | { type: 'CAST_SPELL'; playerId: string; cardId: string; targetCardId?: string; targetPlayerId?: string }
+  | { type: 'CAST_COMMANDER'; playerId: string; cardId: string; options?: CastOptions }
+  | { type: 'CAST_PERMANENT'; playerId: string; cardId: string; options?: CastOptions }
+  | { type: 'CAST_SPELL'; playerId: string; cardId: string; targetCardId?: string; targetPlayerId?: string; options?: CastOptions }
   | { type: 'DECLARE_ATTACKER'; playerId: string; cardId: string; defendingPlayerId: string; defendingCardId?: string }
   | { type: 'ACTIVATE_PLANESWALKER_ABILITY'; playerId: string; cardId: string; abilityId: string; targetCardId?: string; targetPlayerId?: string }
   | { type: 'REMOVE_ATTACKER'; playerId: string; cardId: string }

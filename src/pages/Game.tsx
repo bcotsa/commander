@@ -93,9 +93,9 @@ export function Game() {
           onActivateAbility={(pid, cardId, abilityId, targetCardId) => sendAction({ type: 'ACTIVATE_ABILITY', playerId: pid, cardId, abilityId, targetCardId })}
           onActivatePlaneswalkerAbility={(pid, cardId, abilityId, targetCardId, targetPlayerId) => sendAction({ type: 'ACTIVATE_PLANESWALKER_ABILITY', playerId: pid, cardId, abilityId, targetCardId, targetPlayerId })}
           onPlayLand={(pid, cardId) => sendAction({ type: 'PLAY_LAND', playerId: pid, cardId })}
-          onCastCommander={(pid, cardId) => sendAction({ type: 'CAST_COMMANDER', playerId: pid, cardId })}
-          onCastPermanent={(pid, cardId) => sendAction({ type: 'CAST_PERMANENT', playerId: pid, cardId })}
-          onCastSpell={(pid, cardId, targetCardId, targetPlayerId) => sendAction({ type: 'CAST_SPELL', playerId: pid, cardId, targetCardId, targetPlayerId })}
+          onCastCommander={(pid, cardId, options) => sendAction({ type: 'CAST_COMMANDER', playerId: pid, cardId, options })}
+          onCastPermanent={(pid, cardId, options) => sendAction({ type: 'CAST_PERMANENT', playerId: pid, cardId, options })}
+          onCastSpell={(pid, cardId, targetCardId, targetPlayerId, options) => sendAction({ type: 'CAST_SPELL', playerId: pid, cardId, targetCardId, targetPlayerId, options })}
           onDeclareAttacker={(pid, cardId, defendingPlayerId, defendingCardId) => sendAction({ type: 'DECLARE_ATTACKER', playerId: pid, cardId, defendingPlayerId, defendingCardId })}
           onRemoveAttacker={(pid, cardId) => sendAction({ type: 'REMOVE_ATTACKER', playerId: pid, cardId })}
           onAssignBlocker={(pid, blockerId, attackerId) => sendAction({ type: 'ASSIGN_BLOCKER', playerId: pid, blockerId, attackerId })}

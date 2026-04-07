@@ -1,5 +1,5 @@
 import { PlayerTile } from './PlayerTile'
-import type { Player, CombatState } from '@/types/game-state'
+import type { Player, CombatState, CastOptions } from '@/types/game-state'
 import { useUiStore } from '@/store/ui-store'
 
 interface PlayerGridProps {
@@ -19,9 +19,9 @@ interface PlayerGridProps {
   onActivateAbility: (playerId: string, cardId: string, abilityId: string, targetCardId?: string) => void
   onActivatePlaneswalkerAbility: (playerId: string, cardId: string, abilityId: string, targetCardId?: string, targetPlayerId?: string) => void
   onPlayLand: (playerId: string, cardId: string) => void
-  onCastCommander: (playerId: string, cardId: string) => void
-  onCastPermanent: (playerId: string, cardId: string) => void
-  onCastSpell: (playerId: string, cardId: string, targetCardId?: string, targetPlayerId?: string) => void
+  onCastCommander: (playerId: string, cardId: string, options?: CastOptions) => void
+  onCastPermanent: (playerId: string, cardId: string, options?: CastOptions) => void
+  onCastSpell: (playerId: string, cardId: string, targetCardId?: string, targetPlayerId?: string, options?: CastOptions) => void
   onDeclareAttacker: (playerId: string, cardId: string, defendingPlayerId: string, defendingCardId?: string) => void
   onRemoveAttacker: (playerId: string, cardId: string) => void
   onAssignBlocker: (playerId: string, blockerId: string, attackerId: string) => void
@@ -67,9 +67,9 @@ export function PlayerGrid({ players, currentTurnPlayerId, priorityPlayerId, isH
             onActivateAbility={(cardId, abilityId, targetCardId) => onActivateAbility(player.id, cardId, abilityId, targetCardId)}
             onActivatePlaneswalkerAbility={(cardId, abilityId, targetCardId, targetPlayerId) => onActivatePlaneswalkerAbility(player.id, cardId, abilityId, targetCardId, targetPlayerId)}
             onPlayLand={(cardId) => onPlayLand(player.id, cardId)}
-            onCastCommander={(cardId) => onCastCommander(player.id, cardId)}
-            onCastPermanent={(cardId) => onCastPermanent(player.id, cardId)}
-            onCastSpell={(cardId, targetCardId, targetPlayerId) => onCastSpell(player.id, cardId, targetCardId, targetPlayerId)}
+            onCastCommander={(cardId, options) => onCastCommander(player.id, cardId, options)}
+            onCastPermanent={(cardId, options) => onCastPermanent(player.id, cardId, options)}
+            onCastSpell={(cardId, targetCardId, targetPlayerId, options) => onCastSpell(player.id, cardId, targetCardId, targetPlayerId, options)}
             onDeclareAttacker={(cardId, defendingPlayerId, defendingCardId) => onDeclareAttacker(player.id, cardId, defendingPlayerId, defendingCardId)}
             onRemoveAttacker={(cardId) => onRemoveAttacker(player.id, cardId)}
             onAssignBlocker={(blockerId, attackerId) => onAssignBlocker(player.id, blockerId, attackerId)}

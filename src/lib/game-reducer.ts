@@ -1,6 +1,6 @@
 import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeckCard, PlayerZones, TurnPhase, StackItem, TokenTemplateKey, TriggerEffectPayload, ColorSymbol } from '@/types/game-state'
 import { checkEliminations } from './game-engine'
-import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getActivatedAbilities, getEtbCounters, getLandEntryEffect, getLandManaOptions, getPlaneswalkerAbilities, getSimpleSpellDefinition, getTokenTemplate, getTriggeredAbilities, landEntersTapped, type PlaneswalkerAbilityEffect, type TriggeredAbilityDefinition, type TriggerEffectDefinition } from './card-rules'
+import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getActivatedAbilities, getEtbCounters, getLandEntryEffect, getLandManaOptions, getPlaneswalkerAbilities, getSimpleSpellDefinition, getTokenTemplate, getTriggeredAbilities, landEntersTapped, resolveManaCost, type PlaneswalkerAbilityEffect, type TriggeredAbilityDefinition, type TriggerEffectDefinition } from './card-rules'
 
 const MAX_LOG = 50
 const TURN_PHASES: TurnPhase[] = ['untap', 'upkeep', 'draw', 'main1', 'combat', 'main2', 'end']
@@ -522,6 +522,24 @@ function entersBattlefield(card: GameCard): GameCard {
     plusOneCounters: card.plusOneCounters + etbCounters.plusOne,
     minusOneCounters: card.minusOneCounters + etbCounters.minusOne,
     summoningSick: isCreatureCard(card),
+  }
+}
+
+function withCastOptions(card: GameCard, xValue?: number): GameCard {
+  if (!xValue) return card
+  if (!card.manaCost?.includes('{X}')) return card
+  const resolvedManaCost = resolveManaCost(card.manaCost, xValue)
+  if (isPlaneswalkerCard(card) && card.startingLoyalty === null) {
+    return {
+      ...card,
+      manaCost: resolvedManaCost,
+      startingLoyalty: xValue,
+      loyalty: xValue,
+    }
+  }
+  return {
+    ...card,
+    manaCost: resolvedManaCost,
   }
 }
 
@@ -1246,6 +1264,109 @@ function resolveStackTop(state: GameState): GameState {
         break
     }
   } else {
+    const addSpellToCasterGraveyard = (allPlayers: Player[]) =>
+      allPlayers.map(player =>
+        player.id === stackItem.casterId
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                graveyard: [...player.zones.graveyard, { ...stackItem.card, tapped: false, markedDamage: 0 }],
+              },
+            }
+          : player
+      )
+
+    if (stackItem.card.name === "Black Sun's Zenith" && typeof stackItem.castOptions?.xValue === 'number') {
+      const amount = stackItem.castOptions.xValue
+      players = players.map(player => ({
+        ...player,
+        zones: {
+          ...player.zones,
+          battlefield: player.zones.battlefield.map(entry =>
+            isCreatureCard(entry) ? { ...entry, minusOneCounters: entry.minusOneCounters + amount } : entry
+          ),
+          library: player.id === stackItem.casterId
+            ? shuffleCards([...player.zones.library, { ...stackItem.card, tapped: false, markedDamage: 0 }])
+            : player.zones.library,
+        },
+      }))
+      for (const player of state.players) {
+        for (const card of player.zones.battlefield) {
+          if (!isCreatureCard(card)) continue
+          triggerOccurrences.push({
+            type: 'minus_one_counters_placed',
+            sourcePlayerId: stackItem.casterId,
+            controllerId: player.id,
+            card,
+            amount,
+          })
+        }
+      }
+    } else if (stackItem.card.name === 'Painful Truths') {
+      const colorsSpent = stackItem.spentMana
+        ? (['W', 'U', 'B', 'R', 'G'] as const).filter(color => stackItem.spentMana![color] > 0).length
+        : 0
+      players = addSpellToCasterGraveyard(players).map(player =>
+        player.id === stackItem.casterId
+          ? {
+              ...player,
+              life: player.life - colorsSpent,
+              zones: {
+                ...player.zones,
+                library: player.zones.library.slice(Math.min(colorsSpent, player.zones.library.length)),
+                hand: [...player.zones.hand, ...player.zones.library.slice(0, colorsSpent)],
+              },
+            }
+          : player
+      )
+    } else if (stackItem.card.name === 'Deadly Dispute') {
+      players = addSpellToCasterGraveyard(players)
+      const tokenController = players.find(player => player.id === stackItem.casterId)
+      const createdTokens = tokenController ? createTokensForPlayer(tokenController, 'treasure', 1) : []
+      players = players.map(player =>
+        player.id === stackItem.casterId
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                library: player.zones.library.slice(Math.min(2, player.zones.library.length)),
+                hand: [...player.zones.hand, ...player.zones.library.slice(0, 2)],
+                battlefield: [...player.zones.battlefield, ...createdTokens],
+              },
+            }
+          : player
+      )
+      if (createdTokens[0]) {
+        triggerOccurrences.push({ type: 'token_created', controllerId: stackItem.casterId, card: createdTokens[0] })
+        triggerOccurrences.push({ type: 'enters_battlefield', controllerId: stackItem.casterId, card: createdTokens[0] })
+      }
+    } else if (stackItem.card.name === 'Cathartic Pyre') {
+      if (stackItem.castOptions?.mode === 'loot') {
+        players = addSpellToCasterGraveyard(players).map(player => {
+          if (player.id !== stackItem.casterId) return player
+          const discardIds = new Set(stackItem.castOptions?.selectedCardIds ?? [])
+          const discardedCards = player.zones.hand.filter(entry => discardIds.has(entry.instanceId)).slice(0, 2)
+          return {
+            ...player,
+            zones: {
+              ...player.zones,
+              hand: [
+                ...player.zones.hand.filter(entry => !discardIds.has(entry.instanceId)),
+                ...player.zones.library.slice(0, discardedCards.length),
+              ],
+              library: player.zones.library.slice(Math.min(discardedCards.length, player.zones.library.length)),
+              graveyard: [...player.zones.graveyard, ...discardedCards.map(entry => ({ ...entry, tapped: false, markedDamage: 0 }))],
+            },
+          }
+        })
+      } else {
+        players = addSpellToCasterGraveyard(players)
+        if (targetBattlefieldOwner?.id && stackItem.targetCardId) {
+          players = applyDamageToCreature(players, targetBattlefieldOwner.id, stackItem.targetCardId, 3, stackItem.casterId, stackItem.card)
+        }
+      }
+    } else {
     const definition = getSimpleSpellDefinition(stackItem.card)
     if (!definition) {
       spellAutomated = false
@@ -1262,19 +1383,6 @@ function resolveStackTop(state: GameState): GameState {
           : player
       )
     } else {
-      const addSpellToCasterGraveyard = (allPlayers: Player[]) =>
-        allPlayers.map(player =>
-          player.id === stackItem.casterId
-            ? {
-                ...player,
-                zones: {
-                  ...player.zones,
-                  graveyard: [...player.zones.graveyard, { ...stackItem.card, tapped: false, markedDamage: 0 }],
-                },
-              }
-            : player
-        )
-
       switch (definition.kind) {
         case 'draw_cards':
           players = addSpellToCasterGraveyard(players).map(player =>
@@ -1451,6 +1559,7 @@ function resolveStackTop(state: GameState): GameState {
           }
           break
       }
+    }
     }
   }
 
@@ -2661,13 +2770,15 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
 
       let nextState = state
       let changed = false
+      let spentMana = emptyManaPool()
       const players = state.players.map(player => {
         if (player.id !== action.playerId) return player
         const card = player.zones.commandZone.find(c => c.instanceId === action.cardId)
         if (!card) return player
-        const payment = autoPayManaCost(player.manaPool, [...player.zones.lands, ...player.zones.battlefield], card.manaCost, player)
+        const payment = autoPayManaCost(player.manaPool, [...player.zones.lands, ...player.zones.battlefield], card.manaCost, player, action.options)
         if (!payment) return player
         changed = true
+        spentMana = payment.spent
         return {
           ...player,
           manaPool: payment.manaPool,
@@ -2686,14 +2797,16 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           players,
         },
         {
-          card: state.players.find(p => p.id === action.playerId)?.zones.commandZone.find(c => c.instanceId === action.cardId)!,
+          card: withCastOptions(state.players.find(p => p.id === action.playerId)?.zones.commandZone.find(c => c.instanceId === action.cardId)!, action.options?.xValue),
           casterId: action.playerId,
           casterName: state.players.find(p => p.id === action.playerId)?.name ?? '',
           source: 'commandZone',
           kind: 'commander',
+          castOptions: action.options,
+          spentMana,
         }
       )
-      nextState = queueTriggeredAbilities(nextState, [{ type: 'spell_cast', controllerId: action.playerId, card: state.players.find(p => p.id === action.playerId)?.zones.commandZone.find(c => c.instanceId === action.cardId)! }])
+      nextState = queueTriggeredAbilities(nextState, [{ type: 'spell_cast', controllerId: action.playerId, card: withCastOptions(state.players.find(p => p.id === action.playerId)?.zones.commandZone.find(c => c.instanceId === action.cardId)!, action.options?.xValue) }])
 
       return {
         ...nextState,
@@ -2717,13 +2830,15 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
 
       const originalCard = state.players.find(p => p.id === action.playerId)?.zones.hand.find(c => c.instanceId === action.cardId)
       let changed = false
+      let spentMana = emptyManaPool()
       const players = state.players.map(player => {
         if (player.id !== action.playerId) return player
         const card = player.zones.hand.find(c => c.instanceId === action.cardId)
         if (!card || isLandCard(card) || !isPermanentCard(card)) return player
-        const payment = autoPayManaCost(player.manaPool, [...player.zones.lands, ...player.zones.battlefield], card.manaCost, player)
+        const payment = autoPayManaCost(player.manaPool, [...player.zones.lands, ...player.zones.battlefield], card.manaCost, player, action.options)
         if (!payment) return player
         changed = true
+        spentMana = payment.spent
         return {
           ...player,
           manaPool: payment.manaPool,
@@ -2742,14 +2857,16 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           players,
         },
         {
-          card: originalCard!,
+          card: withCastOptions(originalCard!, action.options?.xValue),
           casterId: action.playerId,
           casterName: state.players.find(p => p.id === action.playerId)?.name ?? '',
           source: 'hand',
           kind: 'permanent',
+          castOptions: action.options,
+          spentMana,
         }
       )
-      nextState = queueTriggeredAbilities(nextState, [{ type: 'spell_cast', controllerId: action.playerId, card: originalCard! }])
+      nextState = queueTriggeredAbilities(nextState, [{ type: 'spell_cast', controllerId: action.playerId, card: withCastOptions(originalCard!, action.options?.xValue) }])
 
       return {
         ...nextState,
@@ -2774,7 +2891,9 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       if (!caster || !card || isPermanentCard(card) || isLandCard(card)) return state
 
       const definition = getSimpleSpellDefinition(card)
-      if (!definition || !canAutoPayManaCost(caster.manaPool, [...caster.zones.lands, ...caster.zones.battlefield], card.manaCost, caster)) return state
+      const supportsCustomChoiceSpell = ["Black Sun's Zenith", 'Painful Truths', 'Deadly Dispute', 'Cathartic Pyre'].includes(card.name)
+      if (!definition && !supportsCustomChoiceSpell) return state
+      if (!canAutoPayManaCost(caster.manaPool, [...caster.zones.lands, ...caster.zones.battlefield], card.manaCost, caster, action.options)) return state
 
       const targetPlayer = action.targetPlayerId
         ? state.players.find(player => player.id === action.targetPlayerId) ?? null
@@ -2786,19 +2905,19 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           ) ?? null
         : null
 
-      if (definition.target === 'battlefield_creature') {
+      if (definition?.target === 'battlefield_creature') {
         const targetCard =
           targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!targetCard || !isCreatureCard(targetCard)) return state
       }
 
-      if (definition.target === 'battlefield_nonland_permanent') {
+      if (definition?.target === 'battlefield_nonland_permanent') {
         const targetCard =
           targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!targetCard || !isNonlandPermanent(targetCard)) return state
       }
 
-      if (definition.target === 'battlefield_permanent') {
+      if (definition?.target === 'battlefield_permanent') {
         const targetCard =
           targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ??
           targetBattlefieldOwner?.zones.lands.find(entry => entry.instanceId === action.targetCardId) ??
@@ -2806,28 +2925,64 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         if (!targetCard || (!isPermanentCard(targetCard) && !isLandCard(targetCard))) return state
       }
 
-      if (definition.target === 'own_graveyard_creature') {
+      if (definition?.target === 'own_graveyard_creature') {
         const targetCard = caster.zones.graveyard.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!targetCard || !isCreatureCard(targetCard)) return state
       }
 
-      if (definition.target === 'creature_or_player' && !targetPlayer) {
+      if (definition?.target === 'creature_or_player' && !targetPlayer) {
         const targetCard =
           targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!targetCard || (!isCreatureCard(targetCard) && !isPlaneswalkerCard(targetCard))) return state
       }
 
+      if (card.name === "Black Sun's Zenith" && typeof action.options?.xValue !== 'number') return state
+      if (card.name === 'Deadly Dispute') {
+        const sacrificed = [...caster.zones.battlefield, ...caster.zones.lands].find(entry => entry.instanceId === action.options?.sacrificedCardId)
+        const typeLine = sacrificed?.typeLine.toLowerCase() ?? ''
+        if (!sacrificed || (!typeLine.includes('artifact') && !typeLine.includes('creature'))) return state
+      }
+      if (card.name === 'Cathartic Pyre') {
+        if (action.options?.mode !== 'damage' && action.options?.mode !== 'loot') return state
+        if (action.options.mode === 'damage') {
+          const targetCard = targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
+          if (!targetCard || (!isCreatureCard(targetCard) && !isPlaneswalkerCard(targetCard))) return state
+        }
+        if (action.options.mode === 'loot') {
+          const discardIds = action.options.selectedCardIds ?? []
+          if (discardIds.length > 2) return state
+          if (!discardIds.every(id => caster.zones.hand.some(entry => entry.instanceId === id && entry.instanceId !== action.cardId))) return state
+        }
+      }
+
+      let spentMana = emptyManaPool()
+      let sacrificedCard: GameCard | null = null
+      let sacrificedToken = false
       const players = state.players.map(player => {
         if (player.id !== action.playerId) return player
-        const payment = autoPayManaCost(player.manaPool, [...player.zones.lands, ...player.zones.battlefield], card.manaCost, player)
+        const payment = autoPayManaCost(player.manaPool, [...player.zones.lands, ...player.zones.battlefield], card.manaCost, player, action.options)
         if (!payment) return player
+        spentMana = payment.spent
+        const paidZones = applyTappedManaCards(player, payment.cards).zones
+        const sacTarget = action.options?.sacrificedCardId
+          ? [...player.zones.battlefield, ...player.zones.lands].find(entry => entry.instanceId === action.options?.sacrificedCardId) ?? null
+          : null
+        if (sacTarget) {
+          sacrificedCard = sacTarget
+          sacrificedToken = sacTarget.isToken
+        }
+        const withoutSacrifice = sacTarget
+          ? removeCardFromBattlefieldOrLands({ ...player, zones: paidZones }, sacTarget.instanceId)
+          : paidZones
         return {
           ...player,
           manaPool: payment.manaPool,
           zones: {
-            ...player.zones,
-            ...applyTappedManaCards(player, payment.cards).zones,
+            ...withoutSacrifice,
             hand: player.zones.hand.filter(entry => entry.instanceId !== action.cardId),
+            graveyard: sacTarget && !sacTarget.isToken
+              ? [...withoutSacrifice.graveyard, { ...sacTarget, tapped: false, markedDamage: 0 }]
+              : withoutSacrifice.graveyard,
           },
         }
       })
@@ -2838,16 +2993,25 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           players,
         },
         {
-          card,
+          card: withCastOptions(card, action.options?.xValue),
           casterId: action.playerId,
           casterName: state.players.find(p => p.id === action.playerId)?.name ?? '',
           source: 'hand',
           kind: 'spell',
           targetCardId: action.targetCardId,
           targetPlayerId: action.targetPlayerId,
+          castOptions: action.options,
+          spentMana,
         }
       )
-      nextState = queueTriggeredAbilities(nextState, [{ type: 'spell_cast', controllerId: action.playerId, card }])
+      const occurrences: TriggerOccurrence[] = [{ type: 'spell_cast', controllerId: action.playerId, card: withCastOptions(card, action.options?.xValue) }]
+      if (sacrificedToken && sacrificedCard) {
+        occurrences.push({ type: 'token_sacrificed', controllerId: action.playerId, card: sacrificedCard })
+      }
+      if (sacrificedCard && isCreatureCard(sacrificedCard)) {
+        occurrences.push({ type: 'creature_dies', controllerId: action.playerId, card: sacrificedCard })
+      }
+      nextState = queueTriggeredAbilities(nextState, occurrences)
 
       return {
         ...nextState,
