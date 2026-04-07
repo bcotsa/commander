@@ -34,6 +34,7 @@ export type ActivatedAbilityDefinition =
   | { id: string; label: string; kind: 'draw_card'; requiresTap: boolean; sacrifice: boolean; genericCost: number }
   | { id: string; label: string; kind: 'gain_life'; requiresTap: boolean; sacrifice: boolean; genericCost: number; amount: number }
   | { id: string; label: string; kind: 'explore_target_creature'; requiresTap: boolean; sacrifice: boolean; genericCost: number }
+  | { id: string; label: string; kind: 'search_basic_land_to_battlefield_tapped'; requiresTap: boolean; sacrifice: boolean; genericCost?: number; basicLandTypes: string[] | null }
   | { id: string; label: string; kind: 'untap_self_add_minus_one_counter'; requiresTap: boolean; genericCost?: number }
   | { id: string; label: string; kind: 'remove_minus_one_counter_add_mana'; color: ColorSymbol; amount: number; requiresTap: boolean; genericCost?: number }
 
@@ -575,8 +576,31 @@ export function getActivatedAbilities(card: Pick<GameCard, 'name' | 'typeLine' |
   const lowerName = card.name.toLowerCase()
   const lowerType = card.typeLine.toLowerCase()
   const oracleText = card.oracleText ?? ''
+  const lowerOracleText = oracleText.toLowerCase()
 
   if (lowerType.includes('land')) {
+    const basicFetchAny = lowerOracleText.includes('search your library for a basic land card')
+      && lowerOracleText.includes('put it onto the battlefield tapped')
+      && lowerOracleText.includes('sacrifice')
+    const typedFetchMatch = lowerOracleText.match(/search your library for a basic (plains|island|swamp|mountain|forest) card|search your library for a basic (plains|island|swamp|mountain|forest) or (plains|island|swamp|mountain|forest) card|search your library for a basic (plains|island|swamp|mountain|forest), (plains|island|swamp|mountain|forest), or (plains|island|swamp|mountain|forest) card/)
+    const typedLandTypes = typedFetchMatch
+      ? typedFetchMatch.slice(1).filter((value): value is string => Boolean(value))
+      : null
+    const fetchCostMatch = lowerOracleText.match(/\{(\d+)\},\s*\{t\},\s*sacrifice/)
+    if (basicFetchAny || typedLandTypes) {
+      abilities.push({
+        id: 'fetch-basic-land',
+        label: typedLandTypes?.length
+          ? `Fetch ${typedLandTypes.join('/')}`
+          : 'Fetch Basic',
+        kind: 'search_basic_land_to_battlefield_tapped',
+        requiresTap: lowerOracleText.includes('{t}'),
+        sacrifice: true,
+        genericCost: fetchCostMatch ? Number(fetchCostMatch[1]) : 0,
+        basicLandTypes: typedLandTypes?.length ? typedLandTypes : null,
+      })
+    }
+
     for (const color of getLandManaOptions(card, player)) {
       abilities.push({
         id: `mana-${color}-1`,

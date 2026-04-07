@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { PlayerGrid } from '@/components/game/PlayerGrid'
 import { ExploreChoiceOverlay } from '@/components/game/ExploreChoiceOverlay'
 import { LandEffectOverlay } from '@/components/game/LandEffectOverlay'
+import { LibrarySearchOverlay } from '@/components/game/LibrarySearchOverlay'
 import { MulliganOverlay } from '@/components/game/MulliganOverlay'
 import { ProliferateChoiceOverlay } from '@/components/game/ProliferateChoiceOverlay'
 import { StackPanel } from '@/components/game/StackPanel'
@@ -134,6 +135,21 @@ export function Game() {
             sourceCardId: state.pendingLandEffectChoice?.sourceCardId ?? '',
             effect: 'exile_graveyard',
             targetPlayerId: playerId,
+          })}
+        />
+      )}
+
+      {state.pendingLibrarySearchChoice && (
+        <LibrarySearchOverlay
+          choice={state.pendingLibrarySearchChoice}
+          players={state.players}
+          myPlayerId={myPlayerId}
+          canControlAllPlayers={Boolean(isHost && state.hostControlsAllPlayers)}
+          onChoose={(targetCardId) => sendAction({
+            type: 'RESOLVE_LIBRARY_SEARCH',
+            playerId: state.pendingLibrarySearchChoice?.playerId ?? myPlayerId,
+            sourceCardId: state.pendingLibrarySearchChoice?.sourceCardId ?? '',
+            targetCardId,
           })}
         />
       )}

@@ -167,6 +167,7 @@ export interface GameState {
   combat: CombatState
   stack: StackItem[]
   pendingLandEffectChoice: LandEffectChoiceState | null
+  pendingLibrarySearchChoice: LibrarySearchChoiceState | null
   pendingExploreChoice: ExploreChoiceState | null
   pendingProliferateChoice: ProliferateChoiceState | null
   pendingTriggerTargetChoice: TriggerTargetChoiceState | null
@@ -233,6 +234,13 @@ export interface LandEffectChoiceState {
   effect: 'bounce_land' | 'exile_graveyard'
 }
 
+export interface LibrarySearchChoiceState {
+  playerId: string
+  sourceCardId: string
+  sourceName: string
+  basicLandTypes: string[] | null
+}
+
 export type GraveyardTargetType = 'own_graveyard_creature' | 'any_graveyard_creature' | 'opponent_graveyard_creature'
 export type TriggerTargetType = 'battlefield_creature' | GraveyardTargetType
 
@@ -261,6 +269,7 @@ export type ActionPayload =
   | { type: 'TOGGLE_CARD_TAPPED'; playerId: string; cardId: string }
   | { type: 'ADD_MANA'; playerId: string; cardId: string; color: ColorSymbol }
   | { type: 'ACTIVATE_ABILITY'; playerId: string; cardId: string; abilityId: string; targetCardId?: string }
+  | { type: 'RESOLVE_LIBRARY_SEARCH'; playerId: string; sourceCardId: string; targetCardId?: string }
   | { type: 'RESOLVE_LAND_EFFECT'; playerId: string; sourceCardId: string; effect: 'bounce_land' | 'exile_graveyard'; targetCardId?: string; targetPlayerId?: string }
   | { type: 'RESOLVE_EXPLORE_CHOICE'; playerId: string; putInGraveyard: boolean }
   | { type: 'RESOLVE_PROLIFERATE_CHOICE'; playerId: string; targetPlayerIds: string[]; targetCardIds: string[] }

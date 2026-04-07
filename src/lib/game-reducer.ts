@@ -19,6 +19,7 @@ export function createInitialGameState(roomCode: string, roomId = ''): GameState
     combat: { attackers: [] },
     stack: [],
     pendingLandEffectChoice: null,
+    pendingLibrarySearchChoice: null,
     pendingExploreChoice: null,
     pendingProliferateChoice: null,
     pendingTriggerTargetChoice: null,
@@ -250,6 +251,7 @@ function beginActiveGame(state: GameState): GameState {
     currentPhase: 'untap',
     stack: [],
     pendingLandEffectChoice: null,
+    pendingLibrarySearchChoice: null,
     pendingExploreChoice: null,
     pendingProliferateChoice: null,
     pendingTriggerTargetChoice: null,
@@ -278,6 +280,10 @@ function isPermanentCard(card: GameCard): boolean {
 
 function isLandCard(card: GameCard): boolean {
   return card.typeLine.toLowerCase().includes('land')
+}
+
+function isBasicLandCard(card: GameCard): boolean {
+  return card.typeLine.toLowerCase().includes('basic') && isLandCard(card)
 }
 
 function isCreatureCard(card: GameCard): boolean {
@@ -1944,6 +1950,13 @@ function describe(state: GameState, action: ActionPayload): string {
       return 'Game started'
     case 'RESET_GAME':
       return 'Game reset'
+    case 'RESOLVE_LIBRARY_SEARCH': {
+      const choice = state.pendingLibrarySearchChoice
+      const card = action.targetCardId
+        ? state.players.find(p => p.id === action.playerId)?.zones.library.find(entry => entry.instanceId === action.targetCardId)
+        : null
+      return `${player(action.playerId)} searched with ${choice?.sourceName ?? 'a land'}${card ? ` and found ${card.name}` : ''}`
+    }
     default:
       return action.type
   }
@@ -1978,7 +1991,22 @@ export function clearUndo(roomId: string) {
 
 export function gameReducer(state: GameState, action: ActionPayload): GameState {
   // Snapshot before undoable mutations (not for meta/read-only actions)
-  const nonUndoable = new Set(['PLAYER_JOIN', 'PLAYER_CONNECTED', 'SET_PLAYER_NAME', 'SET_COMMANDER', 'SET_DECK', 'SET_TURN_ORDER', 'UNDO', 'GAME_START', 'RESET_GAME'])
+  const nonUndoable = new Set([
+    'PLAYER_JOIN',
+    'PLAYER_CONNECTED',
+    'SET_PLAYER_NAME',
+    'SET_COMMANDER',
+    'SET_DECK',
+    'SET_TURN_ORDER',
+    'UNDO',
+    'GAME_START',
+    'RESET_GAME',
+    'RESOLVE_LIBRARY_SEARCH',
+    'RESOLVE_EXPLORE_CHOICE',
+    'RESOLVE_PROLIFERATE_CHOICE',
+    'SET_TRIGGER_TARGET',
+    'RESOLVE_LAND_EFFECT',
+  ])
   if (!nonUndoable.has(action.type) && state.phase === 'active') {
     pushUndo(state.roomId, state)
   }
@@ -2009,6 +2037,20 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       'RESET_GAME',
     ])
     if (!allowedDuringExploreChoice.has(action.type)) {
+      return state
+    }
+  }
+
+  if (state.pendingLibrarySearchChoice) {
+    const allowedDuringLibrarySearchChoice = new Set<ActionPayload['type']>([
+      'RESOLVE_LIBRARY_SEARCH',
+      'PLAYER_CONNECTED',
+      'PLAYER_JOIN',
+      'SET_PLAYER_NAME',
+      'UNDO',
+      'RESET_GAME',
+    ])
+    if (!allowedDuringLibrarySearchChoice.has(action.type)) {
       return state
     }
   }
@@ -2107,6 +2149,62 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           undoable: true,
         }),
       }
+    }
+
+    case 'RESOLVE_LIBRARY_SEARCH': {
+      const choice = state.pendingLibrarySearchChoice
+      if (!choice || choice.playerId !== action.playerId || choice.sourceCardId !== action.sourceCardId) return state
+
+      const player = state.players.find(entry => entry.id === action.playerId)
+      if (!player) return state
+
+      const matchesBasicType = (card: GameCard) => {
+        if (!isBasicLandCard(card)) return false
+        if (!choice.basicLandTypes || choice.basicLandTypes.length === 0) return true
+        const lowerTypeLine = card.typeLine.toLowerCase()
+        return choice.basicLandTypes.some(type => lowerTypeLine.includes(type))
+      }
+
+      const targetCard = action.targetCardId
+        ? player.zones.library.find(entry => entry.instanceId === action.targetCardId) ?? null
+        : null
+      if (targetCard && !matchesBasicType(targetCard)) return state
+
+      const remainingLibrary = shuffleCards(
+        player.zones.library.filter(entry => entry.instanceId !== action.targetCardId)
+      )
+      const fetchedLand = targetCard ? { ...targetCard, tapped: true, markedDamage: 0 } : null
+      const triggerOccurrences: TriggerOccurrence[] = fetchedLand
+        ? [{ type: 'land_enters', controllerId: action.playerId, card: fetchedLand }]
+        : []
+
+      const nextState = queueTriggeredAbilities({
+        ...state,
+        players: state.players.map(entry =>
+          entry.id === action.playerId
+            ? {
+                ...entry,
+                zones: {
+                  ...entry.zones,
+                  library: remainingLibrary,
+                  lands: fetchedLand ? [...entry.zones.lands, fetchedLand] : entry.zones.lands,
+                },
+              }
+            : entry
+        ),
+        pendingLibrarySearchChoice: null,
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: player.name,
+          description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }, triggerOccurrences)
+
+      return nextState
     }
 
     case 'RESOLVE_PROLIFERATE_CHOICE': {
@@ -2690,6 +2788,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       if (state.stack.length === 0 && currentPlayerId !== action.playerId) return state
 
       let changed = false
+      let pendingLibrarySearchChoice = state.pendingLibrarySearchChoice
       let pendingExploreChoice = state.pendingExploreChoice
       const triggerOccurrences: TriggerOccurrence[] = []
       const players = state.players.map(player => {
@@ -2768,6 +2867,35 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
             pushLeaveBattlefieldOccurrences(triggerOccurrences, player.id, card)
           }
           return nextPlayer
+        }
+
+        if (ability.kind === 'search_basic_land_to_battlefield_tapped') {
+          const updatedSource = { ...card, tapped: ability.requiresTap ? true : card.tapped }
+          const updatedCards = [
+            ...player.zones.lands.map(entry => {
+              if (entry.instanceId === action.cardId) return updatedSource
+              return payment?.cards.find(paidCard => paidCard.instanceId === entry.instanceId) ?? entry
+            }),
+            ...player.zones.battlefield.map(entry => {
+              if (entry.instanceId === action.cardId) return updatedSource
+              return payment?.cards.find(paidCard => paidCard.instanceId === entry.instanceId) ?? entry
+            }),
+          ]
+          const zonesWithTap = applyTappedManaCards(player, updatedCards).zones
+          const zonesWithoutSource = removeCardFromBattlefieldOrLands({ ...player, zones: zonesWithTap }, action.cardId)
+          pendingLibrarySearchChoice = {
+            playerId: player.id,
+            sourceCardId: action.cardId,
+            sourceName: card.name,
+            basicLandTypes: ability.basicLandTypes,
+          }
+          pushLeaveBattlefieldOccurrences(triggerOccurrences, player.id, card)
+
+          return {
+            ...player,
+            manaPool: payment?.manaPool ?? player.manaPool,
+            zones: putLeavingCardInDestination(zonesWithoutSource, card),
+          }
         }
 
         if (ability.kind === 'gain_life') {
@@ -2889,6 +3017,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       const nextState = queueTriggeredAbilities({
         ...state,
         players,
+        pendingLibrarySearchChoice,
         pendingExploreChoice,
         actionSeq: state.actionSeq + 1,
         log: appendLog(state.log, {
@@ -3715,6 +3844,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         combat: { attackers: [] },
         stack: [],
         pendingLandEffectChoice: null,
+        pendingLibrarySearchChoice: null,
         pendingExploreChoice: null,
         pendingProliferateChoice: null,
         pendingTriggerTargetChoice: null,
@@ -3744,6 +3874,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         combat: { attackers: [] },
         stack: [],
         pendingLandEffectChoice: null,
+        pendingLibrarySearchChoice: null,
         pendingExploreChoice: null,
         pendingProliferateChoice: null,
         pendingTriggerTargetChoice: null,
