@@ -75,6 +75,7 @@ function importedCardToGameCards(card: ImportedDeckCard): GameCard[] {
     summoningSick: false,
     isCommander: false,
     isToken: false,
+    exileOnLeave: false,
   }))
 }
 
@@ -102,6 +103,7 @@ function commanderToGameCard(player: Player): GameCard | null {
     summoningSick: false,
     isCommander: true,
     isToken: false,
+    exileOnLeave: false,
   }
 }
 
@@ -129,6 +131,7 @@ function createTokenCard(tokenKey: TokenTemplateKey, tapped = false): GameCard {
     isCommander: false,
     isToken: true,
     tokenKey,
+    exileOnLeave: false,
   }
 }
 
@@ -549,33 +552,57 @@ function isNonlandPermanent(card: GameCard): boolean {
   return isPermanentCard(card) && !isLandCard(card)
 }
 
+function normalizeLeavingCard(card: GameCard): GameCard {
+  return { ...card, tapped: false, markedDamage: 0 }
+}
+
+function putLeavingCardInDestination(zones: Player['zones'], card: GameCard): Player['zones'] {
+  if (card.isToken) return zones
+  const normalized = normalizeLeavingCard(card)
+  if (card.exileOnLeave) {
+    return {
+      ...zones,
+      exile: [...zones.exile, normalized],
+    }
+  }
+  return {
+    ...zones,
+    graveyard: [...zones.graveyard, normalized],
+  }
+}
+
+function pushLeaveBattlefieldOccurrences(triggerOccurrences: TriggerOccurrence[], controllerId: string, card: GameCard) {
+  if (card.isToken) {
+    triggerOccurrences.push({ type: 'token_sacrificed', controllerId, card })
+  }
+  if (isCreatureCard(card)) {
+    triggerOccurrences.push({ type: 'creature_dies', controllerId, card })
+  }
+}
+
 function moveBattlefieldCardToGraveyard(player: Player, cardId: string): Player {
   const fromBattlefield = player.zones.battlefield.find(card => card.instanceId === cardId)
   if (fromBattlefield) {
+    const without = {
+      ...player.zones,
+      battlefield: player.zones.battlefield.filter(card => card.instanceId !== cardId),
+    }
     return {
       ...player,
-      zones: {
-        ...player.zones,
-        battlefield: player.zones.battlefield.filter(card => card.instanceId !== cardId),
-        graveyard: fromBattlefield.isToken
-          ? player.zones.graveyard
-          : [...player.zones.graveyard, { ...fromBattlefield, tapped: false, markedDamage: 0 }],
-      },
+      zones: putLeavingCardInDestination(without, fromBattlefield),
     }
   }
 
   const fromLands = player.zones.lands.find(card => card.instanceId === cardId)
   if (!fromLands) return player
 
+  const without = {
+    ...player.zones,
+    lands: player.zones.lands.filter(card => card.instanceId !== cardId),
+  }
   return {
     ...player,
-    zones: {
-      ...player.zones,
-      lands: player.zones.lands.filter(card => card.instanceId !== cardId),
-      graveyard: fromLands.isToken
-        ? player.zones.graveyard
-        : [...player.zones.graveyard, { ...fromLands, tapped: false, markedDamage: 0 }],
-    },
+    zones: putLeavingCardInDestination(without, fromLands),
   }
 }
 
@@ -606,8 +633,14 @@ function cleanupBattlefieldState(players: Player[]): { players: Player[]; trigge
         graveyard: [
           ...player.zones.graveyard,
           ...removed
-            .filter(card => !card.isToken)
-            .map(card => ({ ...card, tapped: false, markedDamage: 0 })),
+            .filter(card => !card.isToken && !card.exileOnLeave)
+            .map(normalizeLeavingCard),
+        ],
+        exile: [
+          ...player.zones.exile,
+          ...removed
+            .filter(card => !card.isToken && card.exileOnLeave)
+            .map(normalizeLeavingCard),
         ],
       },
     }
@@ -716,6 +749,7 @@ function applyPlaneswalkerEffect(
       const result = reanimateFromGraveyard(players, sourcePlayerId, targetCardId, destination, {
         tapped: effect.kind === 'return_graveyard_creature_to_battlefield' ? effect.tapped : undefined,
         minusOneCounters: effect.kind === 'return_graveyard_creature_to_battlefield' ? effect.minusOneCounters : undefined,
+        exileOnLeave: effect.kind === 'return_graveyard_creature_to_battlefield' ? effect.exileOnLeave : undefined,
       })
       const nextPlayers = result.players
       if (effect.kind === 'return_graveyard_creature_to_battlefield') {
@@ -849,7 +883,7 @@ function reanimateFromGraveyard(
   sourcePlayerId: string,
   targetCardId: string | undefined,
   destination: 'battlefield' | 'hand',
-  options?: { tapped?: boolean; minusOneCounters?: number }
+  options?: { tapped?: boolean; minusOneCounters?: number; exileOnLeave?: boolean }
 ): { players: Player[]; enteredCard: GameCard | null; targetOwnerId: string | null } {
   const { owner, card } = findGraveyardCard(players, targetCardId)
   if (!owner || !card || !targetCardId) {
@@ -862,10 +896,22 @@ function reanimateFromGraveyard(
       ...movedCard,
       tapped: options?.tapped ?? movedCard.tapped,
       minusOneCounters: movedCard.minusOneCounters + (options?.minusOneCounters ?? 0),
+      exileOnLeave: options?.exileOnLeave ?? movedCard.exileOnLeave,
     }
   }
 
   const nextPlayers = players.map(player => {
+    if (player.id === owner.id && player.id === sourcePlayerId) {
+      return {
+        ...player,
+        zones: {
+          ...player.zones,
+          graveyard: player.zones.graveyard.filter(entry => entry.instanceId !== targetCardId),
+          [destination]: [...player.zones[destination], movedCard],
+        },
+      }
+    }
+
     if (player.id === owner.id) {
       return {
         ...player,
@@ -964,6 +1010,7 @@ function resolveTriggerEffect(effect: TriggerEffectDefinition, state: GameState,
       target: effect.target,
       tapped: effect.tapped,
       minusOneCounters: effect.minusOneCounters,
+      exileOnLeave: effect.exileOnLeave,
     }
   }
 
@@ -971,6 +1018,14 @@ function resolveTriggerEffect(effect: TriggerEffectDefinition, state: GameState,
     return {
       kind: 'return_graveyard_creature_to_hand',
       target: effect.target,
+    }
+  }
+
+  if (effect.kind === 'persist_self') {
+    return {
+      kind: 'return_graveyard_creature_to_battlefield',
+      target: 'own_graveyard_creature',
+      minusOneCounters: 1,
     }
   }
 
@@ -1020,8 +1075,14 @@ function matchesTriggeredAbility(
 
   if (occurrence.type === 'creature_dies') {
     if (!isCreatureCard(occurrence.card)) return false
+    if (ability.match === 'self') {
+      return occurrence.controllerId === sourceControllerId && occurrence.card.instanceId === sourceCard.instanceId
+    }
     if (ability.match === 'another_creature_you_control') {
       return occurrence.controllerId === sourceControllerId && occurrence.card.instanceId !== sourceCard.instanceId
+    }
+    if (ability.match === 'opponent_creature_with_minus_one_counter_dies') {
+      return occurrence.controllerId !== sourceControllerId && occurrence.card.minusOneCounters > 0
     }
     return ability.match === 'any_creature'
   }
@@ -1046,6 +1107,41 @@ function queueTriggeredAbilities(state: GameState, occurrences: TriggerOccurrenc
   if (occurrences.length === 0) return state
 
   const triggers: StackItem[] = []
+  const maybePushTrigger = (
+    sourceCard: GameCard,
+    controllerId: string,
+    controllerName: string,
+    ability: TriggeredAbilityDefinition,
+    occurrence: TriggerOccurrence
+  ) => {
+    if (ability.effect.kind === 'persist_self' && occurrence.type === 'creature_dies' && occurrence.card.minusOneCounters > 0) {
+      return
+    }
+
+    const triggerEffect = resolveTriggerEffect(ability.effect, state, controllerId, occurrence)
+    const targetCardId =
+      occurrence.type === 'creature_dies'
+        && (
+          ability.effect.kind === 'persist_self'
+          || ability.match === 'opponent_creature_with_minus_one_counter_dies'
+          || (ability.target === 'own_graveyard_creature' && ability.match === 'self')
+        )
+        ? occurrence.card.instanceId
+        : undefined
+
+    triggers.push({
+      id: crypto.randomUUID(),
+      card: sourceCard,
+      casterId: controllerId,
+      casterName: controllerName,
+      source: 'hand',
+      kind: 'trigger',
+      abilityLabel: ability.label,
+      triggerEffect,
+      triggerTargetType: ability.target && ability.target !== 'none' && !targetCardId ? ability.target : undefined,
+      targetCardId,
+    })
+  }
 
   for (const player of state.players) {
     for (const sourceCard of player.zones.battlefield) {
@@ -1053,19 +1149,19 @@ function queueTriggeredAbilities(state: GameState, occurrences: TriggerOccurrenc
       for (const occurrence of occurrences) {
         for (const ability of abilities) {
           if (!matchesTriggeredAbility(sourceCard, player.id, ability, occurrence)) continue
-          triggers.push({
-            id: crypto.randomUUID(),
-            card: sourceCard,
-            casterId: player.id,
-            casterName: player.name,
-            source: 'hand',
-            kind: 'trigger',
-            abilityLabel: ability.label,
-            triggerEffect: resolveTriggerEffect(ability.effect, state, player.id, occurrence),
-            triggerTargetType: ability.target && ability.target !== 'none' ? ability.target : undefined,
-          })
+          maybePushTrigger(sourceCard, player.id, player.name, ability, occurrence)
         }
       }
+    }
+  }
+
+  for (const occurrence of occurrences) {
+    if (occurrence.type !== 'creature_dies') continue
+    const abilities = getTriggeredAbilities(occurrence.card)
+    for (const ability of abilities) {
+      if (!matchesTriggeredAbility(occurrence.card, occurrence.controllerId, ability, occurrence)) continue
+      const controllerName = state.players.find(player => player.id === occurrence.controllerId)?.name ?? ''
+      maybePushTrigger(occurrence.card, occurrence.controllerId, controllerName, ability, occurrence)
     }
   }
 
@@ -1378,6 +1474,7 @@ function resolveStackTop(state: GameState): GameState {
         const result = reanimateFromGraveyard(players, stackItem.casterId, stackItem.targetCardId, 'battlefield', {
           tapped: effect.tapped,
           minusOneCounters: effect.minusOneCounters,
+          exileOnLeave: effect.exileOnLeave,
         })
         players = result.players
         if (result.enteredCard) {
@@ -1683,6 +1780,7 @@ function resolveStackTop(state: GameState): GameState {
             {
               tapped: definition.kind === 'return_graveyard_creature_to_battlefield' ? definition.tapped : undefined,
               minusOneCounters: definition.kind === 'return_graveyard_creature_to_battlefield' ? definition.minusOneCounters : undefined,
+              exileOnLeave: definition.kind === 'return_graveyard_creature_to_battlefield' ? definition.exileOnLeave : undefined,
             }
           )
           players = result.players
@@ -2481,15 +2579,19 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         const card = fromZone.find(c => c.instanceId === action.cardId)
         if (!card) return p
 
-        const cleanedCard = action.to === 'battlefield' ? { ...card } : { ...card, tapped: false }
-        const normalizedCard = action.to === 'battlefield' ? entersBattlefield(cleanedCard) : cleanedCard
+        const actualTo =
+          (action.from === 'battlefield' || action.from === 'lands') && card.exileOnLeave && action.to !== 'battlefield' && action.to !== 'exile'
+            ? 'exile'
+            : action.to
+        const cleanedCard = actualTo === 'battlefield' ? { ...card } : normalizeLeavingCard(card)
+        const normalizedCard = actualTo === 'battlefield' ? entersBattlefield(cleanedCard) : cleanedCard
 
         return {
           ...p,
           zones: {
             ...p.zones,
             [action.from]: fromZone.filter(c => c.instanceId !== action.cardId),
-            [action.to]: [...p.zones[action.to], normalizedCard],
+            [actualTo]: [...p.zones[actualTo], normalizedCard],
           },
         }
       })
@@ -2624,7 +2726,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
             }),
           ]
           const zonesWithTap = applyTappedManaCards(player, updatedCards).zones
-          const zones = ability.sacrifice ? removeCardFromBattlefieldOrLands({ ...player, zones: zonesWithTap }, action.cardId) : zonesWithTap
+          const zonesWithoutSource = ability.sacrifice ? removeCardFromBattlefieldOrLands({ ...player, zones: zonesWithTap }, action.cardId) : zonesWithTap
+          const zones = ability.sacrifice ? putLeavingCardInDestination(zonesWithoutSource, card) : zonesWithoutSource
 
           const nextPlayer = {
             ...player,
@@ -2634,8 +2737,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
             },
             zones,
           }
-          if (ability.sacrifice && card.isToken) {
-            triggerOccurrences.push({ type: 'token_sacrificed', controllerId: player.id, card })
+          if (ability.sacrifice) {
+            pushLeaveBattlefieldOccurrences(triggerOccurrences, player.id, card)
           }
           return nextPlayer
         }
@@ -2647,20 +2750,22 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           const manaPool = payment?.manaPool ?? player.manaPool
           const paidZones = mergePaidCardsIntoZones(player, payment?.cards).zones
 
+          const baseZones = {
+            ...paidZones,
+            battlefield: sourceInBattlefield ? paidZones.battlefield.filter(entry => entry.instanceId !== action.cardId) : paidZones.battlefield,
+            lands: sourceInLands ? paidZones.lands.filter(entry => entry.instanceId !== action.cardId) : paidZones.lands,
+            library: player.zones.library.slice(drawn.length),
+            hand: [...player.zones.hand, ...drawn],
+          }
           const nextPlayer = {
             ...player,
             manaPool,
             zones: {
-              ...paidZones,
-              battlefield: sourceInBattlefield ? paidZones.battlefield.filter(entry => entry.instanceId !== action.cardId) : paidZones.battlefield,
-              lands: sourceInLands ? paidZones.lands.filter(entry => entry.instanceId !== action.cardId) : paidZones.lands,
-              library: player.zones.library.slice(drawn.length),
-              hand: [...player.zones.hand, ...drawn],
-              graveyard: ability.sacrifice && !card.isToken ? [...player.zones.graveyard, { ...card, tapped: false }] : player.zones.graveyard,
+              ...(ability.sacrifice ? putLeavingCardInDestination(baseZones, card) : baseZones),
             },
           }
-          if (ability.sacrifice && card.isToken) {
-            triggerOccurrences.push({ type: 'token_sacrificed', controllerId: player.id, card })
+          if (ability.sacrifice) {
+            pushLeaveBattlefieldOccurrences(triggerOccurrences, player.id, card)
           }
           return nextPlayer
         }
@@ -2669,19 +2774,21 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           const sourceInBattlefield = player.zones.battlefield.some(entry => entry.instanceId === action.cardId)
           const sourceInLands = player.zones.lands.some(entry => entry.instanceId === action.cardId)
           const paidZones = mergePaidCardsIntoZones(player, payment?.cards).zones
+          const baseZones = {
+            ...paidZones,
+            battlefield: sourceInBattlefield ? paidZones.battlefield.filter(entry => entry.instanceId !== action.cardId) : paidZones.battlefield,
+            lands: sourceInLands ? paidZones.lands.filter(entry => entry.instanceId !== action.cardId) : paidZones.lands,
+          }
           const nextPlayer = {
             ...player,
             life: playerCanGainLife(state.players, player.id) ? player.life + ability.amount : player.life,
             manaPool: payment?.manaPool ?? player.manaPool,
             zones: {
-              ...paidZones,
-              battlefield: sourceInBattlefield ? paidZones.battlefield.filter(entry => entry.instanceId !== action.cardId) : paidZones.battlefield,
-              lands: sourceInLands ? paidZones.lands.filter(entry => entry.instanceId !== action.cardId) : paidZones.lands,
-              graveyard: ability.sacrifice && !card.isToken ? [...player.zones.graveyard, { ...card, tapped: false }] : player.zones.graveyard,
+              ...(ability.sacrifice ? putLeavingCardInDestination(baseZones, card) : baseZones),
             },
           }
-          if (ability.sacrifice && card.isToken) {
-            triggerOccurrences.push({ type: 'token_sacrificed', controllerId: player.id, card })
+          if (ability.sacrifice) {
+            pushLeaveBattlefieldOccurrences(triggerOccurrences, player.id, card)
           }
           return nextPlayer
         }
@@ -2748,30 +2855,29 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
               revealedCard: { ...topCard },
             }
           }
-          if (ability.sacrifice && card.isToken) {
-            triggerOccurrences.push({ type: 'token_sacrificed', controllerId: player.id, card })
+          if (ability.sacrifice) {
+            pushLeaveBattlefieldOccurrences(triggerOccurrences, player.id, card)
           }
           const paidZones = mergePaidCardsIntoZones(player, payment?.cards).zones
 
+          const baseZones = {
+            ...paidZones,
+            battlefield: paidZones.battlefield
+              .filter(entry => !(sourceInBattlefield && entry.instanceId === action.cardId))
+              .map(entry =>
+                entry.instanceId === action.targetCardId && !isTopLand
+                  ? { ...entry, plusOneCounters: entry.plusOneCounters + 1 }
+                  : entry
+              ),
+            lands: sourceInLands ? paidZones.lands.filter(entry => entry.instanceId !== action.cardId) : paidZones.lands,
+            library: topCard ? player.zones.library.slice(1) : player.zones.library,
+            hand: topCard && isTopLand ? [...player.zones.hand, topCard] : player.zones.hand,
+          }
           return {
             ...player,
             manaPool: payment?.manaPool ?? player.manaPool,
             zones: {
-              ...paidZones,
-              battlefield: paidZones.battlefield
-                .filter(entry => !(sourceInBattlefield && entry.instanceId === action.cardId))
-                .map(entry =>
-                  entry.instanceId === action.targetCardId && !isTopLand
-                    ? { ...entry, plusOneCounters: entry.plusOneCounters + 1 }
-                    : entry
-                ),
-              lands: sourceInLands ? paidZones.lands.filter(entry => entry.instanceId !== action.cardId) : paidZones.lands,
-              library: topCard ? player.zones.library.slice(1) : player.zones.library,
-              hand: topCard && isTopLand ? [...player.zones.hand, topCard] : player.zones.hand,
-              graveyard: [
-                ...player.zones.graveyard,
-                ...(ability.sacrifice && !card.isToken ? [{ ...card, tapped: false }] : []),
-              ],
+              ...(ability.sacrifice ? putLeavingCardInDestination(baseZones, card) : baseZones),
             },
           }
         }
@@ -3150,7 +3256,6 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
 
       let spentMana = emptyManaPool()
       let sacrificedCard: GameCard | null = null
-      let sacrificedToken = false
       const players = state.players.map(player => {
         if (player.id !== action.playerId) return player
         const payment = autoPayManaCost(player.manaPool, [...player.zones.lands, ...player.zones.battlefield], card.manaCost, player, action.options)
@@ -3162,20 +3267,19 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           : null
         if (sacTarget) {
           sacrificedCard = sacTarget
-          sacrificedToken = sacTarget.isToken
         }
         const withoutSacrifice = sacTarget
           ? removeCardFromBattlefieldOrLands({ ...player, zones: paidZones }, sacTarget.instanceId)
           : paidZones
+        const zonesAfterSacrifice = sacTarget
+          ? putLeavingCardInDestination(withoutSacrifice, sacTarget)
+          : withoutSacrifice
         return {
           ...player,
           manaPool: payment.manaPool,
           zones: {
-            ...withoutSacrifice,
+            ...zonesAfterSacrifice,
             hand: player.zones.hand.filter(entry => entry.instanceId !== action.cardId),
-            graveyard: sacTarget && !sacTarget.isToken
-              ? [...withoutSacrifice.graveyard, { ...sacTarget, tapped: false, markedDamage: 0 }]
-              : withoutSacrifice.graveyard,
           },
         }
       })
@@ -3198,11 +3302,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         }
       )
       const occurrences: TriggerOccurrence[] = [{ type: 'spell_cast', controllerId: action.playerId, card: withCastOptions(card, action.options?.xValue) }]
-      if (sacrificedToken && sacrificedCard) {
-        occurrences.push({ type: 'token_sacrificed', controllerId: action.playerId, card: sacrificedCard })
-      }
-      if (sacrificedCard && isCreatureCard(sacrificedCard)) {
-        occurrences.push({ type: 'creature_dies', controllerId: action.playerId, card: sacrificedCard })
+      if (sacrificedCard) {
+        pushLeaveBattlefieldOccurrences(occurrences, action.playerId, sacrificedCard)
       }
       nextState = queueTriggeredAbilities(nextState, occurrences)
 

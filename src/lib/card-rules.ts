@@ -21,7 +21,7 @@ export type SimpleSpellDefinition =
   | { kind: 'put_minus_one_counter_target_creature'; amount: number; target: 'battlefield_creature' }
   | { kind: 'put_minus_one_counters_each_creature'; amount: number; target: 'none' }
   | { kind: 'mass_damage_creatures'; amount: number | 'creature_count'; target: 'none' }
-  | { kind: 'return_graveyard_creature_to_battlefield'; target: GraveyardTargetType; tapped?: boolean; minusOneCounters?: number }
+  | { kind: 'return_graveyard_creature_to_battlefield'; target: GraveyardTargetType; tapped?: boolean; minusOneCounters?: number; exileOnLeave?: boolean }
   | { kind: 'return_graveyard_creature_to_hand'; target: GraveyardTargetType }
 
 export type CastChoiceSpec =
@@ -70,8 +70,9 @@ export type TriggerEffectDefinition =
   | { kind: 'gain_life'; amount: number }
   | { kind: 'proliferate' }
   | { kind: 'put_minus_one_counter_target_creature'; amount: number }
-  | { kind: 'return_graveyard_creature_to_battlefield'; target: GraveyardTargetType; tapped?: boolean; minusOneCounters?: number }
+  | { kind: 'return_graveyard_creature_to_battlefield'; target: GraveyardTargetType; tapped?: boolean; minusOneCounters?: number; exileOnLeave?: boolean }
   | { kind: 'return_graveyard_creature_to_hand'; target: GraveyardTargetType }
+  | { kind: 'persist_self' }
   | { kind: 'drain_each_opponent'; amount: number; gainLife: number }
 
 export interface TriggeredAbilityDefinition {
@@ -93,6 +94,7 @@ export interface TriggeredAbilityDefinition {
     | 'token_you_create'
     | 'token_you_create_or_sacrifice'
     | 'minus_one_counters_you_put_on_creature'
+    | 'opponent_creature_with_minus_one_counter_dies'
 }
 
 export type LandEntryEffectDefinition =
@@ -806,12 +808,46 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
     })
   }
 
+  const selfDiesGainLife = oracleText.match(/when this (?:creature )?dies, you gain (\d+) life/)
+  if (selfDiesGainLife) {
+    abilities.push({
+      id: 'self-dies-gain-life',
+      label: 'Dies trigger',
+      event: 'creature_dies',
+      match: 'self',
+      effect: { kind: 'gain_life', amount: Number(selfDiesGainLife[1]) },
+      target: 'none',
+    })
+  }
+
+  if (oracleText.includes('persist')) {
+    abilities.push({
+      id: 'persist-self',
+      label: 'Persist',
+      event: 'creature_dies',
+      match: 'self',
+      effect: { kind: 'persist_self' },
+      target: 'none',
+    })
+  }
+
   if (oracleText.includes("put target creature card from an opponent's graveyard onto the battlefield under your control")) {
     abilities.push({
       id: 'etb-reanimate-opponent-graveyard',
       label: 'ETB trigger',
       event: 'enters_battlefield',
       match: 'self',
+      target: 'opponent_graveyard_creature',
+      effect: { kind: 'return_graveyard_creature_to_battlefield', target: 'opponent_graveyard_creature', exileOnLeave: lowerName === 'puppeteer clique' },
+    })
+  }
+
+  if (lowerName === 'necroskitter') {
+    abilities.push({
+      id: 'opponent-counter-dies-reanimate',
+      label: 'Dies trigger',
+      event: 'creature_dies',
+      match: 'opponent_creature_with_minus_one_counter_dies',
       target: 'opponent_graveyard_creature',
       effect: { kind: 'return_graveyard_creature_to_battlefield', target: 'opponent_graveyard_creature' },
     })
