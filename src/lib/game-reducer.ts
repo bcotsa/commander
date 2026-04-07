@@ -712,30 +712,17 @@ function applyPlaneswalkerEffect(
     }
     case 'return_graveyard_creature_to_battlefield':
     case 'return_graveyard_creature_to_hand': {
-      const nextPlayers = players.map(player => {
-        if (player.id !== sourcePlayerId || !targetCardId) return player
-        const target = player.zones.graveyard.find(entry => entry.instanceId === targetCardId)
-        if (!target) return player
-        const destination = effect.kind === 'return_graveyard_creature_to_battlefield' ? 'battlefield' : 'hand'
-        return {
-          ...player,
-          zones: {
-            ...player.zones,
-            graveyard: player.zones.graveyard.filter(entry => entry.instanceId !== targetCardId),
-            [destination]: [
-              ...player.zones[destination],
-              destination === 'battlefield' ? entersBattlefield(target) : { ...target },
-            ],
-          },
-        }
+      const destination = effect.kind === 'return_graveyard_creature_to_battlefield' ? 'battlefield' : 'hand'
+      const result = reanimateFromGraveyard(players, sourcePlayerId, targetCardId, destination, {
+        tapped: effect.kind === 'return_graveyard_creature_to_battlefield' ? effect.tapped : undefined,
+        minusOneCounters: effect.kind === 'return_graveyard_creature_to_battlefield' ? effect.minusOneCounters : undefined,
       })
+      const nextPlayers = result.players
       if (effect.kind === 'return_graveyard_creature_to_battlefield') {
-        const reanimated = players.find(player => player.id === sourcePlayerId)?.zones.graveyard.find(entry => entry.instanceId === targetCardId)
-        if (reanimated) {
-          const entered = entersBattlefield(reanimated)
-          triggerOccurrences.push({ type: 'enters_battlefield', controllerId: sourcePlayerId, card: entered })
-          if (isCreatureCard(entered)) {
-            triggerOccurrences.push({ type: 'creature_enters', controllerId: sourcePlayerId, card: entered })
+        if (result.enteredCard) {
+          triggerOccurrences.push({ type: 'enters_battlefield', controllerId: sourcePlayerId, card: result.enteredCard })
+          if (isCreatureCard(result.enteredCard)) {
+            triggerOccurrences.push({ type: 'creature_enters', controllerId: sourcePlayerId, card: result.enteredCard })
           }
         }
       }
@@ -840,6 +827,71 @@ function removeCardFromBattlefieldOrLands(player: Player, cardId: string): Playe
   }
 }
 
+function findGraveyardCard(players: Player[], targetCardId?: string) {
+  if (!targetCardId) return { owner: null, card: null }
+  for (const player of players) {
+    const card = player.zones.graveyard.find(entry => entry.instanceId === targetCardId) ?? null
+    if (card) {
+      return { owner: player, card }
+    }
+  }
+  return { owner: null, card: null }
+}
+
+function graveyardTargetMatches(targetType: 'own_graveyard_creature' | 'any_graveyard_creature' | 'opponent_graveyard_creature', sourcePlayerId: string, ownerId: string) {
+  if (targetType === 'own_graveyard_creature') return ownerId === sourcePlayerId
+  if (targetType === 'opponent_graveyard_creature') return ownerId !== sourcePlayerId
+  return true
+}
+
+function reanimateFromGraveyard(
+  players: Player[],
+  sourcePlayerId: string,
+  targetCardId: string | undefined,
+  destination: 'battlefield' | 'hand',
+  options?: { tapped?: boolean; minusOneCounters?: number }
+): { players: Player[]; enteredCard: GameCard | null; targetOwnerId: string | null } {
+  const { owner, card } = findGraveyardCard(players, targetCardId)
+  if (!owner || !card || !targetCardId) {
+    return { players, enteredCard: null, targetOwnerId: null }
+  }
+
+  let movedCard = destination === 'battlefield' ? entersBattlefield(card) : { ...card, tapped: false, markedDamage: 0 }
+  if (destination === 'battlefield') {
+    movedCard = {
+      ...movedCard,
+      tapped: options?.tapped ?? movedCard.tapped,
+      minusOneCounters: movedCard.minusOneCounters + (options?.minusOneCounters ?? 0),
+    }
+  }
+
+  const nextPlayers = players.map(player => {
+    if (player.id === owner.id) {
+      return {
+        ...player,
+        zones: {
+          ...player.zones,
+          graveyard: player.zones.graveyard.filter(entry => entry.instanceId !== targetCardId),
+        },
+      }
+    }
+
+    if (player.id === sourcePlayerId) {
+      return {
+        ...player,
+        zones: {
+          ...player.zones,
+          [destination]: [...player.zones[destination], movedCard],
+        },
+      }
+    }
+
+    return player
+  })
+
+  return { players: nextPlayers, enteredCard: destination === 'battlefield' ? movedCard : null, targetOwnerId: owner.id }
+}
+
 function nextLivingTurnIndex(state: GameState): number {
   if (state.turnOrder.length === 0) return 0
   for (let offset = 1; offset <= state.turnOrder.length; offset++) {
@@ -904,6 +956,22 @@ function resolveTriggerEffect(effect: TriggerEffectDefinition, state: GameState,
 
   if (effect.kind === 'put_minus_one_counter_target_creature') {
     return { kind: 'put_minus_one_counter_target_creature', amount: effect.amount }
+  }
+
+  if (effect.kind === 'return_graveyard_creature_to_battlefield') {
+    return {
+      kind: 'return_graveyard_creature_to_battlefield',
+      target: effect.target,
+      tapped: effect.tapped,
+      minusOneCounters: effect.minusOneCounters,
+    }
+  }
+
+  if (effect.kind === 'return_graveyard_creature_to_hand') {
+    return {
+      kind: 'return_graveyard_creature_to_hand',
+      target: effect.target,
+    }
   }
 
   return {
@@ -994,7 +1062,7 @@ function queueTriggeredAbilities(state: GameState, occurrences: TriggerOccurrenc
             kind: 'trigger',
             abilityLabel: ability.label,
             triggerEffect: resolveTriggerEffect(ability.effect, state, player.id, occurrence),
-            triggerTargetType: ability.target === 'battlefield_creature' ? 'battlefield_creature' : undefined,
+            triggerTargetType: ability.target && ability.target !== 'none' ? ability.target : undefined,
           })
         }
       }
@@ -1306,6 +1374,25 @@ function resolveStackTop(state: GameState): GameState {
           }
         }
         break
+      case 'return_graveyard_creature_to_battlefield': {
+        const result = reanimateFromGraveyard(players, stackItem.casterId, stackItem.targetCardId, 'battlefield', {
+          tapped: effect.tapped,
+          minusOneCounters: effect.minusOneCounters,
+        })
+        players = result.players
+        if (result.enteredCard) {
+          triggerOccurrences.push({ type: 'enters_battlefield', controllerId: stackItem.casterId, card: result.enteredCard })
+          if (isCreatureCard(result.enteredCard)) {
+            triggerOccurrences.push({ type: 'creature_enters', controllerId: stackItem.casterId, card: result.enteredCard })
+          }
+        }
+        break
+      }
+      case 'return_graveyard_creature_to_hand': {
+        const result = reanimateFromGraveyard(players, stackItem.casterId, stackItem.targetCardId, 'hand')
+        players = result.players
+        break
+      }
       case 'drain_each_opponent':
         players = players.map(player => {
           if (player.id === stackItem.casterId) {
@@ -1587,29 +1674,23 @@ function resolveStackTop(state: GameState): GameState {
         }
         case 'return_graveyard_creature_to_battlefield':
         case 'return_graveyard_creature_to_hand':
-          players = addSpellToCasterGraveyard(players).map(player => {
-            if (player.id !== stackItem.casterId || !stackItem.targetCardId) return player
-            const target = player.zones.graveyard.find(entry => entry.instanceId === stackItem.targetCardId)
-            if (!target) return player
-            const destination = definition.kind === 'return_graveyard_creature_to_battlefield' ? 'battlefield' : 'hand'
-            return {
-              ...player,
-              zones: {
-                ...player.zones,
-                graveyard: player.zones.graveyard.filter(entry => entry.instanceId !== stackItem.targetCardId),
-                [destination]: [
-                  ...player.zones[destination],
-                  destination === 'battlefield' ? entersBattlefield(target) : { ...target },
-                ],
-              },
+          players = addSpellToCasterGraveyard(players)
+          const result = reanimateFromGraveyard(
+            players,
+            stackItem.casterId,
+            stackItem.targetCardId,
+            definition.kind === 'return_graveyard_creature_to_battlefield' ? 'battlefield' : 'hand',
+            {
+              tapped: definition.kind === 'return_graveyard_creature_to_battlefield' ? definition.tapped : undefined,
+              minusOneCounters: definition.kind === 'return_graveyard_creature_to_battlefield' ? definition.minusOneCounters : undefined,
             }
-          })
+          )
+          players = result.players
           if (definition.kind === 'return_graveyard_creature_to_battlefield') {
-            const reanimated = state.players.find(player => player.id === stackItem.casterId)?.zones.graveyard.find(entry => entry.instanceId === stackItem.targetCardId)
-            if (reanimated) {
-              triggerOccurrences.push({ type: 'enters_battlefield', controllerId: stackItem.casterId, card: entersBattlefield(reanimated) })
-              if (isCreatureCard(reanimated)) {
-                triggerOccurrences.push({ type: 'creature_enters', controllerId: stackItem.casterId, card: entersBattlefield(reanimated) })
+            if (result.enteredCard) {
+              triggerOccurrences.push({ type: 'enters_battlefield', controllerId: stackItem.casterId, card: result.enteredCard })
+              if (isCreatureCard(result.enteredCard)) {
+                triggerOccurrences.push({ type: 'creature_enters', controllerId: stackItem.casterId, card: result.enteredCard })
               }
             }
           }
@@ -1987,11 +2068,16 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       const choice = state.pendingTriggerTargetChoice
       if (!choice || choice.playerId !== action.playerId || choice.stackItemId !== action.stackItemId) return state
 
-      const targetOwner = state.players.find(player =>
-        player.zones.battlefield.some(entry => entry.instanceId === action.targetCardId)
-      ) ?? null
-      const targetCard = targetOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
-      if (!targetCard || !isCreatureCard(targetCard)) return state
+      if (choice.targetType === 'battlefield_creature') {
+        const targetOwner = state.players.find(player =>
+          player.zones.battlefield.some(entry => entry.instanceId === action.targetCardId)
+        ) ?? null
+        const targetCard = targetOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
+        if (!targetCard || !isCreatureCard(targetCard)) return state
+      } else {
+        const { owner, card } = findGraveyardCard(state.players, action.targetCardId)
+        if (!owner || !card || !isCreatureCard(card) || !graveyardTargetMatches(choice.targetType, action.playerId, owner.id)) return state
+      }
 
       return {
         ...state,
@@ -2750,6 +2836,10 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         const target = player.zones.graveyard.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!target || !isCreatureCard(target)) return state
       }
+      if (ability.target === 'any_graveyard_creature' || ability.target === 'opponent_graveyard_creature') {
+        const { owner, card: target } = findGraveyardCard(state.players, action.targetCardId)
+        if (!owner || !target || !isCreatureCard(target) || !graveyardTargetMatches(ability.target, action.playerId, owner.id)) return state
+      }
       if (ability.target === 'creature_or_player' && !action.targetPlayerId) {
         const target = targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!target || (!isCreatureCard(target) && !isPlaneswalkerCard(target))) return state
@@ -3027,6 +3117,10 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       if (definition?.target === 'own_graveyard_creature') {
         const targetCard = caster.zones.graveyard.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!targetCard || !isCreatureCard(targetCard)) return state
+      }
+      if (definition?.target === 'any_graveyard_creature' || definition?.target === 'opponent_graveyard_creature') {
+        const { owner, card: targetCard } = findGraveyardCard(state.players, action.targetCardId)
+        if (!owner || !targetCard || !isCreatureCard(targetCard) || !graveyardTargetMatches(definition.target, action.playerId, owner.id)) return state
       }
 
       if (definition?.target === 'creature_or_player' && !targetPlayer) {

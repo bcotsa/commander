@@ -87,6 +87,8 @@ export type TriggerEffectPayload =
   | { kind: 'gain_life'; amount: number }
   | { kind: 'proliferate' }
   | { kind: 'put_minus_one_counter_target_creature'; amount: number }
+  | { kind: 'return_graveyard_creature_to_battlefield'; target: GraveyardTargetType; tapped?: boolean; minusOneCounters?: number }
+  | { kind: 'return_graveyard_creature_to_hand'; target: GraveyardTargetType }
   | { kind: 'drain_each_opponent'; amount: number; gainLife: number }
 
 export interface TargetDistributionChoice {
@@ -199,7 +201,7 @@ export interface StackItem {
   targetPlayerId?: string
   abilityLabel?: string
   triggerEffect?: TriggerEffectPayload
-  triggerTargetType?: 'battlefield_creature'
+  triggerTargetType?: TriggerTargetType
   castOptions?: CastOptions
   spentMana?: ManaPool
 }
@@ -220,7 +222,7 @@ export interface TriggerTargetChoiceState {
   playerId: string
   stackItemId: string
   sourceName: string
-  targetType: 'battlefield_creature'
+  targetType: TriggerTargetType
 }
 
 export interface LandEffectChoiceState {
@@ -229,6 +231,9 @@ export interface LandEffectChoiceState {
   sourceName: string
   effect: 'bounce_land' | 'exile_graveyard'
 }
+
+export type GraveyardTargetType = 'own_graveyard_creature' | 'any_graveyard_creature' | 'opponent_graveyard_creature'
+export type TriggerTargetType = 'battlefield_creature' | GraveyardTargetType
 
 // Discriminated union of all possible game actions
 export type ActionPayload =

@@ -1,4 +1,4 @@
-import type { CastOptions, ColorSymbol, GameCard, ManaPool, Player, TokenTemplateKey } from '@/types/game-state'
+import type { CastOptions, ColorSymbol, GameCard, GraveyardTargetType, ManaPool, Player, TokenTemplateKey, TriggerTargetType } from '@/types/game-state'
 
 const COLOR_ORDER: ColorSymbol[] = ['W', 'U', 'B', 'R', 'G', 'C']
 const BASIC_LAND_TYPES: Array<{ pattern: RegExp; color: ColorSymbol }> = [
@@ -21,8 +21,8 @@ export type SimpleSpellDefinition =
   | { kind: 'put_minus_one_counter_target_creature'; amount: number; target: 'battlefield_creature' }
   | { kind: 'put_minus_one_counters_each_creature'; amount: number; target: 'none' }
   | { kind: 'mass_damage_creatures'; amount: number | 'creature_count'; target: 'none' }
-  | { kind: 'return_graveyard_creature_to_battlefield'; target: 'own_graveyard_creature' }
-  | { kind: 'return_graveyard_creature_to_hand'; target: 'own_graveyard_creature' }
+  | { kind: 'return_graveyard_creature_to_battlefield'; target: GraveyardTargetType; tapped?: boolean; minusOneCounters?: number }
+  | { kind: 'return_graveyard_creature_to_hand'; target: GraveyardTargetType }
 
 export type CastChoiceSpec =
   | { kind: 'x_value'; title: string; min: number; max: number }
@@ -45,7 +45,7 @@ export interface PlaneswalkerAbilityDefinition {
   id: string
   label: string
   loyaltyDelta: number
-  target: 'none' | 'battlefield_creature' | 'battlefield_nonland_permanent' | 'battlefield_permanent' | 'creature_or_player' | 'own_graveyard_creature'
+  target: 'none' | 'battlefield_creature' | 'battlefield_nonland_permanent' | 'battlefield_permanent' | 'creature_or_player' | GraveyardTargetType
   effect: PlaneswalkerAbilityEffect | null
   supported: boolean
 }
@@ -70,6 +70,8 @@ export type TriggerEffectDefinition =
   | { kind: 'gain_life'; amount: number }
   | { kind: 'proliferate' }
   | { kind: 'put_minus_one_counter_target_creature'; amount: number }
+  | { kind: 'return_graveyard_creature_to_battlefield'; target: GraveyardTargetType; tapped?: boolean; minusOneCounters?: number }
+  | { kind: 'return_graveyard_creature_to_hand'; target: GraveyardTargetType }
   | { kind: 'drain_each_opponent'; amount: number; gainLife: number }
 
 export interface TriggeredAbilityDefinition {
@@ -77,7 +79,7 @@ export interface TriggeredAbilityDefinition {
   label: string
   event: TriggerEventType
   effect: TriggerEffectDefinition
-  target?: 'none' | 'battlefield_creature'
+  target?: 'none' | TriggerTargetType
   match:
     | 'self'
     | 'another_creature_you_control'
@@ -804,6 +806,17 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
     })
   }
 
+  if (oracleText.includes("put target creature card from an opponent's graveyard onto the battlefield under your control")) {
+    abilities.push({
+      id: 'etb-reanimate-opponent-graveyard',
+      label: 'ETB trigger',
+      event: 'enters_battlefield',
+      match: 'self',
+      target: 'opponent_graveyard_creature',
+      effect: { kind: 'return_graveyard_creature_to_battlefield', target: 'opponent_graveyard_creature' },
+    })
+  }
+
   const upkeepTokens = parseCreateTokenEffect(oracleText, /at the beginning of your upkeep, create ([^.]+?) tokens?/i)
   if (upkeepTokens) {
     abilities.push({
@@ -1035,11 +1048,35 @@ export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine
     }
   }
 
-  if (oracleText.includes('return target creature card from your graveyard to the battlefield')) {
-    return { kind: 'return_graveyard_creature_to_battlefield', target: 'own_graveyard_creature' }
+  const returnOwnToBattlefield = oracleText.match(/return (?:up to one )?target (?:nonlegendary )?creature card from your graveyard to the battlefield(?: under your control)?( tapped)?(?: with a -1\/-1 counter on it)?/)
+  if (returnOwnToBattlefield) {
+    return {
+      kind: 'return_graveyard_creature_to_battlefield',
+      target: 'own_graveyard_creature',
+      tapped: Boolean(returnOwnToBattlefield[1]),
+      minusOneCounters: oracleText.includes('with a -1/-1 counter on it') ? 1 : undefined,
+    }
   }
 
-  if (oracleText.includes('return target creature card from your graveyard to your hand')) {
+  const returnAnyToBattlefield = oracleText.match(/return (?:up to one )?target creature card from a graveyard to the battlefield(?: under your control)?( tapped)?/)
+  if (returnAnyToBattlefield) {
+    return {
+      kind: 'return_graveyard_creature_to_battlefield',
+      target: 'any_graveyard_creature',
+      tapped: Boolean(returnAnyToBattlefield[1]),
+    }
+  }
+
+  const returnOpponentToBattlefield = oracleText.match(/return (?:up to one )?target creature card from an opponent's graveyard to the battlefield(?: under your control)?( tapped)?|put target creature card from an opponent's graveyard onto the battlefield under your control/)
+  if (returnOpponentToBattlefield) {
+    return {
+      kind: 'return_graveyard_creature_to_battlefield',
+      target: 'opponent_graveyard_creature',
+      tapped: Boolean(returnOpponentToBattlefield[1]),
+    }
+  }
+
+  if (oracleText.includes('return target creature card from your graveyard to your hand') || oracleText.includes('return up to one target creature card from your graveyard to your hand')) {
     return { kind: 'return_graveyard_creature_to_hand', target: 'own_graveyard_creature' }
   }
 

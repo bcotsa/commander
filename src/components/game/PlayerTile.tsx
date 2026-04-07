@@ -377,8 +377,18 @@ export function PlayerTile({
   const spellLandTargets = selectedSpell?.target === 'battlefield_permanent'
     ? allPlayers.flatMap(otherPlayer => otherPlayer.zones.lands.map(card => ({ player: otherPlayer, card })))
     : []
-  const ownGraveyardCreatureTargets = selectedSpell?.target === 'own_graveyard_creature'
-    ? graveyard.filter(card => card.typeLine.toLowerCase().includes('creature'))
+  const graveyardCreatureTargets = selectedSpell && (
+    selectedSpell.target === 'own_graveyard_creature'
+    || selectedSpell.target === 'any_graveyard_creature'
+    || selectedSpell.target === 'opponent_graveyard_creature'
+  )
+    ? allPlayers.flatMap(otherPlayer => {
+        if (selectedSpell.target === 'own_graveyard_creature' && otherPlayer.id !== player.id) return []
+        if (selectedSpell.target === 'opponent_graveyard_creature' && otherPlayer.id === player.id) return []
+        return otherPlayer.zones.graveyard
+          .filter(card => card.typeLine.toLowerCase().includes('creature'))
+          .map(card => ({ player: otherPlayer, card }))
+      })
     : []
 
   function canPayActivatedAbility(ability: ReturnType<typeof getActivatedAbilities>[number]): boolean {
@@ -554,8 +564,9 @@ export function PlayerTile({
                 {targetPlayer.name || `P${targetPlayer.seat + 1}`}: {targetCard.name}
               </button>
             ))}
-          {canControlPlayer && selected.zone === 'hand' && !selectedIsLand && !selectedIsPermanent && !selectedCastChoiceSpec && selectedSpell?.target === 'own_graveyard_creature' &&
-            ownGraveyardCreatureTargets.map(targetCard => (
+          {canControlPlayer && selected.zone === 'hand' && !selectedIsLand && !selectedIsPermanent && !selectedCastChoiceSpec &&
+            (selectedSpell?.target === 'own_graveyard_creature' || selectedSpell?.target === 'any_graveyard_creature' || selectedSpell?.target === 'opponent_graveyard_creature') &&
+            graveyardCreatureTargets.map(({ player: targetPlayer, card: targetCard }) => (
               <button
                 key={targetCard.instanceId}
                 onClick={() => {
@@ -565,7 +576,7 @@ export function PlayerTile({
                 disabled={!selectedCanPay}
                 className="rounded-md bg-sky-700 px-2 py-1 text-[10px] font-medium text-white transition-colors enabled:hover:bg-sky-600 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                Return {targetCard.name}
+                {targetPlayer.name}: {targetCard.name}
               </button>
             ))}
           {selected.zone === 'hand' && !selectedIsLand && !selectedIsPermanent && !selectedSpell && !selectedCastChoiceSpec && (
@@ -718,10 +729,17 @@ export function PlayerTile({
               ),
             ]))}
           {canControlPlayer && selected.zone === 'battlefield' && selectedIsPlaneswalker &&
-            planeswalkerAbilities.filter(ability => ability.supported && ability.target === 'own_graveyard_creature').flatMap(ability =>
-              graveyard
-                .filter(target => target.typeLine.toLowerCase().includes('creature'))
-                .map(target => (
+            planeswalkerAbilities.filter(ability => ability.supported && (
+              ability.target === 'own_graveyard_creature'
+              || ability.target === 'any_graveyard_creature'
+              || ability.target === 'opponent_graveyard_creature'
+            )).flatMap(ability =>
+              allPlayers.flatMap(otherPlayer => {
+                if (ability.target === 'own_graveyard_creature' && otherPlayer.id !== player.id) return []
+                if (ability.target === 'opponent_graveyard_creature' && otherPlayer.id === player.id) return []
+                return otherPlayer.zones.graveyard
+                  .filter(target => target.typeLine.toLowerCase().includes('creature'))
+                  .map(target => (
                   <button
                     key={`${ability.id}-${target.instanceId}`}
                     onClick={() => {
@@ -730,9 +748,10 @@ export function PlayerTile({
                     }}
                     className="rounded-md bg-violet-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-violet-600"
                   >
-                    {ability.label}: {target.name}
+                    {ability.label}: {otherPlayer.name} {target.name}
                   </button>
                 ))
+              })
             )}
           {canControlPlayer && selected.zone === 'battlefield' && selectedIsPlaneswalker &&
             planeswalkerAbilities.filter(ability => !ability.supported).map(ability => (

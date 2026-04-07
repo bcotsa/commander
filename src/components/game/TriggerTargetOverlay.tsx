@@ -16,18 +16,29 @@ export function TriggerTargetOverlay({
   onChoose,
 }: TriggerTargetOverlayProps) {
   const canControl = canControlAllPlayers || choice.playerId === myPlayerId
-  const creatureTargets = players.flatMap(player =>
-    player.zones.battlefield
-      .filter(card => card.typeLine.toLowerCase().includes('creature'))
-      .map(card => ({ player, card }))
-  )
+  const creatureTargets = choice.targetType === 'battlefield_creature'
+    ? players.flatMap(player =>
+        player.zones.battlefield
+          .filter(card => card.typeLine.toLowerCase().includes('creature'))
+          .map(card => ({ player, card }))
+      )
+    : players.flatMap(player => {
+        if (choice.targetType === 'own_graveyard_creature' && player.id !== choice.playerId) return []
+        if (choice.targetType === 'opponent_graveyard_creature' && player.id === choice.playerId) return []
+        return player.zones.graveyard
+          .filter(card => card.typeLine.toLowerCase().includes('creature'))
+          .map(card => ({ player, card }))
+      })
+  const targetLabel = choice.targetType === 'battlefield_creature'
+    ? 'Choose a creature target for this trigger'
+    : 'Choose a graveyard creature target for this trigger'
 
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/90 p-4 backdrop-blur-sm">
       <div className="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl">
         <div className="mb-4">
           <div className="text-lg font-semibold text-white">{choice.sourceName}</div>
-          <div className="text-sm text-slate-400">Choose a creature target for this trigger</div>
+          <div className="text-sm text-slate-400">{targetLabel}</div>
         </div>
 
         <div className="grid max-h-[60vh] gap-2 overflow-y-auto">
