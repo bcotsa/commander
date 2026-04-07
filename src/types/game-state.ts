@@ -86,6 +86,7 @@ export type TriggerEffectPayload =
   | { kind: 'draw_cards'; amount: number }
   | { kind: 'gain_life'; amount: number }
   | { kind: 'proliferate' }
+  | { kind: 'put_minus_one_counter_target_creature'; amount: number }
   | { kind: 'drain_each_opponent'; amount: number; gainLife: number }
 
 export interface TargetDistributionChoice {
@@ -165,6 +166,7 @@ export interface GameState {
   pendingLandEffectChoice: LandEffectChoiceState | null
   pendingExploreChoice: ExploreChoiceState | null
   pendingProliferateChoice: ProliferateChoiceState | null
+  pendingTriggerTargetChoice: TriggerTargetChoiceState | null
   priorityPlayerId: string | null
   priorityPassedIds: string[]
   round: number
@@ -197,6 +199,7 @@ export interface StackItem {
   targetPlayerId?: string
   abilityLabel?: string
   triggerEffect?: TriggerEffectPayload
+  triggerTargetType?: 'battlefield_creature'
   castOptions?: CastOptions
   spentMana?: ManaPool
 }
@@ -211,6 +214,13 @@ export interface ExploreChoiceState {
 export interface ProliferateChoiceState {
   playerId: string
   sourceName: string
+}
+
+export interface TriggerTargetChoiceState {
+  playerId: string
+  stackItemId: string
+  sourceName: string
+  targetType: 'battlefield_creature'
 }
 
 export interface LandEffectChoiceState {
@@ -248,6 +258,7 @@ export type ActionPayload =
   | { type: 'RESOLVE_LAND_EFFECT'; playerId: string; sourceCardId: string; effect: 'bounce_land' | 'exile_graveyard'; targetCardId?: string; targetPlayerId?: string }
   | { type: 'RESOLVE_EXPLORE_CHOICE'; playerId: string; putInGraveyard: boolean }
   | { type: 'RESOLVE_PROLIFERATE_CHOICE'; playerId: string; targetPlayerIds: string[]; targetCardIds: string[] }
+  | { type: 'SET_TRIGGER_TARGET'; playerId: string; stackItemId: string; targetCardId: string }
   | { type: 'PLAY_LAND'; playerId: string; cardId: string }
   | { type: 'CAST_COMMANDER'; playerId: string; cardId: string; options?: CastOptions }
   | { type: 'CAST_PERMANENT'; playerId: string; cardId: string; options?: CastOptions }

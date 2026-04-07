@@ -69,6 +69,7 @@ export type TriggerEffectDefinition =
   | { kind: 'draw_cards'; amount: number }
   | { kind: 'gain_life'; amount: number }
   | { kind: 'proliferate' }
+  | { kind: 'put_minus_one_counter_target_creature'; amount: number }
   | { kind: 'drain_each_opponent'; amount: number; gainLife: number }
 
 export interface TriggeredAbilityDefinition {
@@ -76,6 +77,7 @@ export interface TriggeredAbilityDefinition {
   label: string
   event: TriggerEventType
   effect: TriggerEffectDefinition
+  target?: 'none' | 'battlefield_creature'
   match:
     | 'self'
     | 'another_creature_you_control'
@@ -720,6 +722,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       event: 'enters_battlefield',
       match: 'self',
       effect: entersTokens,
+      target: 'none',
     })
   }
 
@@ -731,6 +734,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       event: 'attacks',
       match: 'self',
       effect: attacksTokens,
+      target: 'none',
     })
   }
 
@@ -741,6 +745,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       event: 'creature_dies',
       match: 'another_creature_you_control',
       effect: { kind: 'drain_each_opponent', amount: 1, gainLife: 1 },
+      target: 'none',
     })
   }
 
@@ -751,6 +756,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       event: 'creature_dies',
       match: 'any_creature',
       effect: { kind: 'drain_each_opponent', amount: 1, gainLife: 1 },
+      target: 'none',
     })
   }
 
@@ -761,6 +767,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       event: 'creature_dies',
       match: 'any_creature',
       effect: { kind: 'drain_each_opponent', amount: 1, gainLife: 0 },
+      target: 'none',
     })
   }
 
@@ -771,6 +778,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       event: 'creature_dies',
       match: 'any_creature',
       effect: { kind: 'drain_each_opponent', amount: 1, gainLife: 0 },
+      target: 'none',
     })
   }
 
@@ -781,6 +789,18 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       event: 'creature_dies',
       match: 'any_creature',
       effect: { kind: 'draw_cards', amount: 1 },
+      target: 'none',
+    })
+  }
+
+  if (lowerName === 'dread tiller') {
+    abilities.push({
+      id: 'etb-minus-one-target',
+      label: 'ETB trigger',
+      event: 'enters_battlefield',
+      match: 'self',
+      target: 'battlefield_creature',
+      effect: { kind: 'put_minus_one_counter_target_creature', amount: 1 },
     })
   }
 
@@ -792,6 +812,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       event: 'upkeep',
       match: 'your_upkeep',
       effect: upkeepTokens,
+      target: 'none',
     })
   }
 
@@ -803,6 +824,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       event: 'upkeep',
       match: 'each_upkeep',
       effect: eachUpkeepTokens,
+      target: 'none',
     })
   }
 
@@ -814,6 +836,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       event: 'end_step',
       match: 'your_end_step',
       effect: endStepTokens,
+      target: 'none',
     })
   }
 
@@ -824,6 +847,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       event: 'land_enters',
       match: 'land_you_control_enters',
       effect: { kind: 'proliferate' },
+      target: 'none',
     })
   }
 
@@ -834,6 +858,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       event: 'creature_enters',
       match: 'another_creature_you_control_enters',
       effect: { kind: 'gain_life', amount: 1 },
+      target: 'none',
     })
   }
 
@@ -846,6 +871,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
         event: 'spell_cast',
         match: 'spell_you_cast',
         effect: castTokens,
+        target: 'none',
       })
     }
   }
@@ -857,6 +883,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       event: 'spell_cast',
       match: 'spell_you_cast',
       effect: { kind: 'draw_cards', amount: 1 },
+      target: 'none',
     })
   }
 
@@ -867,6 +894,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       event: 'token_created',
       match: 'token_you_create_or_sacrifice',
       effect: { kind: 'drain_each_opponent', amount: 1, gainLife: 0 },
+      target: 'none',
     })
     abilities.push({
       id: 'token-sac-drain',
@@ -874,6 +902,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       event: 'token_sacrificed',
       match: 'token_you_create_or_sacrifice',
       effect: { kind: 'drain_each_opponent', amount: 1, gainLife: 0 },
+      target: 'none',
     })
   }
 
@@ -885,6 +914,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
         event: 'token_created',
         match: 'token_you_create',
         effect: { kind: 'drain_each_opponent', amount: 1, gainLife: oracleText.includes('you gain 1 life') ? 1 : 0 },
+        target: 'none',
       })
     }
   }
@@ -897,6 +927,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
         event: 'minus_one_counters_placed',
         match: 'minus_one_counters_you_put_on_creature',
         effect: { kind: 'create_tokens_from_counter_placement', tokenKey: 'snake', mode: 'once' },
+        target: 'none',
       })
     }
     if (oracleText.includes('create that many 1/1 black insect creature tokens')) {
@@ -906,6 +937,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
         event: 'minus_one_counters_placed',
         match: 'minus_one_counters_you_put_on_creature',
         effect: { kind: 'create_tokens_from_counter_placement', tokenKey: 'insect', mode: 'per_counter' },
+        target: 'none',
       })
     }
   }

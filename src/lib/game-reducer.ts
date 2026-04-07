@@ -21,6 +21,7 @@ export function createInitialGameState(roomCode: string, roomId = ''): GameState
     pendingLandEffectChoice: null,
     pendingExploreChoice: null,
     pendingProliferateChoice: null,
+    pendingTriggerTargetChoice: null,
     priorityPlayerId: null,
     priorityPassedIds: [],
     round: 1,
@@ -248,6 +249,7 @@ function beginActiveGame(state: GameState): GameState {
     pendingLandEffectChoice: null,
     pendingExploreChoice: null,
     pendingProliferateChoice: null,
+    pendingTriggerTargetChoice: null,
     priorityPlayerId: null,
     priorityPassedIds: [],
     combat: { attackers: [] },
@@ -900,6 +902,10 @@ function resolveTriggerEffect(effect: TriggerEffectDefinition, state: GameState,
     return { kind: 'proliferate' }
   }
 
+  if (effect.kind === 'put_minus_one_counter_target_creature') {
+    return { kind: 'put_minus_one_counter_target_creature', amount: effect.amount }
+  }
+
   return {
     kind: 'drain_each_opponent',
     amount: effect.amount,
@@ -988,6 +994,7 @@ function queueTriggeredAbilities(state: GameState, occurrences: TriggerOccurrenc
             kind: 'trigger',
             abilityLabel: ability.label,
             triggerEffect: resolveTriggerEffect(ability.effect, state, player.id, occurrence),
+            triggerTargetType: ability.target === 'battlefield_creature' ? 'battlefield_creature' : undefined,
           })
         }
       }
@@ -996,12 +1003,34 @@ function queueTriggeredAbilities(state: GameState, occurrences: TriggerOccurrenc
 
   if (triggers.length === 0) return state
 
+  const nextTargetTrigger = [...triggers].reverse().find(trigger => trigger.triggerTargetType && !trigger.targetCardId)
+  const pendingTriggerTargetChoice = nextTargetTrigger
+    ? {
+        playerId: nextTargetTrigger.casterId,
+        stackItemId: nextTargetTrigger.id,
+        sourceName: nextTargetTrigger.card.name,
+        targetType: nextTargetTrigger.triggerTargetType!,
+      }
+    : state.pendingTriggerTargetChoice
+
   return {
     ...state,
     stack: [...state.stack, ...triggers],
+    pendingTriggerTargetChoice,
     priorityPlayerId: state.turnOrder[state.currentTurnIndex] ?? null,
     priorityPassedIds: [],
     actionSeq: state.actionSeq + 1,
+  }
+}
+
+function getPendingTriggerTargetChoice(stack: StackItem[]): GameState['pendingTriggerTargetChoice'] {
+  const nextTargetTrigger = [...stack].reverse().find(item => item.kind === 'trigger' && item.triggerTargetType && !item.targetCardId)
+  if (!nextTargetTrigger) return null
+  return {
+    playerId: nextTargetTrigger.casterId,
+    stackItemId: nextTargetTrigger.id,
+    sourceName: nextTargetTrigger.card.name,
+    targetType: nextTargetTrigger.triggerTargetType!,
   }
 }
 
@@ -1248,6 +1277,33 @@ function resolveStackTop(state: GameState): GameState {
         pendingProliferateChoice = {
           playerId: stackItem.casterId,
           sourceName: stackItem.card.name,
+        }
+        break
+      case 'put_minus_one_counter_target_creature':
+        if (targetBattlefieldOwner?.id && stackItem.targetCardId) {
+          players = players.map(player =>
+            player.id === targetBattlefieldOwner.id
+              ? {
+                  ...player,
+                  zones: {
+                    ...player.zones,
+                    battlefield: player.zones.battlefield.map(entry =>
+                      entry.instanceId === stackItem.targetCardId ? { ...entry, minusOneCounters: entry.minusOneCounters + effect.amount } : entry
+                    ),
+                  },
+                }
+              : player
+          )
+          const targetCard = targetBattlefieldOwner.zones.battlefield.find(entry => entry.instanceId === stackItem.targetCardId)
+          if (targetCard) {
+            triggerOccurrences.push({
+              type: 'minus_one_counters_placed',
+              sourcePlayerId: stackItem.casterId,
+              controllerId: targetBattlefieldOwner.id,
+              card: targetCard,
+              amount: effect.amount,
+            })
+          }
         }
         break
       case 'drain_each_opponent':
@@ -1571,6 +1627,7 @@ function resolveStackTop(state: GameState): GameState {
     players: cleaned.players,
     stack: state.stack.slice(0, -1),
     pendingProliferateChoice,
+    pendingTriggerTargetChoice: getPendingTriggerTargetChoice(state.stack.slice(0, -1)),
     priorityPlayerId: state.turnOrder[state.currentTurnIndex] ?? null,
     priorityPassedIds: [],
     actionSeq: state.actionSeq + 1,
@@ -1791,6 +1848,20 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
     }
   }
 
+  if (state.pendingTriggerTargetChoice) {
+    const allowedDuringTriggerTargetChoice = new Set<ActionPayload['type']>([
+      'SET_TRIGGER_TARGET',
+      'PLAYER_CONNECTED',
+      'PLAYER_JOIN',
+      'SET_PLAYER_NAME',
+      'UNDO',
+      'RESET_GAME',
+    ])
+    if (!allowedDuringTriggerTargetChoice.has(action.type)) {
+      return state
+    }
+  }
+
   if (state.pendingLandEffectChoice) {
     const allowedDuringLandEffectChoice = new Set<ActionPayload['type']>([
       'RESOLVE_LAND_EFFECT',
@@ -1906,6 +1977,34 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           playerId: action.playerId,
           playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
           description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }
+    }
+
+    case 'SET_TRIGGER_TARGET': {
+      const choice = state.pendingTriggerTargetChoice
+      if (!choice || choice.playerId !== action.playerId || choice.stackItemId !== action.stackItemId) return state
+
+      const targetOwner = state.players.find(player =>
+        player.zones.battlefield.some(entry => entry.instanceId === action.targetCardId)
+      ) ?? null
+      const targetCard = targetOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
+      if (!targetCard || !isCreatureCard(targetCard)) return state
+
+      return {
+        ...state,
+        stack: state.stack.map(item =>
+          item.id === action.stackItemId ? { ...item, targetCardId: action.targetCardId } : item
+        ),
+        pendingTriggerTargetChoice: null,
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          description: `${state.players.find(p => p.id === action.playerId)?.name ?? 'Player'} chose a target for ${choice.sourceName}`,
           action,
           undoable: true,
         }),
@@ -3423,6 +3522,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         pendingLandEffectChoice: null,
         pendingExploreChoice: null,
         pendingProliferateChoice: null,
+        pendingTriggerTargetChoice: null,
         priorityPlayerId: null,
         priorityPassedIds: [],
         actionSeq: state.actionSeq + 1,
@@ -3451,6 +3551,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         pendingLandEffectChoice: null,
         pendingExploreChoice: null,
         pendingProliferateChoice: null,
+        pendingTriggerTargetChoice: null,
         priorityPlayerId: null,
         priorityPassedIds: [],
         round: 1,

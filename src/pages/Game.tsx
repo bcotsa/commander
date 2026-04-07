@@ -6,6 +6,7 @@ import { LandEffectOverlay } from '@/components/game/LandEffectOverlay'
 import { MulliganOverlay } from '@/components/game/MulliganOverlay'
 import { ProliferateChoiceOverlay } from '@/components/game/ProliferateChoiceOverlay'
 import { StackPanel } from '@/components/game/StackPanel'
+import { TriggerTargetOverlay } from '@/components/game/TriggerTargetOverlay'
 import { TurnTracker } from '@/components/game/TurnTracker'
 import { CommanderDamageModal } from '@/components/modals/CommanderDamageModal'
 import { CountersModal } from '@/components/modals/CountersModal'
@@ -162,6 +163,21 @@ export function Game() {
             playerId: state.pendingProliferateChoice?.playerId ?? myPlayerId,
             targetPlayerIds,
             targetCardIds,
+          })}
+        />
+      )}
+
+      {state.pendingTriggerTargetChoice && (
+        <TriggerTargetOverlay
+          choice={state.pendingTriggerTargetChoice}
+          players={state.players}
+          myPlayerId={myPlayerId}
+          canControlAllPlayers={Boolean(isHost && state.hostControlsAllPlayers)}
+          onChoose={(targetCardId) => sendAction({
+            type: 'SET_TRIGGER_TARGET',
+            playerId: state.pendingTriggerTargetChoice?.playerId ?? myPlayerId,
+            stackItemId: state.pendingTriggerTargetChoice?.stackItemId ?? '',
+            targetCardId,
           })}
         />
       )}
