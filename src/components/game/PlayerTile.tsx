@@ -331,6 +331,18 @@ interface PlayerTileProps {
 export function PlayerTile({
   player, allPlayers, isCurrentTurn, canControlPlayer, isPriorityProxy, currentTurnPlayerId, currentPhase, combat, rotated, onLifeDelta, onDrawCard, onCardCounterChange, onMoveCard, onToggleTapped, onActivateAbility, onActivatePlaneswalkerAbility, onPlayLand, onCastCommander, onCastPermanent, onCastSpell, onDeclareAttacker, onRemoveAttacker, onAssignBlocker, onRemoveBlocker, onOpenDamage, onOpenCounters
 }: PlayerTileProps) {
+  const looksLikeLand = (card: GameCard) => {
+    if (card.typeLine.toLowerCase().includes('land')) return true
+    const oracleText = (card.oracleText ?? '').toLowerCase()
+    const hasManaAbility = /\{t\}:\s*add\b/i.test(oracleText)
+    const hasLandLikeText =
+      oracleText.includes('enters tapped')
+      || oracleText.includes('enters the battlefield tapped')
+      || oracleText.includes('cycling')
+      || oracleText.includes('basic land card')
+    return card.manaCost === null && hasManaAbility && hasLandLikeText && card.power === null && card.toughness === null && card.loyalty === null
+  }
+
   const borderColor = isPriorityProxy ? 'border-emerald-500' : isCurrentTurn ? 'border-violet-500' : 'border-slate-700'
   const { library, hand, lands, battlefield, graveyard, exile, commandZone } = player.zones
   const [selected, setSelected] = useState<{ zone: ZoneName; card: GameCard } | null>(null)
@@ -339,7 +351,7 @@ export function PlayerTile({
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null)
   const cardButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({})
 
-  const selectedIsLand = selected ? selected.card.typeLine.toLowerCase().includes('land') : false
+  const selectedIsLand = selected ? looksLikeLand(selected.card) : false
   const selectedIsPermanent = selected ? !selected.card.typeLine.toLowerCase().includes('instant') && !selected.card.typeLine.toLowerCase().includes('sorcery') : false
   const selectedIsCreature = selected ? selected.card.typeLine.toLowerCase().includes('creature') && selected.card.power !== null && selected.card.toughness !== null : false
   const selectedIsPlaneswalker = selected ? selected.card.typeLine.toLowerCase().includes('planeswalker') : false

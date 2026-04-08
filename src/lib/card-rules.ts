@@ -9,6 +9,21 @@ const BASIC_LAND_TYPES: Array<{ pattern: RegExp; color: ColorSymbol }> = [
   { pattern: /\bforest\b/i, color: 'G' },
 ]
 
+function looksLikeLandByText(card: Pick<GameCard, 'typeLine' | 'oracleText' | 'manaCost' | 'power' | 'toughness' | 'loyalty'>): boolean {
+  if (card.typeLine.toLowerCase().includes('land')) return true
+  if (card.manaCost !== null) return false
+
+  const oracleText = (card.oracleText ?? '').toLowerCase()
+  const hasManaAbility = /\{t\}:\s*add\b/i.test(oracleText)
+  const hasLandLikeText =
+    oracleText.includes('enters tapped')
+    || oracleText.includes('enters the battlefield tapped')
+    || oracleText.includes('cycling')
+    || oracleText.includes('basic land card')
+
+  return hasManaAbility && hasLandLikeText && card.power === null && card.toughness === null && card.loyalty === null
+}
+
 export type SimpleSpellDefinition =
   | { kind: 'draw_cards'; amount: number; loseLife?: number; target: 'none' }
   | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number | 'opponents'; tapped?: boolean; target: 'none' }
@@ -574,11 +589,10 @@ export function getLandManaOptions(card: Pick<GameCard, 'name' | 'typeLine' | 'o
 export function getActivatedAbilities(card: Pick<GameCard, 'name' | 'typeLine' | 'oracleText' | 'tapped'>, player: Pick<Player, 'commander'>): ActivatedAbilityDefinition[] {
   const abilities: ActivatedAbilityDefinition[] = []
   const lowerName = card.name.toLowerCase()
-  const lowerType = card.typeLine.toLowerCase()
   const oracleText = card.oracleText ?? ''
   const lowerOracleText = oracleText.toLowerCase()
 
-  if (lowerType.includes('land')) {
+  if (looksLikeLandByText({ ...card, manaCost: null, power: null, toughness: null, loyalty: null })) {
     const basicFetchAny = lowerOracleText.includes('search your library for a basic land card')
       && lowerOracleText.includes('put it onto the battlefield tapped')
       && lowerOracleText.includes('sacrifice')

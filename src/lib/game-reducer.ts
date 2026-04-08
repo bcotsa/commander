@@ -279,7 +279,17 @@ function isPermanentCard(card: GameCard): boolean {
 }
 
 function isLandCard(card: GameCard): boolean {
-  return card.typeLine.toLowerCase().includes('land')
+  if (card.typeLine.toLowerCase().includes('land')) return true
+
+  const oracleText = (card.oracleText ?? '').toLowerCase()
+  const hasManaAbility = /\{t\}:\s*add\b/i.test(oracleText)
+  const hasLandLikeText =
+    oracleText.includes('enters tapped')
+    || oracleText.includes('enters the battlefield tapped')
+    || oracleText.includes('cycling')
+    || oracleText.includes('basic land card')
+
+  return card.manaCost === null && hasManaAbility && hasLandLikeText && card.power === null && card.toughness === null && card.loyalty === null
 }
 
 function isBasicLandCard(card: GameCard): boolean {
