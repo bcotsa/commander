@@ -312,7 +312,7 @@ function hasCounter(card: GameCard): boolean {
   return card.plusOneCounters > 0 || card.minusOneCounters > 0 || (card.loyalty ?? 0) > 0
 }
 
-const KNOWN_KEYWORDS = ['flying', 'reach', 'trample', 'vigilance', 'deathtouch', 'lifelink', 'menace', 'infect', 'wither'] as const
+const KNOWN_KEYWORDS = ['flying', 'reach', 'trample', 'vigilance', 'deathtouch', 'lifelink', 'menace', 'infect', 'wither', 'first strike', 'double strike', 'hexproof'] as const
 type KnownKeyword = (typeof KNOWN_KEYWORDS)[number]
 
 function parseKeywords(text: string): Set<KnownKeyword> {
@@ -323,6 +323,17 @@ function parseKeywords(text: string): Set<KnownKeyword> {
     }
   }
   return found
+}
+
+function getWardCost(card: GameCard): number {
+  const text = oracleText(card)
+  const match = text.match(/ward(?:\s*[—-]\s*|\s+)\{(\d+)\}/i)
+  return match ? Number(match[1]) : 0
+}
+
+function appendGenericManaCost(manaCost: string | null, generic: number): string | null {
+  if (generic <= 0) return manaCost
+  return `${manaCost ?? ''}{${generic}}`
 }
 
 function normalizeSelectorWord(value: string): string {
@@ -419,12 +430,28 @@ function canBlockAttacker(
   attacker: GameCard
 ): boolean {
   if (blocker.tapped) return false
-  if (!canCreatureAttackOrBlock(players, blockerControllerId, blocker)) return false
+  if (!canCreatureBlock(players, blockerControllerId, blocker)) return false
+
+  const attackerText = oracleText(attacker)
+  if (attackerText.includes("can't be blocked") || attackerText.includes('is unblockable')) return false
+
+  const blockerPower = effectivePower(blocker, players, blockerControllerId)
+  if (attackerText.includes("can't be blocked by creatures with power 2 or less") && blockerPower <= 2) {
+    return false
+  }
 
   const attackerHasFlying = hasKeyword(players, attackerControllerId, attacker, 'flying')
   if (!attackerHasFlying) return true
 
   return hasKeyword(players, blockerControllerId, blocker, 'flying') || hasKeyword(players, blockerControllerId, blocker, 'reach')
+}
+
+function hasFirstStrikeDamage(players: Player[], controllerId: string, card: GameCard): boolean {
+  return hasKeyword(players, controllerId, card, 'first strike') || hasKeyword(players, controllerId, card, 'double strike')
+}
+
+function hasNormalCombatDamage(players: Player[], controllerId: string, card: GameCard): boolean {
+  return !hasKeyword(players, controllerId, card, 'first strike') || hasKeyword(players, controllerId, card, 'double strike')
 }
 
 function effectivePower(card: GameCard, players?: Player[], controllerId?: string): number {
@@ -450,7 +477,9 @@ function playerCanGainLife(players: Player[], playerId: string): boolean {
   return true
 }
 
-function canCreatureAttackOrBlock(players: Player[], controllerId: string, card: GameCard): boolean {
+function canCreatureAttack(players: Player[], controllerId: string, card: GameCard): boolean {
+  const text = oracleText(card)
+  if (text.includes("can't attack or block") || text.includes("can't attack")) return false
   if (!hasCounter(card)) return true
   for (const sourcePlayer of players) {
     if (sourcePlayer.id === controllerId) continue
@@ -461,6 +490,123 @@ function canCreatureAttackOrBlock(players: Player[], controllerId: string, card:
     }
   }
   return true
+}
+
+function canCreatureBlock(players: Player[], controllerId: string, card: GameCard): boolean {
+  const text = oracleText(card)
+  if (text.includes("can't attack or block") || text.includes("can't block")) return false
+  if (!hasCounter(card)) return true
+  for (const sourcePlayer of players) {
+    if (sourcePlayer.id === controllerId) continue
+    for (const source of sourcePlayer.zones.battlefield) {
+      if (oracleText(source).includes("creatures your opponents control with counters on them can't attack or block")) {
+        return false
+      }
+    }
+  }
+  return true
+}
+
+function mustAttackIfAble(card: GameCard): boolean {
+  const text = oracleText(card)
+  return text.includes('attacks each combat if able') || text.includes('attacks each turn if able')
+}
+
+function getTargetingTax(
+  players: Player[],
+  sourcePlayerId: string,
+  targetOwnerId: string | null,
+  targetCard: GameCard | null
+): { allowed: boolean; wardCost: number } {
+  if (!targetCard || !targetOwnerId || targetOwnerId === sourcePlayerId) {
+    return { allowed: true, wardCost: 0 }
+  }
+
+  if (hasKeyword(players, targetOwnerId, targetCard, 'hexproof')) {
+    return { allowed: false, wardCost: 0 }
+  }
+
+  return { allowed: true, wardCost: getWardCost(targetCard) }
+}
+
+function validateTargetingRestriction(
+  players: Player[],
+  sourcePlayerId: string,
+  targetOwnerId: string | null,
+  targetCard: GameCard | null
+): { allowed: boolean; extraManaCost: string | null } {
+  const tax = getTargetingTax(players, sourcePlayerId, targetOwnerId, targetCard)
+  return {
+    allowed: tax.allowed,
+    extraManaCost: tax.wardCost > 0 ? `{${tax.wardCost}}` : null,
+  }
+}
+
+function autoDeclareRequiredAttackers(state: GameState): GameState {
+  if (state.currentPhase !== 'combat') return state
+
+  const currentPlayerId = state.turnOrder[state.currentTurnIndex]
+  const activePlayer = state.players.find(player => player.id === currentPlayerId)
+  if (!currentPlayerId || !activePlayer || activePlayer.isEliminated) return state
+
+  const defenders = state.players.filter(player => player.id !== currentPlayerId && !player.isEliminated)
+  if (defenders.length === 0) return state
+
+  const alreadyAttacking = new Set(state.combat.attackers.map(attack => attack.attackerId))
+  const requiredAttackers = activePlayer.zones.battlefield.filter(card =>
+    isCreatureCard(card)
+    && !card.tapped
+    && !card.summoningSick
+    && mustAttackIfAble(card)
+    && canCreatureAttack(state.players, currentPlayerId, card)
+    && !alreadyAttacking.has(card.instanceId)
+  )
+
+  if (requiredAttackers.length === 0) return state
+
+  const defaultDefender = defenders[0]
+  const tappedAttackers = new Set(
+    requiredAttackers
+      .filter(card => !hasKeyword(state.players, currentPlayerId, card, 'vigilance'))
+      .map(card => card.instanceId)
+  )
+
+  const triggerOccurrences: TriggerOccurrence[] = requiredAttackers.map(card => ({
+    type: 'attacks',
+    controllerId: currentPlayerId,
+    card,
+  }))
+
+  const nextState = {
+    ...state,
+    players: state.players.map(player =>
+      player.id === currentPlayerId
+        ? {
+            ...player,
+            zones: {
+              ...player.zones,
+              battlefield: player.zones.battlefield.map(card =>
+                tappedAttackers.has(card.instanceId) ? { ...card, tapped: true } : card
+              ),
+            },
+          }
+        : player
+    ),
+    combat: {
+      attackers: [
+        ...state.combat.attackers,
+        ...requiredAttackers.map(card => ({
+          attackerId: card.instanceId,
+          attackerName: card.name,
+          attackingPlayerId: currentPlayerId,
+          defendingPlayerId: defaultDefender.id,
+          blockerIds: [],
+        })),
+      ],
+    },
+  }
+
+  return queueTriggeredAbilities(nextState, triggerOccurrences)
 }
 
 function applyDamageToCreature(
@@ -530,6 +676,134 @@ function maybeGainLifeFromDamage(players: Player[], sourceControllerId: string, 
   return players.map(player =>
     player.id === sourceControllerId ? { ...player, life: player.life + amount } : player
   )
+}
+
+function maybeAddCommanderDamage(
+  players: Player[],
+  defendingPlayerId: string,
+  attackingPlayerId: string,
+  attacker: GameCard,
+  amount: number
+): Player[] {
+  if (amount <= 0 || !attacker.isCommander) return players
+  return players.map(player =>
+    player.id === defendingPlayerId
+      ? {
+          ...player,
+          commanderDamage: {
+            ...player.commanderDamage,
+            [attackingPlayerId]: (player.commanderDamage[attackingPlayerId] ?? 0) + amount,
+          },
+        }
+      : player
+  )
+}
+
+function assignAttackerDamageToBlockers(
+  players: Player[],
+  attackerControllerId: string,
+  attacker: GameCard,
+  validBlockers: GameCard[]
+): { blockerDamageMap: Map<string, number>; attackerDamageRemaining: number } {
+  let attackerDamageRemaining = Math.max(0, effectivePower(attacker, players, attackerControllerId))
+  const blockerDamageMap = new Map<string, number>()
+
+  for (const blocker of validBlockers) {
+    if (attackerDamageRemaining <= 0) break
+    const blockerController = findBattlefieldController(players, blocker.instanceId)
+    if (!blockerController) continue
+    const lethalBase = Math.max(0, effectiveToughness(blocker, players, blockerController.id) - blocker.markedDamage)
+    const lethal = hasKeyword(players, attackerControllerId, attacker, 'deathtouch')
+      ? Math.min(1, lethalBase)
+      : lethalBase
+    const assigned = Math.min(attackerDamageRemaining, lethal)
+    blockerDamageMap.set(blocker.instanceId, assigned)
+    attackerDamageRemaining -= assigned
+  }
+
+  return { blockerDamageMap, attackerDamageRemaining }
+}
+
+function resolveCombatDamageStep(
+  players: Player[],
+  attacks: GameState['combat']['attackers'],
+  options: {
+    attackerCanDeal: (players: Player[], controllerId: string, card: GameCard) => boolean
+    blockerCanDeal: (players: Player[], controllerId: string, card: GameCard) => boolean
+  }
+): Player[] {
+  const findBattlefieldCard = (playerId: string, cardId: string) =>
+    players.find(player => player.id === playerId)?.zones.battlefield.find(card => card.instanceId === cardId)
+
+  for (const attack of attacks) {
+    const attacker = findBattlefieldCard(attack.attackingPlayerId, attack.attackerId)
+    if (!attacker || !isCreatureCard(attacker) || attacker.power === null || attacker.toughness === null) continue
+
+    const blockers = attack.blockerIds
+      .map(blockerId => players.flatMap(player => player.zones.battlefield).find(card => card.instanceId === blockerId) ?? null)
+      .filter((card): card is GameCard => card !== null)
+      .filter(isCreatureCard)
+
+    const validBlockers = blockers.filter(blocker => {
+      const blockerController = findBattlefieldController(players, blocker.instanceId)
+      return blockerController ? canBlockAttacker(players, blockerController.id, blocker, attack.attackingPlayerId, attacker) : false
+    })
+
+    const attackerHasMenace = hasKeyword(players, attack.attackingPlayerId, attacker, 'menace')
+    const attackIsBlocked = validBlockers.length > 0 && (!attackerHasMenace || validBlockers.length >= 2)
+    const attackerDealsDamage = options.attackerCanDeal(players, attack.attackingPlayerId, attacker)
+
+    if (!attackIsBlocked) {
+      if (!attackerDealsDamage) continue
+      const attackerPower = Math.max(0, effectivePower(attacker, players, attack.attackingPlayerId))
+      if (attack.defendingCardId) {
+        players = applyDamageToCreature(players, attack.defendingPlayerId, attack.defendingCardId, attackerPower, attack.attackingPlayerId, attacker)
+      } else {
+        players = applyDamageToPlayer(players, attack.defendingPlayerId, attackerPower, attack.attackingPlayerId, attacker)
+        players = maybeAddCommanderDamage(players, attack.defendingPlayerId, attack.attackingPlayerId, attacker, attackerPower)
+      }
+      players = maybeGainLifeFromDamage(players, attack.attackingPlayerId, attacker, attackerPower)
+      continue
+    }
+
+    const stepBlockers = validBlockers.filter(blocker => {
+      const blockerController = findBattlefieldController(players, blocker.instanceId)
+      return blockerController ? options.blockerCanDeal(players, blockerController.id, blocker) : false
+    })
+
+    for (const blocker of stepBlockers) {
+      const blockerController = findBattlefieldController(players, blocker.instanceId)
+      if (!blockerController) continue
+      const blockerPower = Math.max(0, effectivePower(blocker, players, blockerController.id))
+      players = applyDamageToCreature(players, attack.attackingPlayerId, attacker.instanceId, blockerPower, blockerController.id, blocker)
+      players = maybeGainLifeFromDamage(players, blockerController.id, blocker, blockerPower)
+    }
+
+    if (!attackerDealsDamage) continue
+
+    const { blockerDamageMap, attackerDamageRemaining } = assignAttackerDamageToBlockers(players, attack.attackingPlayerId, attacker, validBlockers)
+
+    for (const blocker of validBlockers) {
+      const assigned = blockerDamageMap.get(blocker.instanceId)
+      if (!assigned) continue
+      const blockerController = findBattlefieldController(players, blocker.instanceId)
+      if (!blockerController) continue
+      players = applyDamageToCreature(players, blockerController.id, blocker.instanceId, assigned, attack.attackingPlayerId, attacker)
+      players = maybeGainLifeFromDamage(players, attack.attackingPlayerId, attacker, assigned)
+    }
+
+    if (attackerDamageRemaining > 0 && hasKeyword(players, attack.attackingPlayerId, attacker, 'trample')) {
+      if (attack.defendingCardId) {
+        players = applyDamageToCreature(players, attack.defendingPlayerId, attack.defendingCardId, attackerDamageRemaining, attack.attackingPlayerId, attacker)
+      } else {
+        players = applyDamageToPlayer(players, attack.defendingPlayerId, attackerDamageRemaining, attack.attackingPlayerId, attacker)
+        players = maybeAddCommanderDamage(players, attack.defendingPlayerId, attack.attackingPlayerId, attacker, attackerDamageRemaining)
+      }
+      players = maybeGainLifeFromDamage(players, attack.attackingPlayerId, attacker, attackerDamageRemaining)
+    }
+  }
+
+  return players
 }
 
 function entersBattlefield(card: GameCard): GameCard {
@@ -2463,6 +2737,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       }
 
       nextState = advanceThroughAutomaticPhases(nextState)
+      nextState = autoDeclareRequiredAttackers(nextState)
 
       return {
         ...nextState,
@@ -3090,13 +3365,30 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         if (!target || (!isCreatureCard(target) && !isPlaneswalkerCard(target))) return state
       }
 
+      const targetedBattlefieldCard =
+        targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ??
+        targetBattlefieldOwner?.zones.lands.find(entry => entry.instanceId === action.targetCardId) ??
+        null
+      const targetingRestriction = validateTargetingRestriction(state.players, action.playerId, targetBattlefieldOwner?.id ?? null, targetedBattlefieldCard)
+      if (!targetingRestriction.allowed) return state
+
+      let wardPaymentCards: GameCard[] | undefined
+      let manaPool = player.manaPool
+      if (targetingRestriction.extraManaCost) {
+        const payment = autoPayManaCost(player.manaPool, [...player.zones.lands, ...player.zones.battlefield], targetingRestriction.extraManaCost, player)
+        if (!payment) return state
+        wardPaymentCards = payment.cards
+        manaPool = payment.manaPool
+      }
+
       let players = state.players.map(entry =>
         entry.id === action.playerId
           ? {
               ...entry,
+              manaPool,
               zones: {
-                ...entry.zones,
-                battlefield: entry.zones.battlefield.map(battlefieldCard =>
+                ...mergePaidCardsIntoZones(entry, wardPaymentCards).zones,
+                battlefield: mergePaidCardsIntoZones(entry, wardPaymentCards).zones.battlefield.map(battlefieldCard =>
                   battlefieldCard.instanceId === action.cardId
                     ? {
                         ...battlefieldCard,
@@ -3327,7 +3619,6 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       const definition = getSimpleSpellDefinition(card)
       const supportsCustomChoiceSpell = ["Black Sun's Zenith", 'Painful Truths', 'Deadly Dispute', 'Cathartic Pyre'].includes(card.name)
       if (!definition && !supportsCustomChoiceSpell) return state
-      if (!canAutoPayManaCost(caster.manaPool, [...caster.zones.lands, ...caster.zones.battlefield], card.manaCost, caster, action.options)) return state
 
       const targetPlayer = action.targetPlayerId
         ? state.players.find(player => player.id === action.targetPlayerId) ?? null
@@ -3393,11 +3684,21 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         }
       }
 
+      const targetedBattlefieldCard =
+        targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ??
+        targetBattlefieldOwner?.zones.lands.find(entry => entry.instanceId === action.targetCardId) ??
+        null
+      const targetingRestriction = validateTargetingRestriction(state.players, action.playerId, targetBattlefieldOwner?.id ?? null, targetedBattlefieldCard)
+      if (!targetingRestriction.allowed) return state
+
+      const manaCost = appendGenericManaCost(card.manaCost, targetingRestriction.extraManaCost ? Number(targetingRestriction.extraManaCost.replace(/[{}]/g, '')) : 0)
+      if (!canAutoPayManaCost(caster.manaPool, [...caster.zones.lands, ...caster.zones.battlefield], manaCost, caster, action.options)) return state
+
       let spentMana = emptyManaPool()
       let sacrificedCard: GameCard | null = null
       const players = state.players.map(player => {
         if (player.id !== action.playerId) return player
-        const payment = autoPayManaCost(player.manaPool, [...player.zones.lands, ...player.zones.battlefield], card.manaCost, player, action.options)
+        const payment = autoPayManaCost(player.manaPool, [...player.zones.lands, ...player.zones.battlefield], manaCost, player, action.options)
         if (!payment) return player
         spentMana = payment.spent
         const paidZones = applyTappedManaCards(player, payment.cards).zones
@@ -3470,7 +3771,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         ? defender?.zones.battlefield.find(c => c.instanceId === action.defendingCardId) ?? null
         : null
       if (!attacker || !defender || attacker.tapped || attacker.summoningSick || !isCreatureCard(attacker)) return state
-      if (!canCreatureAttackOrBlock(state.players, action.playerId, attacker)) return state
+      if (!canCreatureAttack(state.players, action.playerId, attacker)) return state
       if (action.defendingPlayerId === action.playerId || defender.isEliminated) return state
       if (action.defendingCardId && (!defendingPlaneswalker || !isPlaneswalkerCard(defendingPlaneswalker))) return state
 
@@ -3556,6 +3857,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       if (!blocker || !targetAttack || !isCreatureCard(blocker)) return state
       if (!attacker || !isCreatureCard(attacker)) return state
       if (targetAttack.defendingPlayerId !== action.playerId) return state
+      if (state.combat.attackers.some(attack => attack.attackerId !== action.attackerId && attack.blockerIds.includes(action.blockerId))) return state
       if (!canBlockAttacker(state.players, action.playerId, blocker, targetAttack.attackingPlayerId, attacker)) return state
 
       return {
@@ -3604,101 +3906,34 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           battlefield: player.zones.battlefield.map(card => ({ ...card })),
         },
       }))
-
-      const findBattlefieldCard = (playerId: string, cardId: string) =>
-        players.find(p => p.id === playerId)?.zones.battlefield.find(card => card.instanceId === cardId)
-
-      for (const attack of state.combat.attackers) {
-        const attacker = findBattlefieldCard(attack.attackingPlayerId, attack.attackerId)
-        if (!attacker || !isCreatureCard(attacker) || attacker.power === null || attacker.toughness === null) continue
-
-        const blockers = attack.blockerIds
-          .map(blockerId => players.flatMap(p => p.zones.battlefield).find(card => card.instanceId === blockerId) ?? null)
-          .filter((card): card is GameCard => card !== null)
-          .filter(isCreatureCard)
-        const validBlockers = blockers.filter(blocker => {
-          const blockerController = findBattlefieldController(players, blocker.instanceId)
-          return blockerController ? canBlockAttacker(players, blockerController.id, blocker, attack.attackingPlayerId, attacker) : false
+      const hasFirstStrikeStep = state.combat.attackers.some(attack => {
+        const attacker = players.find(player => player.id === attack.attackingPlayerId)?.zones.battlefield.find(card => card.instanceId === attack.attackerId)
+        if (attacker && hasFirstStrikeDamage(players, attack.attackingPlayerId, attacker)) return true
+        return attack.blockerIds.some(blockerId => {
+          const blockerController = findBattlefieldController(players, blockerId)
+          const blocker = blockerController?.zones.battlefield.find(card => card.instanceId === blockerId)
+          return Boolean(blocker && blockerController && hasFirstStrikeDamage(players, blockerController.id, blocker))
         })
-        const attackerPower = effectivePower(attacker, players, attack.attackingPlayerId)
-        const attackerHasMenace = hasKeyword(players, attack.attackingPlayerId, attacker, 'menace')
+      })
 
-        if (validBlockers.length === 0 || (attackerHasMenace && validBlockers.length < 2)) {
-          if (attack.defendingCardId) {
-            players = applyDamageToCreature(players, attack.defendingPlayerId, attack.defendingCardId, attackerPower, attack.attackingPlayerId, attacker)
-          } else {
-            players = applyDamageToPlayer(players, attack.defendingPlayerId, attackerPower, attack.attackingPlayerId, attacker)
-            players = players.map(player =>
-              player.id === attack.defendingPlayerId && attacker.isCommander
-                ? {
-                    ...player,
-                    commanderDamage: {
-                      ...player.commanderDamage,
-                      [attack.attackingPlayerId]: (player.commanderDamage[attack.attackingPlayerId] ?? 0) + attackerPower,
-                    },
-                  }
-                : player
-            )
-          }
-          players = maybeGainLifeFromDamage(players, attack.attackingPlayerId, attacker, attackerPower)
-          continue
-        }
-
-        // Distribute attacker's damage across blockers in order (simplified: sequential assignment)
-        // Each blocker receives lethal damage before moving to the next.
-        // All blockers deal their power back to the attacker simultaneously.
-        let attackerDamageRemaining = attackerPower
-        const blockerDamageMap = new Map<string, number>()
-
-        for (const blocker of validBlockers) {
-          if (attackerDamageRemaining <= 0) break
-          const blockerController = findBattlefieldController(players, blocker.instanceId)
-          if (!blockerController) continue
-          const lethal = Math.max(0, effectiveToughness(blocker, players, blockerController.id) - blocker.markedDamage)
-          const assigned = Math.min(attackerDamageRemaining, lethal)
-          blockerDamageMap.set(blocker.instanceId, assigned)
-          attackerDamageRemaining -= assigned
-        }
-
-        for (const blocker of validBlockers) {
-          const blockerController = findBattlefieldController(players, blocker.instanceId)
-          if (!blockerController) continue
-          const blockerPower = effectivePower(blocker, players, blockerController.id)
-          players = applyDamageToCreature(players, attack.attackingPlayerId, attacker.instanceId, blockerPower, blockerController.id, blocker)
-          players = maybeGainLifeFromDamage(players, blockerController.id, blocker, blockerPower)
-        }
-
-        for (const blocker of validBlockers) {
-          const assigned = blockerDamageMap.get(blocker.instanceId)
-          if (!assigned) continue
-          const blockerController = findBattlefieldController(players, blocker.instanceId)
-          if (!blockerController) continue
-          players = applyDamageToCreature(players, blockerController.id, blocker.instanceId, assigned, attack.attackingPlayerId, attacker)
-          players = maybeGainLifeFromDamage(players, attack.attackingPlayerId, attacker, assigned)
-        }
-
-        if (attackerDamageRemaining > 0 && hasKeyword(players, attack.attackingPlayerId, attacker, 'trample')) {
-          if (attack.defendingCardId) {
-            players = applyDamageToCreature(players, attack.defendingPlayerId, attack.defendingCardId, attackerDamageRemaining, attack.attackingPlayerId, attacker)
-          } else {
-            players = applyDamageToPlayer(players, attack.defendingPlayerId, attackerDamageRemaining, attack.attackingPlayerId, attacker)
-            players = players.map(player =>
-              player.id === attack.defendingPlayerId && attacker.isCommander
-                ? {
-                    ...player,
-                    commanderDamage: {
-                      ...player.commanderDamage,
-                      [attack.attackingPlayerId]: (player.commanderDamage[attack.attackingPlayerId] ?? 0) + attackerDamageRemaining,
-                    },
-                  }
-                : player
-            )
-          }
-          players = maybeGainLifeFromDamage(players, attack.attackingPlayerId, attacker, attackerDamageRemaining)
-        }
+      let triggerOccurrences: TriggerOccurrence[] = []
+      if (hasFirstStrikeStep) {
+        players = resolveCombatDamageStep(players, state.combat.attackers, {
+          attackerCanDeal: hasFirstStrikeDamage,
+          blockerCanDeal: hasFirstStrikeDamage,
+        })
+        const cleanedFirst = cleanupBattlefieldState(players)
+        players = cleanedFirst.players
+        triggerOccurrences = [...triggerOccurrences, ...cleanedFirst.triggerOccurrences]
       }
 
+      players = resolveCombatDamageStep(players, state.combat.attackers, {
+        attackerCanDeal: hasNormalCombatDamage,
+        blockerCanDeal: hasNormalCombatDamage,
+      })
+
       const cleaned = cleanupBattlefieldState(players)
+      triggerOccurrences = [...triggerOccurrences, ...cleaned.triggerOccurrences]
 
       const next = queueTriggeredAbilities({
         ...state,
@@ -3706,7 +3941,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         currentPhase: 'main2' as const,
         combat: { attackers: [] },
         actionSeq: state.actionSeq + 1,
-      }, cleaned.triggerOccurrences)
+      }, triggerOccurrences)
       const withElim = checkEliminations(next)
       return {
         ...withElim,
