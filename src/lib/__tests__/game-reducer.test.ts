@@ -1,0 +1,912 @@
+import { describe, it, expect, beforeEach } from 'vitest'
+import { gameReducer, createInitialGameState, createPlayer } from '../game-reducer'
+import type { GameState, GameCard, Player } from '@/types/game-state'
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeCard(overrides: Partial<GameCard> = {}): GameCard {
+  return {
+    instanceId: overrides.instanceId ?? `card-${crypto.randomUUID()}`,
+    scryfallId: null,
+    name: overrides.name ?? 'Test Card',
+    imageUri: '',
+    colorIdentity: [],
+    manaCost: null,
+    oracleText: null,
+    typeLine: overrides.typeLine ?? 'Creature — Human',
+    power: overrides.power ?? 2,
+    toughness: overrides.toughness ?? 2,
+    startingLoyalty: null,
+    loyalty: null,
+    loyaltyActivatedThisTurn: false,
+    plusOneCounters: 0,
+    minusOneCounters: 0,
+    tapped: false,
+    markedDamage: 0,
+    summoningSick: false,
+    isCommander: false,
+    isToken: false,
+    ...overrides,
+  }
+}
+
+function makeLand(overrides: Partial<GameCard> = {}): GameCard {
+  return makeCard({
+    name: overrides.name ?? 'Forest',
+    typeLine: 'Basic Land — Forest',
+    power: null,
+    toughness: null,
+    manaCost: null,
+    oracleText: '{T}: Add {G}.',
+    ...overrides,
+  })
+}
+
+function withActiveTurn(state: GameState, currentTurnIndex = 0): GameState {
+  return {
+    ...state,
+    phase: 'active',
+    currentTurnIndex,
+    currentPhase: 'main1',
+    players: state.players.map(player => ({
+      ...player,
+      hasKeptOpeningHand: true,
+    })),
+  }
+}
+
+/** Create a 2-player game state in the active phase, ready for actions */
+function twoPlayerGame(): GameState {
+  let state = createInitialGameState('TEST', 'room-1')
+  const p1 = createPlayer('p1', 'Alice', 0)
+  const p2 = createPlayer('p2', 'Bob', 1)
+  state = gameReducer(state, { type: 'PLAYER_JOIN', player: p1 })
+  state = gameReducer(state, { type: 'PLAYER_JOIN', player: p2 })
+  return withActiveTurn(state)
+}
+
+function getPlayer(state: GameState, id: string): Player {
+  const p = state.players.find(p => p.id === id)
+  if (!p) throw new Error(`Player ${id} not found`)
+  return p
+}
+
+// ---------------------------------------------------------------------------
+// Life & Elimination
+// ---------------------------------------------------------------------------
+
+describe('Life changes', () => {
+  let state: GameState
+
+  beforeEach(() => {
+    state = twoPlayerGame()
+  })
+
+  it('increases life', () => {
+    const next = gameReducer(state, { type: 'LIFE_CHANGE', targetId: 'p1', delta: 5 })
+    expect(getPlayer(next, 'p1').life).toBe(45)
+  })
+
+  it('decreases life', () => {
+    const next = gameReducer(state, { type: 'LIFE_CHANGE', targetId: 'p2', delta: -10 })
+    expect(getPlayer(next, 'p2').life).toBe(30)
+  })
+
+  it('eliminates a player at 0 life', () => {
+    const next = gameReducer(state, { type: 'LIFE_CHANGE', targetId: 'p1', delta: -40 })
+    expect(getPlayer(next, 'p1').isEliminated).toBe(true)
+  })
+
+  it('eliminates a player below 0 life', () => {
+    const next = gameReducer(state, { type: 'LIFE_CHANGE', targetId: 'p1', delta: -100 })
+    expect(getPlayer(next, 'p1').isEliminated).toBe(true)
+    expect(getPlayer(next, 'p1').life).toBe(-60)
+  })
+
+  it('does not eliminate at 1 life', () => {
+    const next = gameReducer(state, { type: 'LIFE_CHANGE', targetId: 'p1', delta: -39 })
+    expect(getPlayer(next, 'p1').isEliminated).toBe(false)
+    expect(getPlayer(next, 'p1').life).toBe(1)
+  })
+
+  it('logs life changes', () => {
+    const next = gameReducer(state, { type: 'LIFE_CHANGE', targetId: 'p1', delta: -5 })
+    expect(next.log.length).toBeGreaterThan(0)
+    expect(next.log[next.log.length - 1].description).toContain('Alice')
+  })
+})
+
+describe('Commander damage', () => {
+  let state: GameState
+
+  beforeEach(() => {
+    state = twoPlayerGame()
+  })
+
+  it('tracks commander damage by source', () => {
+    const next = gameReducer(state, { type: 'COMMANDER_DAMAGE', fromId: 'p1', toId: 'p2', delta: 5 })
+    expect(getPlayer(next, 'p2').commanderDamage['p1']).toBe(5)
+  })
+
+  it('accumulates commander damage', () => {
+    let next = gameReducer(state, { type: 'COMMANDER_DAMAGE', fromId: 'p1', toId: 'p2', delta: 10 })
+    next = gameReducer(next, { type: 'COMMANDER_DAMAGE', fromId: 'p1', toId: 'p2', delta: 11 })
+    expect(getPlayer(next, 'p2').commanderDamage['p1']).toBe(21)
+    expect(getPlayer(next, 'p2').isEliminated).toBe(true)
+  })
+
+  it('does not cross-contaminate sources', () => {
+    let next = gameReducer(state, { type: 'COMMANDER_DAMAGE', fromId: 'p1', toId: 'p2', delta: 15 })
+    next = gameReducer(next, { type: 'COMMANDER_DAMAGE', fromId: 'p2', toId: 'p2', delta: 5 })
+    expect(getPlayer(next, 'p2').commanderDamage['p1']).toBe(15)
+    expect(getPlayer(next, 'p2').commanderDamage['p2']).toBe(5)
+    expect(getPlayer(next, 'p2').isEliminated).toBe(false)
+  })
+})
+
+describe('Poison counters', () => {
+  let state: GameState
+
+  beforeEach(() => {
+    state = twoPlayerGame()
+  })
+
+  it('eliminates at 10 poison', () => {
+    let next = state
+    for (let i = 0; i < 10; i++) {
+      next = gameReducer(next, { type: 'COUNTER_CHANGE', targetId: 'p1', counter: 'poison', delta: 1 })
+    }
+    expect(getPlayer(next, 'p1').counters.poison).toBe(10)
+    expect(getPlayer(next, 'p1').isEliminated).toBe(true)
+  })
+
+  it('does not eliminate at 9 poison', () => {
+    let next = state
+    for (let i = 0; i < 9; i++) {
+      next = gameReducer(next, { type: 'COUNTER_CHANGE', targetId: 'p1', counter: 'poison', delta: 1 })
+    }
+    expect(getPlayer(next, 'p1').isEliminated).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Turn phases
+// ---------------------------------------------------------------------------
+
+describe('Turn phases', () => {
+  let state: GameState
+
+  beforeEach(() => {
+    state = twoPlayerGame()
+  })
+
+  it('advances through main1 → combat → main2 → end', () => {
+    // We start at main1 (auto-advance skips untap/upkeep/draw)
+    expect(state.currentPhase).toBe('main1')
+
+    let next = gameReducer(state, { type: 'NEXT_STEP' })
+    expect(next.currentPhase).toBe('combat')
+
+    next = gameReducer(next, { type: 'NEXT_STEP' })
+    expect(next.currentPhase).toBe('main2')
+
+    next = gameReducer(next, { type: 'NEXT_STEP' })
+    expect(next.currentPhase).toBe('end')
+  })
+
+  it('wraps to next player turn after end phase', () => {
+    let next = state
+    // Advance through all remaining phases: main1 → combat → main2 → end → next turn
+    next = gameReducer(next, { type: 'NEXT_STEP' }) // combat
+    next = gameReducer(next, { type: 'NEXT_STEP' }) // main2
+    next = gameReducer(next, { type: 'NEXT_STEP' }) // end
+    next = gameReducer(next, { type: 'NEXT_STEP' }) // next turn (auto-advances to main1)
+
+    expect(next.currentTurnIndex).toBe(1)
+    expect(next.currentPhase).toBe('main1')
+  })
+
+  it('increments round after all players have taken a turn', () => {
+    let next = state
+    expect(next.round).toBe(1)
+
+    // P1's turn: main1 → combat → main2 → end → wrap
+    for (let i = 0; i < 4; i++) next = gameReducer(next, { type: 'NEXT_STEP' })
+    // P2's turn: main1 → combat → main2 → end → wrap
+    for (let i = 0; i < 4; i++) next = gameReducer(next, { type: 'NEXT_STEP' })
+
+    expect(next.round).toBe(2)
+    expect(next.currentTurnIndex).toBe(0)
+  })
+
+  it('does not advance when stack is non-empty', () => {
+    const card = makeCard({ name: 'Test Creature', manaCost: '{1}' })
+    const withStack: GameState = {
+      ...state,
+      stack: [{
+        id: 'stack-1',
+        card,
+        casterId: 'p1',
+        casterName: 'Alice',
+        source: 'hand',
+        kind: 'permanent',
+      }],
+    }
+
+    const next = gameReducer(withStack, { type: 'NEXT_STEP' })
+    expect(next.currentPhase).toBe(withStack.currentPhase)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Player management
+// ---------------------------------------------------------------------------
+
+describe('Player join', () => {
+  it('adds a new player', () => {
+    let state = createInitialGameState('TEST', 'room-1')
+    state = gameReducer(state, { type: 'PLAYER_JOIN', player: createPlayer('p1', 'Alice', 0) })
+    expect(state.players).toHaveLength(1)
+    expect(state.players[0].name).toBe('Alice')
+    expect(state.turnOrder).toContain('p1')
+  })
+
+  it('reconnects existing player instead of duplicating', () => {
+    let state = createInitialGameState('TEST', 'room-1')
+    state = gameReducer(state, { type: 'PLAYER_JOIN', player: createPlayer('p1', 'Alice', 0) })
+    state = gameReducer(state, { type: 'PLAYER_CONNECTED', playerId: 'p1', connected: false })
+    expect(getPlayer(state, 'p1').isConnected).toBe(false)
+
+    state = gameReducer(state, { type: 'PLAYER_JOIN', player: createPlayer('p1', 'Alice', 0) })
+    expect(state.players).toHaveLength(1)
+    expect(getPlayer(state, 'p1').isConnected).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Card drawing
+// ---------------------------------------------------------------------------
+
+describe('Draw card', () => {
+  let state: GameState
+
+  beforeEach(() => {
+    state = twoPlayerGame()
+    // Give p1 some library cards
+    state = {
+      ...state,
+      players: state.players.map(p =>
+        p.id === 'p1'
+          ? {
+              ...p,
+              zones: {
+                ...p.zones,
+                library: [makeCard({ name: 'Card A' }), makeCard({ name: 'Card B' }), makeCard({ name: 'Card C' })],
+              },
+            }
+          : p
+      ),
+    }
+  })
+
+  it('draws 1 card by default', () => {
+    const next = gameReducer(state, { type: 'DRAW_CARD', playerId: 'p1' })
+    const p1 = getPlayer(next, 'p1')
+    expect(p1.zones.hand).toHaveLength(1)
+    expect(p1.zones.library).toHaveLength(2)
+    expect(p1.zones.hand[0].name).toBe('Card A')
+  })
+
+  it('draws multiple cards', () => {
+    const next = gameReducer(state, { type: 'DRAW_CARD', playerId: 'p1', count: 3 })
+    const p1 = getPlayer(next, 'p1')
+    expect(p1.zones.hand).toHaveLength(3)
+    expect(p1.zones.library).toHaveLength(0)
+  })
+
+  it('handles drawing from empty library gracefully', () => {
+    const emptyLib = {
+      ...state,
+      players: state.players.map(p =>
+        p.id === 'p1' ? { ...p, zones: { ...p.zones, library: [] } } : p
+      ),
+    }
+    const next = gameReducer(emptyLib, { type: 'DRAW_CARD', playerId: 'p1' })
+    expect(getPlayer(next, 'p1').zones.hand).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Land playing
+// ---------------------------------------------------------------------------
+
+describe('Play land', () => {
+  let state: GameState
+  let forestId: string
+
+  beforeEach(() => {
+    state = twoPlayerGame()
+    const forest = makeLand({ name: 'Forest' })
+    forestId = forest.instanceId
+    state = {
+      ...state,
+      players: state.players.map(p =>
+        p.id === 'p1'
+          ? { ...p, zones: { ...p.zones, hand: [forest] } }
+          : p
+      ),
+    }
+  })
+
+  it('moves land from hand to lands zone', () => {
+    const next = gameReducer(state, { type: 'PLAY_LAND', playerId: 'p1', cardId: forestId })
+    const p1 = getPlayer(next, 'p1')
+    expect(p1.zones.hand).toHaveLength(0)
+    expect(p1.zones.lands).toHaveLength(1)
+    expect(p1.zones.lands[0].name).toBe('Forest')
+  })
+
+  it('increments lands played this turn', () => {
+    const next = gameReducer(state, { type: 'PLAY_LAND', playerId: 'p1', cardId: forestId })
+    expect(getPlayer(next, 'p1').landsPlayedThisTurn).toBe(1)
+  })
+
+  it('blocks second land play per turn', () => {
+    let next = gameReducer(state, { type: 'PLAY_LAND', playerId: 'p1', cardId: forestId })
+    const secondForest = makeLand({ name: 'Forest 2' })
+    next = {
+      ...next,
+      players: next.players.map(p =>
+        p.id === 'p1'
+          ? { ...p, zones: { ...p.zones, hand: [secondForest] } }
+          : p
+      ),
+    }
+    const after = gameReducer(next, { type: 'PLAY_LAND', playerId: 'p1', cardId: secondForest.instanceId })
+    // Second land should be blocked
+    expect(getPlayer(after, 'p1').zones.lands).toHaveLength(1)
+    expect(getPlayer(after, 'p1').zones.hand).toHaveLength(1)
+  })
+
+  it('blocks land play outside main phase', () => {
+    const combatState = { ...state, currentPhase: 'combat' as const }
+    const next = gameReducer(combatState, { type: 'PLAY_LAND', playerId: 'p1', cardId: forestId })
+    expect(getPlayer(next, 'p1').zones.hand).toHaveLength(1) // unchanged
+  })
+
+  it('blocks land play by non-active player', () => {
+    // p2's turn
+    const p2Turn = { ...state, currentTurnIndex: 1 }
+    const next = gameReducer(p2Turn, { type: 'PLAY_LAND', playerId: 'p1', cardId: forestId })
+    expect(getPlayer(next, 'p1').zones.hand).toHaveLength(1) // unchanged
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Mana
+// ---------------------------------------------------------------------------
+
+describe('Mana tapping', () => {
+  let state: GameState
+  let forestId: string
+
+  beforeEach(() => {
+    state = twoPlayerGame()
+    const forest = makeLand({ name: 'Forest' })
+    forestId = forest.instanceId
+    state = {
+      ...state,
+      players: state.players.map(p =>
+        p.id === 'p1'
+          ? { ...p, zones: { ...p.zones, lands: [forest] } }
+          : p
+      ),
+    }
+  })
+
+  it('adds mana and taps the land', () => {
+    const next = gameReducer(state, { type: 'ADD_MANA', playerId: 'p1', cardId: forestId, color: 'G' })
+    const p1 = getPlayer(next, 'p1')
+    expect(p1.manaPool.G).toBe(1)
+    expect(p1.zones.lands[0].tapped).toBe(true)
+  })
+
+  it('cannot tap an already-tapped land', () => {
+    let next = gameReducer(state, { type: 'ADD_MANA', playerId: 'p1', cardId: forestId, color: 'G' })
+    next = gameReducer(next, { type: 'ADD_MANA', playerId: 'p1', cardId: forestId, color: 'G' })
+    expect(getPlayer(next, 'p1').manaPool.G).toBe(1) // still just 1
+  })
+
+  it('rejects wrong color for the land', () => {
+    const next = gameReducer(state, { type: 'ADD_MANA', playerId: 'p1', cardId: forestId, color: 'U' })
+    expect(getPlayer(next, 'p1').manaPool.U).toBe(0) // unchanged
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Move card between zones
+// ---------------------------------------------------------------------------
+
+describe('Move card', () => {
+  let state: GameState
+  let cardId: string
+
+  beforeEach(() => {
+    state = twoPlayerGame()
+    const card = makeCard({ name: 'Test Creature' })
+    cardId = card.instanceId
+    state = {
+      ...state,
+      players: state.players.map(p =>
+        p.id === 'p1'
+          ? { ...p, zones: { ...p.zones, hand: [card] } }
+          : p
+      ),
+    }
+  })
+
+  it('moves card from hand to graveyard', () => {
+    const next = gameReducer(state, { type: 'MOVE_CARD', playerId: 'p1', from: 'hand', to: 'graveyard', cardId })
+    const p1 = getPlayer(next, 'p1')
+    expect(p1.zones.hand).toHaveLength(0)
+    expect(p1.zones.graveyard).toHaveLength(1)
+    expect(p1.zones.graveyard[0].name).toBe('Test Creature')
+  })
+
+  it('untaps card when moving to non-battlefield zone', () => {
+    // Put a tapped card on battlefield
+    const tappedCard = makeCard({ name: 'Tapped Guy', tapped: true })
+    const s = {
+      ...state,
+      players: state.players.map(p =>
+        p.id === 'p1'
+          ? { ...p, zones: { ...p.zones, battlefield: [tappedCard] } }
+          : p
+      ),
+    }
+    const next = gameReducer(s, { type: 'MOVE_CARD', playerId: 'p1', from: 'battlefield', to: 'hand', cardId: tappedCard.instanceId })
+    expect(getPlayer(next, 'p1').zones.hand[0].tapped).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Stack & priority
+// ---------------------------------------------------------------------------
+
+describe('Stack and priority', () => {
+  let state: GameState
+
+  beforeEach(() => {
+    state = twoPlayerGame()
+    // Put a spell card in p1's hand
+    const card = makeCard({
+      name: 'Lightning Bolt',
+      typeLine: 'Instant',
+      manaCost: '{R}',
+      oracleText: 'Lightning Bolt deals 3 damage to any target.',
+      power: null,
+      toughness: null,
+    })
+    const mountain = makeLand({
+      name: 'Mountain',
+      typeLine: 'Basic Land — Mountain',
+      oracleText: '{T}: Add {R}.',
+    })
+    state = {
+      ...state,
+      players: state.players.map(p =>
+        p.id === 'p1'
+          ? { ...p, zones: { ...p.zones, hand: [card], lands: [mountain] } }
+          : p
+      ),
+    }
+  })
+
+  it('pass priority resolves when all players have passed', () => {
+    // Manually put something on the stack
+    const card = makeCard({ name: 'Some Spell', typeLine: 'Instant', power: null, toughness: null })
+    const withStack: GameState = {
+      ...state,
+      stack: [{
+        id: 'stack-1',
+        card,
+        casterId: 'p1',
+        casterName: 'Alice',
+        source: 'hand',
+        kind: 'spell',
+      }],
+      priorityPlayerId: 'p1',
+      priorityPassedIds: [],
+    }
+
+    let next = gameReducer(withStack, { type: 'PASS_PRIORITY', playerId: 'p1' })
+    // After p1 passes, priority should go to p2
+    expect(next.priorityPlayerId).toBe('p2')
+    expect(next.stack).toHaveLength(1) // not yet resolved
+
+    next = gameReducer(next, { type: 'PASS_PRIORITY', playerId: 'p2' })
+    // All passed, should resolve
+    expect(next.stack).toHaveLength(0)
+  })
+
+  it('rejects pass from non-priority player', () => {
+    const withStack: GameState = {
+      ...state,
+      stack: [{
+        id: 'stack-1',
+        card: makeCard({ name: 'Spell', typeLine: 'Instant', power: null, toughness: null }),
+        casterId: 'p1',
+        casterName: 'Alice',
+        source: 'hand',
+        kind: 'spell',
+      }],
+      priorityPlayerId: 'p1',
+      priorityPassedIds: [],
+    }
+
+    const next = gameReducer(withStack, { type: 'PASS_PRIORITY', playerId: 'p2' })
+    expect(next.priorityPlayerId).toBe('p1') // unchanged
+  })
+
+  it('does nothing when stack is empty', () => {
+    const next = gameReducer(state, { type: 'PASS_PRIORITY', playerId: 'p1' })
+    expect(next).toBe(state) // exact same reference
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Combat
+// ---------------------------------------------------------------------------
+
+describe('Combat', () => {
+  let state: GameState
+  let attackerId: string
+  let blockerId: string
+
+  beforeEach(() => {
+    state = twoPlayerGame()
+    state = { ...state, currentPhase: 'combat' }
+
+    const attacker = makeCard({ name: 'Grizzly Bears', power: 2, toughness: 2 })
+    const blocker = makeCard({ name: 'Wall', power: 0, toughness: 4 })
+    attackerId = attacker.instanceId
+    blockerId = blocker.instanceId
+
+    state = {
+      ...state,
+      players: state.players.map(p => {
+        if (p.id === 'p1') return { ...p, zones: { ...p.zones, battlefield: [attacker] } }
+        if (p.id === 'p2') return { ...p, zones: { ...p.zones, battlefield: [blocker] } }
+        return p
+      }),
+    }
+  })
+
+  it('declares an attacker', () => {
+    const next = gameReducer(state, {
+      type: 'DECLARE_ATTACKER',
+      playerId: 'p1',
+      cardId: attackerId,
+      defendingPlayerId: 'p2',
+    })
+    expect(next.combat.attackers).toHaveLength(1)
+    expect(next.combat.attackers[0].attackerId).toBe(attackerId)
+    expect(next.combat.attackers[0].defendingPlayerId).toBe('p2')
+    // Attacker should be tapped
+    const p1 = getPlayer(next, 'p1')
+    expect(p1.zones.battlefield.find(c => c.instanceId === attackerId)?.tapped).toBe(true)
+  })
+
+  it('rejects attacker with summoning sickness', () => {
+    const sickCreature = makeCard({ name: 'Sick Guy', summoningSick: true })
+    state = {
+      ...state,
+      players: state.players.map(p =>
+        p.id === 'p1'
+          ? { ...p, zones: { ...p.zones, battlefield: [sickCreature] } }
+          : p
+      ),
+    }
+    const next = gameReducer(state, {
+      type: 'DECLARE_ATTACKER',
+      playerId: 'p1',
+      cardId: sickCreature.instanceId,
+      defendingPlayerId: 'p2',
+    })
+    expect(next.combat.attackers).toHaveLength(0)
+  })
+
+  it('allows blocking with summoning sickness', () => {
+    const sickBlocker = makeCard({ name: 'Fresh Blocker', power: 1, toughness: 3, summoningSick: true })
+    state = {
+      ...state,
+      players: state.players.map(p =>
+        p.id === 'p2'
+          ? { ...p, zones: { ...p.zones, battlefield: [sickBlocker] } }
+          : p
+      ),
+    }
+
+    // Declare attacker first
+    let next = gameReducer(state, {
+      type: 'DECLARE_ATTACKER',
+      playerId: 'p1',
+      cardId: attackerId,
+      defendingPlayerId: 'p2',
+    })
+
+    // Assign blocker with summoning sickness — should be allowed
+    next = gameReducer(next, {
+      type: 'ASSIGN_BLOCKER',
+      playerId: 'p2',
+      blockerId: sickBlocker.instanceId,
+      attackerId,
+    })
+    expect(next.combat.attackers[0].blockerIds).toContain(sickBlocker.instanceId)
+  })
+
+  it('deals unblocked damage to defending player', () => {
+    let next = gameReducer(state, {
+      type: 'DECLARE_ATTACKER',
+      playerId: 'p1',
+      cardId: attackerId,
+      defendingPlayerId: 'p2',
+    })
+    next = gameReducer(next, { type: 'RESOLVE_COMBAT' })
+    expect(getPlayer(next, 'p2').life).toBe(38) // 40 - 2
+  })
+
+  it('assigns blocker damage correctly', () => {
+    let next = gameReducer(state, {
+      type: 'DECLARE_ATTACKER',
+      playerId: 'p1',
+      cardId: attackerId,
+      defendingPlayerId: 'p2',
+    })
+    next = gameReducer(next, {
+      type: 'ASSIGN_BLOCKER',
+      playerId: 'p2',
+      blockerId,
+      attackerId,
+    })
+    next = gameReducer(next, { type: 'RESOLVE_COMBAT' })
+
+    // Grizzly Bears (2/2) vs Wall (0/4)
+    // Attacker takes 0 damage, blocker takes 2 damage
+    // Neither dies (bears 2 < 2 toughness... wait, 2/2 attacked by 0/4)
+    // Actually: Wall deals 0 to Bears (markedDamage 0 < toughness 2, lives)
+    // Bears deals 2 to Wall (markedDamage 2 < toughness 4, lives)
+    // No creatures should die
+    expect(getPlayer(next, 'p2').life).toBe(40) // no unblocked damage
+  })
+
+  it('kills attacker when blocker has enough power', () => {
+    const bigBlocker = makeCard({ name: 'Big Blocker', power: 5, toughness: 5 })
+    state = {
+      ...state,
+      players: state.players.map(p =>
+        p.id === 'p2'
+          ? { ...p, zones: { ...p.zones, battlefield: [bigBlocker] } }
+          : p
+      ),
+    }
+
+    let next = gameReducer(state, {
+      type: 'DECLARE_ATTACKER',
+      playerId: 'p1',
+      cardId: attackerId,
+      defendingPlayerId: 'p2',
+    })
+    next = gameReducer(next, {
+      type: 'ASSIGN_BLOCKER',
+      playerId: 'p2',
+      blockerId: bigBlocker.instanceId,
+      attackerId,
+    })
+    next = gameReducer(next, { type: 'RESOLVE_COMBAT' })
+
+    // Bears (2/2) should die from 5 damage
+    const p1 = getPlayer(next, 'p1')
+    expect(p1.zones.battlefield.find(c => c.instanceId === attackerId)).toBeUndefined()
+    expect(p1.zones.graveyard.find(c => c.instanceId === attackerId)).toBeDefined()
+  })
+
+  it('rejects attack outside combat phase', () => {
+    const mainState = { ...state, currentPhase: 'main1' as const }
+    const next = gameReducer(mainState, {
+      type: 'DECLARE_ATTACKER',
+      playerId: 'p1',
+      cardId: attackerId,
+      defendingPlayerId: 'p2',
+    })
+    expect(next.combat.attackers).toHaveLength(0)
+  })
+
+  it('rejects attack by non-active player', () => {
+    const p2Turn = { ...state, currentTurnIndex: 1 }
+    const next = gameReducer(p2Turn, {
+      type: 'DECLARE_ATTACKER',
+      playerId: 'p1',
+      cardId: attackerId,
+      defendingPlayerId: 'p2',
+    })
+    expect(next.combat.attackers).toHaveLength(0)
+  })
+
+  it('removes attacker', () => {
+    let next = gameReducer(state, {
+      type: 'DECLARE_ATTACKER',
+      playerId: 'p1',
+      cardId: attackerId,
+      defendingPlayerId: 'p2',
+    })
+    expect(next.combat.attackers).toHaveLength(1)
+
+    next = gameReducer(next, { type: 'REMOVE_ATTACKER', playerId: 'p1', cardId: attackerId })
+    expect(next.combat.attackers).toHaveLength(0)
+    // Attacker should be untapped again
+    expect(getPlayer(next, 'p1').zones.battlefield[0].tapped).toBe(false)
+  })
+
+  it('transitions to main2 after combat resolves', () => {
+    let next = gameReducer(state, {
+      type: 'DECLARE_ATTACKER',
+      playerId: 'p1',
+      cardId: attackerId,
+      defendingPlayerId: 'p2',
+    })
+    next = gameReducer(next, { type: 'RESOLVE_COMBAT' })
+    expect(next.currentPhase).toBe('main2')
+    expect(next.combat.attackers).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Counters
+// ---------------------------------------------------------------------------
+
+describe('Player counters', () => {
+  let state: GameState
+
+  beforeEach(() => {
+    state = twoPlayerGame()
+  })
+
+  it('increments counters', () => {
+    const next = gameReducer(state, { type: 'COUNTER_CHANGE', targetId: 'p1', counter: 'experience', delta: 3 })
+    expect(getPlayer(next, 'p1').counters.experience).toBe(3)
+  })
+
+  it('does not go below zero', () => {
+    const next = gameReducer(state, { type: 'COUNTER_CHANGE', targetId: 'p1', counter: 'energy', delta: -5 })
+    expect(getPlayer(next, 'p1').counters.energy).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Monarch & Initiative
+// ---------------------------------------------------------------------------
+
+describe('Monarch', () => {
+  let state: GameState
+
+  beforeEach(() => {
+    state = twoPlayerGame()
+  })
+
+  it('sets monarch for one player', () => {
+    const next = gameReducer(state, { type: 'SET_MONARCH', playerId: 'p1' })
+    expect(getPlayer(next, 'p1').hasMonarch).toBe(true)
+    expect(getPlayer(next, 'p2').hasMonarch).toBe(false)
+  })
+
+  it('transfers monarch — only one player has it', () => {
+    let next = gameReducer(state, { type: 'SET_MONARCH', playerId: 'p1' })
+    next = gameReducer(next, { type: 'SET_MONARCH', playerId: 'p2' })
+    expect(getPlayer(next, 'p1').hasMonarch).toBe(false)
+    expect(getPlayer(next, 'p2').hasMonarch).toBe(true)
+  })
+
+  it('clears monarch', () => {
+    let next = gameReducer(state, { type: 'SET_MONARCH', playerId: 'p1' })
+    next = gameReducer(next, { type: 'CLEAR_MONARCH' })
+    expect(getPlayer(next, 'p1').hasMonarch).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Undo
+// ---------------------------------------------------------------------------
+
+describe('Undo', () => {
+  let state: GameState
+
+  beforeEach(() => {
+    state = twoPlayerGame()
+  })
+
+  it('undoes the last action', () => {
+    const next = gameReducer(state, { type: 'LIFE_CHANGE', targetId: 'p1', delta: -10 })
+    expect(getPlayer(next, 'p1').life).toBe(30)
+
+    const undone = gameReducer(next, { type: 'UNDO' })
+    expect(getPlayer(undone, 'p1').life).toBe(40)
+  })
+
+  it('undoes multiple actions in sequence', () => {
+    let next = gameReducer(state, { type: 'LIFE_CHANGE', targetId: 'p1', delta: -5 })
+    next = gameReducer(next, { type: 'LIFE_CHANGE', targetId: 'p1', delta: -3 })
+    expect(getPlayer(next, 'p1').life).toBe(32)
+
+    next = gameReducer(next, { type: 'UNDO' })
+    expect(getPlayer(next, 'p1').life).toBe(35)
+
+    next = gameReducer(next, { type: 'UNDO' })
+    expect(getPlayer(next, 'p1').life).toBe(40)
+  })
+
+  it('no-ops undo when nothing to undo', () => {
+    const next = gameReducer(state, { type: 'UNDO' })
+    expect(getPlayer(next, 'p1').life).toBe(40) // unchanged
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Card tapping
+// ---------------------------------------------------------------------------
+
+describe('Toggle card tapped', () => {
+  let state: GameState
+  let cardId: string
+
+  beforeEach(() => {
+    state = twoPlayerGame()
+    const card = makeCard({ name: 'Test Creature' })
+    cardId = card.instanceId
+    state = {
+      ...state,
+      players: state.players.map(p =>
+        p.id === 'p1'
+          ? { ...p, zones: { ...p.zones, battlefield: [card] } }
+          : p
+      ),
+    }
+  })
+
+  it('taps an untapped card', () => {
+    const next = gameReducer(state, { type: 'TOGGLE_CARD_TAPPED', playerId: 'p1', cardId })
+    expect(getPlayer(next, 'p1').zones.battlefield[0].tapped).toBe(true)
+  })
+
+  it('untaps a tapped card', () => {
+    let next = gameReducer(state, { type: 'TOGGLE_CARD_TAPPED', playerId: 'p1', cardId })
+    next = gameReducer(next, { type: 'TOGGLE_CARD_TAPPED', playerId: 'p1', cardId })
+    expect(getPlayer(next, 'p1').zones.battlefield[0].tapped).toBe(false)
+  })
+
+  it('rejects toggle by non-active player', () => {
+    const p2Turn = { ...state, currentTurnIndex: 1 }
+    const next = gameReducer(p2Turn, { type: 'TOGGLE_CARD_TAPPED', playerId: 'p1', cardId })
+    expect(getPlayer(next, 'p1').zones.battlefield[0].tapped).toBe(false) // unchanged
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Sequence number
+// ---------------------------------------------------------------------------
+
+describe('Action sequence', () => {
+  it('increments actionSeq on each action', () => {
+    let state = twoPlayerGame()
+    const seq0 = state.actionSeq
+
+    state = gameReducer(state, { type: 'LIFE_CHANGE', targetId: 'p1', delta: 1 })
+    expect(state.actionSeq).toBeGreaterThan(seq0)
+
+    const seq1 = state.actionSeq
+    state = gameReducer(state, { type: 'LIFE_CHANGE', targetId: 'p1', delta: 1 })
+    expect(state.actionSeq).toBeGreaterThan(seq1)
+  })
+})
