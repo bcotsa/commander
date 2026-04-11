@@ -556,6 +556,66 @@ describe('Stack and priority', () => {
   })
 })
 
+describe('Casting payments', () => {
+  it('only taps the caster mana sources when casting a spell', () => {
+    let state = twoPlayerGame()
+    const bolt = makeCard({
+      name: 'Lightning Bolt',
+      typeLine: 'Instant',
+      manaCost: '{R}',
+      oracleText: 'Lightning Bolt deals 3 damage to any target.',
+      power: null,
+      toughness: null,
+    })
+    const p1Mountain = makeLand({
+      name: 'P1 Mountain',
+      typeLine: 'Basic Land — Mountain',
+      oracleText: '{T}: Add {R}.',
+    })
+    const p2Mountain = makeLand({
+      name: 'P2 Mountain',
+      typeLine: 'Basic Land — Mountain',
+      oracleText: '{T}: Add {R}.',
+    })
+
+    state = {
+      ...state,
+      players: state.players.map(player => {
+        if (player.id === 'p1') {
+          return {
+            ...player,
+            zones: {
+              ...player.zones,
+              hand: [bolt],
+              lands: [p1Mountain],
+            },
+          }
+        }
+        if (player.id === 'p2') {
+          return {
+            ...player,
+            zones: {
+              ...player.zones,
+              lands: [p2Mountain],
+            },
+          }
+        }
+        return player
+      }),
+    }
+
+    const next = gameReducer(state, {
+      type: 'CAST_SPELL',
+      playerId: 'p1',
+      cardId: bolt.instanceId,
+      targetPlayerId: 'p2',
+    })
+
+    expect(getPlayer(next, 'p1').zones.lands[0]?.tapped).toBe(true)
+    expect(getPlayer(next, 'p2').zones.lands[0]?.tapped).toBe(false)
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Combat
 // ---------------------------------------------------------------------------

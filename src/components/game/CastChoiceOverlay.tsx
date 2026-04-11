@@ -52,6 +52,7 @@ export function CastChoiceOverlay({
     if (!canPay) return false
     if (!spec) return true
     if (spec.kind === 'sacrifice_cost') return Boolean(sacrificedCardId)
+    if (spec.kind === 'discard_cards') return selectedCardIds.length >= spec.min && selectedCardIds.length <= spec.max
     if (spec.kind === 'modal' && mode === 'damage') return Boolean(targetCardId)
     return true
   }, [canPay, mode, sacrificedCardId, spec, targetCardId])
@@ -64,7 +65,7 @@ export function CastChoiceOverlay({
         <div className="mb-4">
           <div className="text-lg font-semibold text-white">{card.name}</div>
           <div className="text-sm text-slate-400">
-            Choose spell options before casting
+            {player.name || `Player ${player.seat + 1}`} is casting this spell
           </div>
         </div>
 
@@ -123,6 +124,35 @@ export function CastChoiceOverlay({
                   {entry.name}
                 </button>
               ))}
+            </div>
+          </div>
+        )}
+
+        {spec?.kind === 'discard_cards' && (
+          <div className="mb-4">
+            <div className="mb-2 text-sm font-medium text-slate-200">Discard {spec.count} Cards</div>
+            <div className="grid max-h-48 gap-2 overflow-y-auto">
+              {handOptions.map(entry => {
+                const checked = selectedCardIds.includes(entry.instanceId)
+                return (
+                  <label key={entry.instanceId} className="flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {
+                        setSelectedCardIds(current =>
+                          checked
+                            ? current.filter(id => id !== entry.instanceId)
+                            : current.length >= spec.max
+                            ? current
+                            : [...current, entry.instanceId]
+                        )
+                      }}
+                    />
+                    <span>{entry.name}</span>
+                  </label>
+                )
+              })}
             </div>
           </div>
         )}

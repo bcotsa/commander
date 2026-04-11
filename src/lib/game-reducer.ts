@@ -1006,6 +1006,7 @@ function applyPlaneswalkerEffect(
     case 'proliferate':
       return { players, triggerOccurrences }
     case 'destroy_target_creature':
+    case 'destroy_target_creature_or_planeswalker':
     case 'destroy_target_nonland_permanent':
     case 'destroy_target_permanent': {
       const deadCard = targetBattlefieldOwner && targetCardId
@@ -1292,6 +1293,10 @@ function resolveTriggerEffect(effect: TriggerEffectDefinition, state: GameState,
 
   if (effect.kind === 'put_minus_one_counter_target_creature') {
     return { kind: 'put_minus_one_counter_target_creature', amount: effect.amount }
+  }
+
+  if (effect.kind === 'put_minus_one_counters_each_creature') {
+    return { kind: 'put_minus_one_counters_each_creature', amount: effect.amount }
   }
 
   if (effect.kind === 'return_graveyard_creature_to_battlefield') {
@@ -1760,6 +1765,29 @@ function resolveStackTop(state: GameState): GameState {
           }
         }
         break
+      case 'put_minus_one_counters_each_creature':
+        players = players.map(player => ({
+          ...player,
+          zones: {
+            ...player.zones,
+            battlefield: player.zones.battlefield.map(entry =>
+              isCreatureCard(entry) ? { ...entry, minusOneCounters: entry.minusOneCounters + effect.amount } : entry
+            ),
+          },
+        }))
+        for (const player of state.players) {
+          for (const card of player.zones.battlefield) {
+            if (!isCreatureCard(card)) continue
+            triggerOccurrences.push({
+              type: 'minus_one_counters_placed',
+              sourcePlayerId: stackItem.casterId,
+              controllerId: player.id,
+              card,
+              amount: effect.amount,
+            })
+          }
+        }
+        break
       case 'return_graveyard_creature_to_battlefield': {
         const result = reanimateFromGraveyard(players, stackItem.casterId, stackItem.targetCardId, 'battlefield', {
           tapped: effect.tapped,
@@ -1896,6 +1924,18 @@ function resolveStackTop(state: GameState): GameState {
           players = applyDamageToCreature(players, targetBattlefieldOwner.id, stackItem.targetCardId, 3, stackItem.casterId, stackItem.card)
         }
       }
+    } else if (stackItem.card.name === 'Cathartic Reunion') {
+      players = addSpellToCasterGraveyard(players).map(player => {
+        if (player.id !== stackItem.casterId) return player
+        return {
+          ...player,
+          zones: {
+            ...player.zones,
+            hand: [...player.zones.hand, ...player.zones.library.slice(0, 3)],
+            library: player.zones.library.slice(Math.min(3, player.zones.library.length)),
+          },
+        }
+      })
     } else {
     const definition = getSimpleSpellDefinition(stackItem.card)
     if (!definition) {
@@ -1967,6 +2007,7 @@ function resolveStackTop(state: GameState): GameState {
           }
           break
         case 'destroy_target_creature':
+        case 'destroy_target_creature_or_planeswalker':
         case 'destroy_target_nonland_permanent':
         case 'destroy_target_permanent': {
           const deadCard = targetBattlefieldOwner && stackItem.targetCardId
@@ -1974,11 +2015,19 @@ function resolveStackTop(state: GameState): GameState {
               targetBattlefieldOwner.zones.lands.find(entry => entry.instanceId === stackItem.targetCardId) ??
               null
             : null
-          players = addSpellToCasterGraveyard(players).map(player =>
-            player.id === targetBattlefieldOwner?.id && stackItem.targetCardId
-              ? moveBattlefieldCardToGraveyard(player, stackItem.targetCardId)
-              : player
-          )
+          players = addSpellToCasterGraveyard(players).map(player => {
+            let nextPlayer = player
+            if (player.id === targetBattlefieldOwner?.id && stackItem.targetCardId) {
+              nextPlayer = moveBattlefieldCardToGraveyard(nextPlayer, stackItem.targetCardId)
+            }
+            if (player.id === stackItem.casterId && definition.loseLife) {
+              nextPlayer = {
+                ...nextPlayer,
+                life: nextPlayer.life - definition.loseLife,
+              }
+            }
+            return nextPlayer
+          })
           if (deadCard && isCreatureCard(deadCard)) {
             triggerOccurrences.push({ type: 'creature_dies', controllerId: targetBattlefieldOwner!.id, card: deadCard })
           }
@@ -3341,6 +3390,10 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         const target = targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!target || !isCreatureCard(target)) return state
       }
+      if (ability.target === 'battlefield_creature_or_planeswalker') {
+        const target = targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
+        if (!target || (!isCreatureCard(target) && !isPlaneswalkerCard(target))) return state
+      }
       if (ability.target === 'battlefield_nonland_permanent') {
         const target = targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!target || !isNonlandPermanent(target)) return state
@@ -3617,7 +3670,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       if (!caster || !card || isPermanentCard(card) || isLandCard(card)) return state
 
       const definition = getSimpleSpellDefinition(card)
-      const supportsCustomChoiceSpell = ["Black Sun's Zenith", 'Painful Truths', 'Deadly Dispute', 'Cathartic Pyre'].includes(card.name)
+      const supportsCustomChoiceSpell = ["Black Sun's Zenith", 'Painful Truths', 'Deadly Dispute', 'Cathartic Pyre', 'Cathartic Reunion'].includes(card.name)
       if (!definition && !supportsCustomChoiceSpell) return state
 
       const targetPlayer = action.targetPlayerId
@@ -3634,6 +3687,12 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         const targetCard =
           targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!targetCard || !isCreatureCard(targetCard)) return state
+      }
+
+      if (definition?.target === 'battlefield_creature_or_planeswalker') {
+        const targetCard =
+          targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
+        if (!targetCard || (!isCreatureCard(targetCard) && !isPlaneswalkerCard(targetCard))) return state
       }
 
       if (definition?.target === 'battlefield_nonland_permanent') {
@@ -3683,6 +3742,11 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           if (!discardIds.every(id => caster.zones.hand.some(entry => entry.instanceId === id && entry.instanceId !== action.cardId))) return state
         }
       }
+      if (card.name === 'Cathartic Reunion') {
+        const discardIds = action.options?.selectedCardIds ?? []
+        if (discardIds.length !== 2) return state
+        if (!discardIds.every(id => caster.zones.hand.some(entry => entry.instanceId === id && entry.instanceId !== action.cardId))) return state
+      }
 
       const targetedBattlefieldCard =
         targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ??
@@ -3705,6 +3769,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         const sacTarget = action.options?.sacrificedCardId
           ? [...player.zones.battlefield, ...player.zones.lands].find(entry => entry.instanceId === action.options?.sacrificedCardId) ?? null
           : null
+        const discardIds = new Set(action.options?.selectedCardIds ?? [])
+        const discardedCards = player.zones.hand.filter(entry => discardIds.has(entry.instanceId) && entry.instanceId !== action.cardId)
         if (sacTarget) {
           sacrificedCard = sacTarget
         }
@@ -3719,7 +3785,11 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           manaPool: payment.manaPool,
           zones: {
             ...zonesAfterSacrifice,
-            hand: player.zones.hand.filter(entry => entry.instanceId !== action.cardId),
+            hand: player.zones.hand.filter(entry => entry.instanceId !== action.cardId && !discardIds.has(entry.instanceId)),
+            graveyard: [
+              ...zonesAfterSacrifice.graveyard,
+              ...discardedCards.map(entry => ({ ...entry, tapped: false, markedDamage: 0 })),
+            ],
           },
         }
       })

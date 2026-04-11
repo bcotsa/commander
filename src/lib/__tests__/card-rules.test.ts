@@ -8,6 +8,7 @@ import {
   formatManaPool,
   getLandManaOptions,
   getSimpleSpellDefinition,
+  getTriggeredAbilities,
 } from '../card-rules'
 import type { GameCard, ManaPool } from '@/types/game-state'
 
@@ -283,5 +284,38 @@ describe('getSimpleSpellDefinition', () => {
       oracleText: 'Do something completely custom.',
     }
     expect(getSimpleSpellDefinition(card)).toBeNull()
+  })
+
+  it('detects destroy target creature or planeswalker with life loss', () => {
+    const card = {
+      name: 'Infernal Grasp',
+      typeLine: 'Instant',
+      oracleText: 'Destroy target creature. You lose 2 life.',
+    }
+    const def = getSimpleSpellDefinition(card)
+    expect(def).not.toBeNull()
+    expect(def!.kind).toBe('destroy_target_creature')
+    if (def!.kind === 'destroy_target_creature') {
+      expect(def.loseLife).toBe(2)
+    }
+  })
+})
+
+describe('getTriggeredAbilities', () => {
+  it('parses generic ETB counter triggers', () => {
+    const abilities = getTriggeredAbilities({
+      name: 'Skinrender',
+      oracleText: 'When Skinrender enters the battlefield, put three -1/-1 counters on target creature.',
+    })
+    expect(abilities.some(ability => ability.event === 'enters_battlefield' && ability.target === 'battlefield_creature')).toBe(true)
+  })
+
+  it('parses enters-or-attacks token triggers', () => {
+    const abilities = getTriggeredAbilities({
+      name: 'Grave Titan',
+      oracleText: 'Whenever Grave Titan enters the battlefield or attacks, create two 2/2 black Zombie creature tokens.',
+    })
+    expect(abilities.some(ability => ability.event === 'enters_battlefield')).toBe(true)
+    expect(abilities.some(ability => ability.event === 'attacks')).toBe(true)
   })
 })

@@ -351,6 +351,22 @@ export function PlayerTile({
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null)
   const cardButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({})
 
+  function focusThisTile() {
+    window.dispatchEvent(new CustomEvent('commander:tile-focus', { detail: { playerId: player.id } }))
+  }
+
+  function selectCard(zone: ZoneName, card: GameCard) {
+    focusThisTile()
+    setPendingCastCard(null)
+    setSelected({ zone, card })
+  }
+
+  function openCastChoice(zone: ZoneName, card: GameCard) {
+    focusThisTile()
+    setSelected({ zone, card })
+    setPendingCastCard({ zone, card })
+  }
+
   const selectedIsLand = selected ? looksLikeLand(selected.card) : false
   const selectedIsPermanent = selected ? !selected.card.typeLine.toLowerCase().includes('instant') && !selected.card.typeLine.toLowerCase().includes('sorcery') : false
   const selectedIsCreature = selected ? selected.card.typeLine.toLowerCase().includes('creature') && selected.card.power !== null && selected.card.toughness !== null : false
@@ -373,6 +389,9 @@ export function PlayerTile({
     ? allPlayers.flatMap(otherPlayer => otherPlayer.zones.battlefield.filter(card => {
         if (selectedSpell.target === 'battlefield_creature') {
           return card.typeLine.toLowerCase().includes('creature')
+        }
+        if (selectedSpell.target === 'battlefield_creature_or_planeswalker') {
+          return card.typeLine.toLowerCase().includes('creature') || card.typeLine.toLowerCase().includes('planeswalker')
         }
         if (selectedSpell.target === 'creature_or_player') {
           return card.typeLine.toLowerCase().includes('creature') || card.typeLine.toLowerCase().includes('planeswalker')
@@ -417,6 +436,19 @@ export function PlayerTile({
   function registerCardRef(cardId: string, node: HTMLButtonElement | null) {
     cardButtonRefs.current[cardId] = node
   }
+
+  useEffect(() => {
+    const handleTileFocus = (event: Event) => {
+      const detail = (event as CustomEvent<{ playerId?: string }>).detail
+      if (detail?.playerId === player.id) return
+      setSelected(null)
+      setPendingCastCard(null)
+      setExpandedZone(null)
+    }
+
+    window.addEventListener('commander:tile-focus', handleTileFocus)
+    return () => window.removeEventListener('commander:tile-focus', handleTileFocus)
+  }, [player.id])
 
   useEffect(() => {
     if (!selected) {
@@ -512,7 +544,7 @@ export function PlayerTile({
             <button
               onClick={() => {
                 if (selectedCastChoiceSpec) {
-                  setPendingCastCard(selected)
+                  openCastChoice(selected.zone, selected.card)
                 } else {
                   onCastPermanent(card.instanceId)
                   setSelected(null)
@@ -528,7 +560,7 @@ export function PlayerTile({
             <button
               onClick={() => {
                 if (selectedCastChoiceSpec) {
-                  setPendingCastCard(selected)
+                  openCastChoice(selected.zone, selected.card)
                 } else {
                   onCastSpell(card.instanceId)
                   setSelected(null)
@@ -542,7 +574,7 @@ export function PlayerTile({
           )}
           {canControlPlayer && selected.zone === 'hand' && !selectedIsLand && !selectedIsPermanent && selectedCastChoiceSpec && (
             <button
-              onClick={() => setPendingCastCard(selected)}
+              onClick={() => openCastChoice(selected.zone, selected.card)}
               className="rounded-md bg-sky-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-sky-600"
             >
               Cast Spell…
@@ -600,7 +632,7 @@ export function PlayerTile({
             <button
               onClick={() => {
                 if (selectedCastChoiceSpec) {
-                  setPendingCastCard(selected)
+                  openCastChoice(selected.zone, selected.card)
                 } else {
                   onCastCommander(card.instanceId)
                   setSelected(null)
@@ -663,10 +695,11 @@ export function PlayerTile({
                   .map(target => (
                     <button
                       key={`${ability.id}-${target.instanceId}`}
-                      onClick={() => {
-                        onActivatePlaneswalkerAbility(card.instanceId, ability.id, target.instanceId)
-                        setSelected(null)
-                      }}
+                        onClick={() => {
+                          focusThisTile()
+                          onActivatePlaneswalkerAbility(card.instanceId, ability.id, target.instanceId)
+                          setSelected(null)
+                        }}
                       className="rounded-md bg-violet-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-violet-600"
                     >
                       {ability.label}: {target.name}
@@ -682,10 +715,11 @@ export function PlayerTile({
                   .map(target => (
                     <button
                       key={`${ability.id}-${target.instanceId}`}
-                      onClick={() => {
-                        onActivatePlaneswalkerAbility(card.instanceId, ability.id, target.instanceId)
-                        setSelected(null)
-                      }}
+                        onClick={() => {
+                          focusThisTile()
+                          onActivatePlaneswalkerAbility(card.instanceId, ability.id, target.instanceId)
+                          setSelected(null)
+                        }}
                       className="rounded-md bg-violet-700 px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-violet-600"
                     >
                       {ability.label}: {target.name}
@@ -700,6 +734,7 @@ export function PlayerTile({
                   <button
                     key={`${ability.id}-${target.instanceId}`}
                     onClick={() => {
+                      focusThisTile()
                       onActivatePlaneswalkerAbility(card.instanceId, ability.id, target.instanceId)
                       setSelected(null)
                     }}
@@ -715,6 +750,7 @@ export function PlayerTile({
                 <button
                   key={`${ability.id}-player-${otherPlayer.id}`}
                   onClick={() => {
+                    focusThisTile()
                     onActivatePlaneswalkerAbility(card.instanceId, ability.id, undefined, otherPlayer.id)
                     setSelected(null)
                   }}
@@ -730,6 +766,7 @@ export function PlayerTile({
                     <button
                       key={`${ability.id}-${target.instanceId}`}
                       onClick={() => {
+                        focusThisTile()
                         onActivatePlaneswalkerAbility(card.instanceId, ability.id, target.instanceId)
                         setSelected(null)
                       }}
@@ -755,6 +792,7 @@ export function PlayerTile({
                   <button
                     key={`${ability.id}-${target.instanceId}`}
                     onClick={() => {
+                      focusThisTile()
                       onActivatePlaneswalkerAbility(card.instanceId, ability.id, target.instanceId)
                       setSelected(null)
                     }}
@@ -1031,7 +1069,7 @@ export function PlayerTile({
                       <CardThumb
                         card={card}
                         selected={selected?.card.instanceId === card.instanceId}
-                        onClick={() => setSelected({ zone: 'commandZone', card })}
+                        onClick={() => selectCard('commandZone', card)}
                         buttonRef={(node) => registerCardRef(card.instanceId, node)}
                       />
                     </div>
@@ -1048,14 +1086,20 @@ export function PlayerTile({
               title="Graveyard"
               cards={graveyard}
               accentClass="border-emerald-900/70"
-              onOpen={() => setExpandedZone({ zone: 'graveyard', title: 'Graveyard' })}
+              onOpen={() => {
+                focusThisTile()
+                setExpandedZone({ zone: 'graveyard', title: 'Graveyard' })
+              }}
             />
 
             <ZonePilePreview
               title="Exile"
               cards={exile}
               accentClass="border-amber-900/70"
-              onOpen={() => setExpandedZone({ zone: 'exile', title: 'Exile' })}
+              onOpen={() => {
+                focusThisTile()
+                setExpandedZone({ zone: 'exile', title: 'Exile' })
+              }}
             />
           </div>
 
@@ -1064,7 +1108,7 @@ export function PlayerTile({
             cards={battlefield}
             empty="No permanents on battlefield"
             selectedCardId={selected?.card.instanceId ?? null}
-            onSelect={(card) => setSelected({ zone: 'battlefield', card })}
+            onSelect={(card) => selectCard('battlefield', card)}
             registerCardRef={registerCardRef}
             collapseTokens
           />
@@ -1074,7 +1118,7 @@ export function PlayerTile({
             cards={lands}
             empty="No lands in play"
             selectedCardId={selected?.card.instanceId ?? null}
-            onSelect={(card) => setSelected({ zone: 'lands', card })}
+            onSelect={(card) => selectCard('lands', card)}
             registerCardRef={registerCardRef}
           />
 
@@ -1083,7 +1127,7 @@ export function PlayerTile({
             cards={hand}
             empty="No cards in hand"
             selectedCardId={selected?.card.instanceId ?? null}
-            onSelect={(card) => setSelected({ zone: 'hand', card })}
+            onSelect={(card) => selectCard('hand', card)}
             registerCardRef={registerCardRef}
           />
         </div>

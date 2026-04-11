@@ -28,9 +28,10 @@ export type SimpleSpellDefinition =
   | { kind: 'draw_cards'; amount: number; loseLife?: number; target: 'none' }
   | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number | 'opponents'; tapped?: boolean; target: 'none' }
   | { kind: 'proliferate'; target: 'none' }
-  | { kind: 'destroy_target_creature'; target: 'battlefield_creature' }
-  | { kind: 'destroy_target_nonland_permanent'; target: 'battlefield_nonland_permanent' }
-  | { kind: 'destroy_target_permanent'; target: 'battlefield_permanent' }
+  | { kind: 'destroy_target_creature'; target: 'battlefield_creature'; loseLife?: number }
+  | { kind: 'destroy_target_creature_or_planeswalker'; target: 'battlefield_creature_or_planeswalker'; loseLife?: number }
+  | { kind: 'destroy_target_nonland_permanent'; target: 'battlefield_nonland_permanent'; loseLife?: number }
+  | { kind: 'destroy_target_permanent'; target: 'battlefield_permanent'; loseLife?: number }
   | { kind: 'damage_target_creature'; amount: number; target: 'battlefield_creature' }
   | { kind: 'damage_target_creature_or_player'; amount: number; target: 'creature_or_player' }
   | { kind: 'put_minus_one_counter_target_creature'; amount: number; target: 'battlefield_creature' }
@@ -42,6 +43,7 @@ export type SimpleSpellDefinition =
 export type CastChoiceSpec =
   | { kind: 'x_value'; title: string; min: number; max: number }
   | { kind: 'sacrifice_cost'; title: string; filter: 'artifact_or_creature' }
+  | { kind: 'discard_cards'; title: string; count: number; min: number; max: number }
   | { kind: 'modal'; title: string; modes: Array<{ id: string; label: string }> }
 
 export type ActivatedAbilityDefinition =
@@ -61,7 +63,7 @@ export interface PlaneswalkerAbilityDefinition {
   id: string
   label: string
   loyaltyDelta: number
-  target: 'none' | 'battlefield_creature' | 'battlefield_nonland_permanent' | 'battlefield_permanent' | 'creature_or_player' | GraveyardTargetType
+  target: 'none' | 'battlefield_creature' | 'battlefield_creature_or_planeswalker' | 'battlefield_nonland_permanent' | 'battlefield_permanent' | 'creature_or_player' | GraveyardTargetType
   effect: PlaneswalkerAbilityEffect | null
   supported: boolean
 }
@@ -86,6 +88,7 @@ export type TriggerEffectDefinition =
   | { kind: 'gain_life'; amount: number }
   | { kind: 'proliferate' }
   | { kind: 'put_minus_one_counter_target_creature'; amount: number }
+  | { kind: 'put_minus_one_counters_each_creature'; amount: number }
   | { kind: 'return_graveyard_creature_to_battlefield'; target: GraveyardTargetType; tapped?: boolean; minusOneCounters?: number; exileOnLeave?: boolean }
   | { kind: 'return_graveyard_creature_to_hand'; target: GraveyardTargetType }
   | { kind: 'persist_self' }
@@ -542,6 +545,10 @@ export function getCastChoiceSpec(card: Pick<GameCard, 'name' | 'manaCost'>, _pl
 
   if (card.name === 'Deadly Dispute') {
     return { kind: 'sacrifice_cost', title: card.name, filter: 'artifact_or_creature' }
+  }
+
+  if (card.name === 'Cathartic Reunion') {
+    return { kind: 'discard_cards', title: card.name, count: 2, min: 2, max: 2 }
   }
 
   if (card.name === 'Cathartic Pyre') {
@@ -1029,6 +1036,50 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
     }
   }
 
+  const genericEtbEffect = parseTriggeredSimpleEffect(oracleText, /(?:when|whenever) [^.,]* enters(?: the battlefield)?, ([^.]+)/i)
+  if (genericEtbEffect) {
+    abilities.push({
+      id: 'generic-etb-effect',
+      label: 'ETB trigger',
+      event: 'enters_battlefield',
+      match: 'self',
+      effect: genericEtbEffect.effect,
+      target: genericEtbEffect.target,
+    })
+  }
+
+  const genericAttackEffect = parseTriggeredSimpleEffect(oracleText, /(?:when|whenever) [^.,]* attacks, ([^.]+)/i)
+  if (genericAttackEffect) {
+    abilities.push({
+      id: 'generic-attack-effect',
+      label: 'Attack trigger',
+      event: 'attacks',
+      match: 'self',
+      effect: genericAttackEffect.effect,
+      target: genericAttackEffect.target,
+    })
+  }
+
+  const genericEtbOrAttackEffect = parseTriggeredSimpleEffect(oracleText, /(?:when|whenever) [^.,]* enters(?: the battlefield)? or attacks, ([^.]+)/i)
+  if (genericEtbOrAttackEffect) {
+    abilities.push({
+      id: 'generic-etb-or-attack-effect-etb',
+      label: 'ETB trigger',
+      event: 'enters_battlefield',
+      match: 'self',
+      effect: genericEtbOrAttackEffect.effect,
+      target: genericEtbOrAttackEffect.target,
+    })
+    abilities.push({
+      id: 'generic-etb-or-attack-effect-attack',
+      label: 'Attack trigger',
+      event: 'attacks',
+      match: 'self',
+      effect: genericEtbOrAttackEffect.effect,
+      target: genericEtbOrAttackEffect.target,
+    })
+  }
+
   return abilities
 }
 
@@ -1038,7 +1089,7 @@ export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine
 
   const oracleText = (card.oracleText ?? '').replace(/\n/g, ' ').toLowerCase()
 
-  const drawMatch = oracleText.match(/draw (one|two|three|four|five|six|seven|\d+) cards?/)
+  const drawMatch = oracleText.match(/draw (a|one|two|three|four|five|six|seven|\d+) cards?/)
   if (drawMatch) {
     const amount = wordToNumber(drawMatch[1] ?? '0')
     const loseLifeMatch = oracleText.match(/lose (\d+) life/)
@@ -1079,20 +1130,46 @@ export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine
     return { kind: 'put_minus_one_counter_target_creature', amount, target: 'battlefield_creature' }
   }
 
+  const loseLifeMatch = oracleText.match(/you lose (\d+) life/)
+
+  if (oracleText.includes('destroy target creature or planeswalker')) {
+    return {
+      kind: 'destroy_target_creature_or_planeswalker',
+      target: 'battlefield_creature_or_planeswalker',
+      loseLife: loseLifeMatch ? Number(loseLifeMatch[1]) : undefined,
+    }
+  }
+
   if (oracleText.includes('destroy target creature')) {
-    return { kind: 'destroy_target_creature', target: 'battlefield_creature' }
+    return {
+      kind: 'destroy_target_creature',
+      target: 'battlefield_creature',
+      loseLife: loseLifeMatch ? Number(loseLifeMatch[1]) : undefined,
+    }
   }
 
   if (oracleText.includes('destroy target nonland permanent')) {
-    return { kind: 'destroy_target_nonland_permanent', target: 'battlefield_nonland_permanent' }
+    return {
+      kind: 'destroy_target_nonland_permanent',
+      target: 'battlefield_nonland_permanent',
+      loseLife: loseLifeMatch ? Number(loseLifeMatch[1]) : undefined,
+    }
   }
 
   if (oracleText.includes('destroy target permanent')) {
-    return { kind: 'destroy_target_permanent', target: 'battlefield_permanent' }
+    return {
+      kind: 'destroy_target_permanent',
+      target: 'battlefield_permanent',
+      loseLife: loseLifeMatch ? Number(loseLifeMatch[1]) : undefined,
+    }
   }
 
   if (oracleText.includes('destroy target artifact or creature')) {
-    return { kind: 'destroy_target_nonland_permanent', target: 'battlefield_nonland_permanent' }
+    return {
+      kind: 'destroy_target_nonland_permanent',
+      target: 'battlefield_nonland_permanent',
+      loseLife: loseLifeMatch ? Number(loseLifeMatch[1]) : undefined,
+    }
   }
 
   const damageCreatureOrPlayer = oracleText.match(/deals? (\d+) damage to target creature or player/)
@@ -1287,6 +1364,8 @@ function wordToNumber(value: string): number {
   if (Number.isFinite(numeric)) return numeric
 
   const map: Record<string, number> = {
+    a: 1,
+    an: 1,
     one: 1,
     two: 2,
     three: 3,
@@ -1298,14 +1377,54 @@ function wordToNumber(value: string): number {
   return map[value] ?? 0
 }
 
+function simpleSpellToTriggerEffect(definition: SimpleSpellDefinition): { effect: TriggerEffectDefinition; target: TriggeredAbilityDefinition['target'] } | null {
+  switch (definition.kind) {
+    case 'create_tokens':
+      return { effect: definition, target: 'none' }
+    case 'draw_cards':
+      return { effect: { kind: 'draw_cards', amount: definition.amount }, target: 'none' }
+    case 'proliferate':
+      return { effect: { kind: 'proliferate' }, target: 'none' }
+    case 'put_minus_one_counter_target_creature':
+      return { effect: definition, target: 'battlefield_creature' }
+    case 'put_minus_one_counters_each_creature':
+      return { effect: definition, target: 'none' }
+    case 'return_graveyard_creature_to_battlefield':
+      return { effect: definition, target: definition.target }
+    case 'return_graveyard_creature_to_hand':
+      return { effect: definition, target: definition.target }
+    default:
+      return null
+  }
+}
+
+function parseTriggeredSimpleEffect(
+  oracleText: string,
+  pattern: RegExp
+): { effect: TriggerEffectDefinition; target: TriggeredAbilityDefinition['target'] } | null {
+  const match = oracleText.match(pattern)
+  if (!match?.[1]) return null
+
+  const body = match[1].trim()
+  const simpleEffect = getSimpleSpellDefinition({
+    name: '',
+    typeLine: 'Sorcery',
+    oracleText: body,
+  })
+  if (!simpleEffect) return null
+
+  return simpleSpellToTriggerEffect(simpleEffect)
+}
+
 function parseCreateTokenEffect(
   oracleText: string,
   pattern: RegExp
 ): Extract<TriggerEffectDefinition, { kind: 'create_tokens' }> | null {
   const match = oracleText.match(pattern)
-  if (!match?.[2]) return null
+  const fragmentMatch = match?.[match.length - 1]
+  if (!fragmentMatch) return null
 
-  const fragment = match[2].trim().toLowerCase()
+  const fragment = fragmentMatch.trim().toLowerCase()
   if (fragment.startsWith('x ')) return null
 
   const countMatch = fragment.match(/^(a|an|one|two|three|four|five|six|seven|\d+)\b/)

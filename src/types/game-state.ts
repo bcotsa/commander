@@ -88,6 +88,7 @@ export type TriggerEffectPayload =
   | { kind: 'gain_life'; amount: number }
   | { kind: 'proliferate' }
   | { kind: 'put_minus_one_counter_target_creature'; amount: number }
+  | { kind: 'put_minus_one_counters_each_creature'; amount: number }
   | { kind: 'return_graveyard_creature_to_battlefield'; target: GraveyardTargetType; tapped?: boolean; minusOneCounters?: number; exileOnLeave?: boolean }
   | { kind: 'return_graveyard_creature_to_hand'; target: GraveyardTargetType }
   | { kind: 'drain_each_opponent'; amount: number; gainLife: number }
