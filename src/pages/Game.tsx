@@ -6,6 +6,7 @@ import { LandEffectOverlay } from '@/components/game/LandEffectOverlay'
 import { LibrarySearchOverlay } from '@/components/game/LibrarySearchOverlay'
 import { MulliganOverlay } from '@/components/game/MulliganOverlay'
 import { ProliferateChoiceOverlay } from '@/components/game/ProliferateChoiceOverlay'
+import { ScryChoiceOverlay } from '@/components/game/ScryChoiceOverlay'
 import { StackPanel } from '@/components/game/StackPanel'
 import { TriggerTargetOverlay } from '@/components/game/TriggerTargetOverlay'
 import { TurnTracker } from '@/components/game/TurnTracker'
@@ -164,6 +165,21 @@ export function Game() {
             type: 'RESOLVE_EXPLORE_CHOICE',
             playerId: state.pendingExploreChoice?.playerId ?? myPlayerId,
             putInGraveyard,
+          })}
+        />
+      )}
+
+      {state.pendingScryChoice && (
+        <ScryChoiceOverlay
+          choice={state.pendingScryChoice}
+          players={state.players}
+          myPlayerId={myPlayerId}
+          canControlAllPlayers={Boolean(isHost && state.hostControlsAllPlayers)}
+          onConfirm={(topCardIds, bottomCardIds) => sendAction({
+            type: 'RESOLVE_SCRY_CHOICE',
+            playerId: state.pendingScryChoice?.playerId ?? myPlayerId,
+            topCardIds,
+            bottomCardIds,
           })}
         />
       )}

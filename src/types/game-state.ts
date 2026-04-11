@@ -86,6 +86,7 @@ export type TriggerEffectPayload =
   | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number; tapped?: boolean }
   | { kind: 'draw_cards'; amount: number }
   | { kind: 'gain_life'; amount: number }
+  | { kind: 'scry'; amount: number }
   | { kind: 'proliferate' }
   | { kind: 'put_minus_one_counter_target_creature'; amount: number }
   | { kind: 'put_minus_one_counters_each_creature'; amount: number }
@@ -170,6 +171,7 @@ export interface GameState {
   pendingLandEffectChoice: LandEffectChoiceState | null
   pendingLibrarySearchChoice: LibrarySearchChoiceState | null
   pendingExploreChoice: ExploreChoiceState | null
+  pendingScryChoice: ScryChoiceState | null
   pendingProliferateChoice: ProliferateChoiceState | null
   pendingTriggerTargetChoice: TriggerTargetChoiceState | null
   priorityPlayerId: string | null
@@ -214,6 +216,13 @@ export interface ExploreChoiceState {
   sourceCardId: string
   targetCardId: string
   revealedCard: GameCard
+}
+
+export interface ScryChoiceState {
+  playerId: string
+  sourceName: string
+  amount: number
+  revealedCards: GameCard[]
 }
 
 export interface ProliferateChoiceState {
@@ -273,6 +282,7 @@ export type ActionPayload =
   | { type: 'RESOLVE_LIBRARY_SEARCH'; playerId: string; sourceCardId: string; targetCardId?: string }
   | { type: 'RESOLVE_LAND_EFFECT'; playerId: string; sourceCardId: string; effect: 'bounce_land' | 'exile_graveyard'; targetCardId?: string; targetPlayerId?: string }
   | { type: 'RESOLVE_EXPLORE_CHOICE'; playerId: string; putInGraveyard: boolean }
+  | { type: 'RESOLVE_SCRY_CHOICE'; playerId: string; topCardIds: string[]; bottomCardIds: string[] }
   | { type: 'RESOLVE_PROLIFERATE_CHOICE'; playerId: string; targetPlayerIds: string[]; targetCardIds: string[] }
   | { type: 'SET_TRIGGER_TARGET'; playerId: string; stackItemId: string; targetCardId: string }
   | { type: 'PLAY_LAND'; playerId: string; cardId: string }

@@ -6,6 +6,7 @@ import {
   canPayManaCost,
   autoPayManaCost,
   formatManaPool,
+  getLandEntryEffect,
   getLandManaOptions,
   getSimpleSpellDefinition,
   getTriggeredAbilities,
@@ -268,6 +269,20 @@ describe('getSimpleSpellDefinition', () => {
     }
   })
 
+  it('detects scry spells', () => {
+    const card = {
+      name: 'Crystal Ball Effect',
+      typeLine: 'Sorcery',
+      oracleText: 'Scry 2.',
+    }
+    const def = getSimpleSpellDefinition(card)
+    expect(def).not.toBeNull()
+    expect(def!.kind).toBe('scry')
+    if (def!.kind === 'scry') {
+      expect(def.amount).toBe(2)
+    }
+  })
+
   it('returns null for permanents', () => {
     const card = {
       name: 'Grizzly Bears',
@@ -317,5 +332,24 @@ describe('getTriggeredAbilities', () => {
     })
     expect(abilities.some(ability => ability.event === 'enters_battlefield')).toBe(true)
     expect(abilities.some(ability => ability.event === 'attacks')).toBe(true)
+  })
+
+  it('parses generic ETB scry triggers', () => {
+    const abilities = getTriggeredAbilities({
+      name: 'Watcher for Tomorrow',
+      oracleText: 'When Watcher for Tomorrow enters the battlefield, scry 3.',
+    })
+    expect(abilities.some(ability => ability.event === 'enters_battlefield' && ability.effect.kind === 'scry')).toBe(true)
+  })
+})
+
+describe('getLandEntryEffect', () => {
+  it('detects lands that scry on entry', () => {
+    const effect = getLandEntryEffect({
+      name: 'Temple of Malady',
+      typeLine: 'Land',
+      oracleText: 'Temple of Malady enters the battlefield tapped. When Temple of Malady enters the battlefield, scry 1.',
+    })
+    expect(effect).toEqual({ kind: 'scry', amount: 1 })
   })
 })

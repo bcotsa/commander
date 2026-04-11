@@ -27,6 +27,7 @@ function looksLikeLandByText(card: Pick<GameCard, 'typeLine' | 'oracleText' | 'm
 export type SimpleSpellDefinition =
   | { kind: 'draw_cards'; amount: number; loseLife?: number; target: 'none' }
   | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number | 'opponents'; tapped?: boolean; target: 'none' }
+  | { kind: 'scry'; amount: number; target: 'none' }
   | { kind: 'proliferate'; target: 'none' }
   | { kind: 'destroy_target_creature'; target: 'battlefield_creature'; loseLife?: number }
   | { kind: 'destroy_target_creature_or_planeswalker'; target: 'battlefield_creature_or_planeswalker'; loseLife?: number }
@@ -86,6 +87,7 @@ export type TriggerEffectDefinition =
   | { kind: 'create_tokens_from_counter_placement'; tokenKey: TokenTemplateKey; mode: 'once' | 'per_counter'; tapped?: boolean }
   | { kind: 'draw_cards'; amount: number }
   | { kind: 'gain_life'; amount: number }
+  | { kind: 'scry'; amount: number }
   | { kind: 'proliferate' }
   | { kind: 'put_minus_one_counter_target_creature'; amount: number }
   | { kind: 'put_minus_one_counters_each_creature'; amount: number }
@@ -118,6 +120,7 @@ export interface TriggeredAbilityDefinition {
 
 export type LandEntryEffectDefinition =
   | { kind: 'gain_life'; amount: number }
+  | { kind: 'scry'; amount: number }
   | { kind: 'bounce_land' }
   | { kind: 'exile_graveyard' }
 
@@ -956,6 +959,18 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
     })
   }
 
+  const creatureEntersScry = oracleText.match(/whenever another creature enters the battlefield under your control, scry (\d+)/)
+  if (creatureEntersScry) {
+    abilities.push({
+      id: 'creature-enters-scry',
+      label: 'Creature ETB trigger',
+      event: 'creature_enters',
+      match: 'another_creature_you_control_enters',
+      effect: { kind: 'scry', amount: Number(creatureEntersScry[1]) },
+      target: 'none',
+    })
+  }
+
   if (oracleText.includes('whenever you cast a spell, create')) {
     const castTokens = parseCreateTokenEffect(oracleText, /whenever you cast a spell, create ([^.]+?) tokens?/i)
     if (castTokens) {
@@ -977,6 +992,18 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       event: 'spell_cast',
       match: 'spell_you_cast',
       effect: { kind: 'draw_cards', amount: 1 },
+      target: 'none',
+    })
+  }
+
+  const castScry = oracleText.match(/whenever you cast a spell, scry (\d+)/)
+  if (castScry) {
+    abilities.push({
+      id: 'cast-scry',
+      label: 'Cast trigger',
+      event: 'spell_cast',
+      match: 'spell_you_cast',
+      effect: { kind: 'scry', amount: Number(castScry[1]) },
       target: 'none',
     })
   }
@@ -1114,6 +1141,11 @@ export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine
 
   if (oracleText.includes('proliferate')) {
     return { kind: 'proliferate', target: 'none' }
+  }
+
+  const scryMatch = oracleText.match(/scry (\d+)/)
+  if (scryMatch) {
+    return { kind: 'scry', amount: Number(scryMatch[1]), target: 'none' }
   }
 
   const minusOneEach = oracleText.match(/put (a|one|two|three|four|five|six|seven|\d+) -1\/-1 counters? on each creature/)
@@ -1348,6 +1380,11 @@ export function getLandEntryEffect(card: Pick<GameCard, 'name' | 'typeLine' | 'o
     return { kind: 'gain_life', amount: Number(gainLifeMatch[1]) }
   }
 
+  const scryMatch = oracleText.match(/when [^.,]* enters(?: the battlefield)?, scry (\d+)/)
+  if (scryMatch) {
+    return { kind: 'scry', amount: Number(scryMatch[1]) }
+  }
+
   if (oracleText.includes('return a land you control to its owner\'s hand')) {
     return { kind: 'bounce_land' }
   }
@@ -1383,6 +1420,8 @@ function simpleSpellToTriggerEffect(definition: SimpleSpellDefinition): { effect
       return { effect: definition, target: 'none' }
     case 'draw_cards':
       return { effect: { kind: 'draw_cards', amount: definition.amount }, target: 'none' }
+    case 'scry':
+      return { effect: { kind: 'scry', amount: definition.amount }, target: 'none' }
     case 'proliferate':
       return { effect: { kind: 'proliferate' }, target: 'none' }
     case 'put_minus_one_counter_target_creature':

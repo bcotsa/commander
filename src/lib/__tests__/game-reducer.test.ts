@@ -954,6 +954,85 @@ describe('Toggle card tapped', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Scry
+// ---------------------------------------------------------------------------
+
+describe('Scry choices', () => {
+  it('reorders revealed cards on top and bottom of the library', () => {
+    const libraryTop = makeCard({ instanceId: 'top-a', name: 'Top A' })
+    const librarySecond = makeCard({ instanceId: 'top-b', name: 'Top B' })
+    const libraryRest = makeCard({ instanceId: 'rest-c', name: 'Rest C' })
+    const base = twoPlayerGame()
+    const state = {
+      ...base,
+      pendingScryChoice: {
+        playerId: 'p1',
+        sourceName: 'Temple of Testing',
+        amount: 2,
+        revealedCards: [libraryTop, librarySecond],
+      },
+      players: base.players.map(player =>
+        player.id === 'p1'
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                library: [libraryTop, librarySecond, libraryRest],
+              },
+            }
+          : player
+      ),
+    }
+
+    const next = gameReducer(state, {
+      type: 'RESOLVE_SCRY_CHOICE',
+      playerId: 'p1',
+      topCardIds: [librarySecond.instanceId],
+      bottomCardIds: [libraryTop.instanceId],
+    })
+
+    expect(next.pendingScryChoice).toBeNull()
+    expect(getPlayer(next, 'p1').zones.library.map(card => card.name)).toEqual(['Top B', 'Rest C', 'Top A'])
+  })
+
+  it('rejects scry choices that do not include every revealed card', () => {
+    const libraryTop = makeCard({ instanceId: 'top-a', name: 'Top A' })
+    const librarySecond = makeCard({ instanceId: 'top-b', name: 'Top B' })
+    const base = twoPlayerGame()
+    const state = {
+      ...base,
+      pendingScryChoice: {
+        playerId: 'p1',
+        sourceName: 'Temple of Testing',
+        amount: 2,
+        revealedCards: [libraryTop, librarySecond],
+      },
+      players: base.players.map(player =>
+        player.id === 'p1'
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                library: [libraryTop, librarySecond],
+              },
+            }
+          : player
+      ),
+    }
+
+    const next = gameReducer(state, {
+      type: 'RESOLVE_SCRY_CHOICE',
+      playerId: 'p1',
+      topCardIds: [librarySecond.instanceId],
+      bottomCardIds: [],
+    })
+
+    expect(next.pendingScryChoice).not.toBeNull()
+    expect(getPlayer(next, 'p1').zones.library.map(card => card.name)).toEqual(['Top A', 'Top B'])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Sequence number
 // ---------------------------------------------------------------------------
 

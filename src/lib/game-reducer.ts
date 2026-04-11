@@ -21,6 +21,7 @@ export function createInitialGameState(roomCode: string, roomId = ''): GameState
     pendingLandEffectChoice: null,
     pendingLibrarySearchChoice: null,
     pendingExploreChoice: null,
+    pendingScryChoice: null,
     pendingProliferateChoice: null,
     pendingTriggerTargetChoice: null,
     priorityPlayerId: null,
@@ -167,6 +168,21 @@ function createTokensForPlayer(player: Player, tokenKey: TokenTemplateKey, count
   return totalTokens
 }
 
+function createScryChoice(players: Player[], playerId: string, sourceName: string, amount: number): GameState['pendingScryChoice'] {
+  const player = players.find(entry => entry.id === playerId)
+  if (!player || amount <= 0) return null
+
+  const revealedCards = player.zones.library.slice(0, amount).map(card => ({ ...card }))
+  if (revealedCards.length === 0) return null
+
+  return {
+    playerId,
+    sourceName,
+    amount,
+    revealedCards,
+  }
+}
+
 function shuffleCards<T>(cards: T[]): T[] {
   const next = [...cards]
   for (let i = next.length - 1; i > 0; i--) {
@@ -253,6 +269,7 @@ function beginActiveGame(state: GameState): GameState {
     pendingLandEffectChoice: null,
     pendingLibrarySearchChoice: null,
     pendingExploreChoice: null,
+    pendingScryChoice: null,
     pendingProliferateChoice: null,
     pendingTriggerTargetChoice: null,
     priorityPlayerId: null,
@@ -1003,6 +1020,8 @@ function applyPlaneswalkerEffect(
       }
       return { players: nextPlayers, triggerOccurrences }
     }
+    case 'scry':
+      return { players, triggerOccurrences }
     case 'proliferate':
       return { players, triggerOccurrences }
     case 'destroy_target_creature':
@@ -1285,6 +1304,10 @@ function resolveTriggerEffect(effect: TriggerEffectDefinition, state: GameState,
 
   if (effect.kind === 'gain_life') {
     return { kind: 'gain_life', amount: effect.amount }
+  }
+
+  if (effect.kind === 'scry') {
+    return { kind: 'scry', amount: effect.amount }
   }
 
   if (effect.kind === 'proliferate') {
@@ -1633,6 +1656,7 @@ function resolveStackTop(state: GameState): GameState {
     },
   }))
   const triggerOccurrences: TriggerOccurrence[] = []
+  let pendingScryChoice = state.pendingScryChoice
   let pendingProliferateChoice = state.pendingProliferateChoice
 
   const targetPlayer = stackItem.targetPlayerId
@@ -1731,6 +1755,9 @@ function resolveStackTop(state: GameState): GameState {
             ? { ...player, life: playerCanGainLife(players, stackItem.casterId) ? player.life + effect.amount : player.life }
             : player
         )
+        break
+      case 'scry':
+        pendingScryChoice = createScryChoice(players, stackItem.casterId, stackItem.card.name, effect.amount)
         break
       case 'proliferate':
         pendingProliferateChoice = {
@@ -1999,6 +2026,10 @@ function resolveStackTop(state: GameState): GameState {
           }
           break
         }
+        case 'scry':
+          players = addSpellToCasterGraveyard(players)
+          pendingScryChoice = createScryChoice(players, stackItem.casterId, stackItem.card.name, definition.amount)
+          break
         case 'proliferate':
           players = addSpellToCasterGraveyard(players)
           pendingProliferateChoice = {
@@ -2144,6 +2175,7 @@ function resolveStackTop(state: GameState): GameState {
     ...state,
     players: cleaned.players,
     stack: state.stack.slice(0, -1),
+    pendingScryChoice,
     pendingProliferateChoice,
     pendingTriggerTargetChoice: getPendingTriggerTargetChoice(state.stack.slice(0, -1)),
     priorityPlayerId: state.turnOrder[state.currentTurnIndex] ?? null,
@@ -2229,6 +2261,10 @@ function describe(state: GameState, action: ActionPayload): string {
     case 'RESOLVE_EXPLORE_CHOICE': {
       const choice = state.pendingExploreChoice
       return `${player(action.playerId)} chose to ${action.putInGraveyard ? 'put' : 'leave'} ${choice?.revealedCard.name ?? 'the revealed card'} ${action.putInGraveyard ? 'in the graveyard' : 'on top'}`
+    }
+    case 'RESOLVE_SCRY_CHOICE': {
+      const choice = state.pendingScryChoice
+      return `${player(action.playerId)} resolved ${choice?.sourceName ?? 'scry'}`
     }
     case 'RESOLVE_PROLIFERATE_CHOICE':
       return `${player(action.playerId)} proliferated`
@@ -2336,6 +2372,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
     'RESET_GAME',
     'RESOLVE_LIBRARY_SEARCH',
     'RESOLVE_EXPLORE_CHOICE',
+    'RESOLVE_SCRY_CHOICE',
     'RESOLVE_PROLIFERATE_CHOICE',
     'SET_TRIGGER_TARGET',
     'RESOLVE_LAND_EFFECT',
@@ -2370,6 +2407,20 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       'RESET_GAME',
     ])
     if (!allowedDuringExploreChoice.has(action.type)) {
+      return state
+    }
+  }
+
+  if (state.pendingScryChoice) {
+    const allowedDuringScryChoice = new Set<ActionPayload['type']>([
+      'RESOLVE_SCRY_CHOICE',
+      'PLAYER_CONNECTED',
+      'PLAYER_JOIN',
+      'SET_PLAYER_NAME',
+      'UNDO',
+      'RESET_GAME',
+    ])
+    if (!allowedDuringScryChoice.has(action.type)) {
       return state
     }
   }
@@ -2472,6 +2523,50 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         ...state,
         players,
         pendingExploreChoice: null,
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }
+    }
+
+    case 'RESOLVE_SCRY_CHOICE': {
+      const choice = state.pendingScryChoice
+      if (!choice || choice.playerId !== action.playerId) return state
+
+      const revealedIds = choice.revealedCards.map(card => card.instanceId)
+      const revealedIdSet = new Set(revealedIds)
+      const chosenIds = [...action.topCardIds, ...action.bottomCardIds]
+      const chosenIdSet = new Set(chosenIds)
+      if (chosenIds.length !== revealedIds.length || chosenIdSet.size !== revealedIds.length) return state
+      if (!revealedIds.every(id => chosenIdSet.has(id))) return state
+
+      const revealedById = new Map(choice.revealedCards.map(card => [card.instanceId, card]))
+      const topCards = action.topCardIds.map(id => revealedById.get(id)).filter((card): card is GameCard => Boolean(card))
+      const bottomCards = action.bottomCardIds.map(id => revealedById.get(id)).filter((card): card is GameCard => Boolean(card))
+      if (topCards.length + bottomCards.length !== revealedIds.length) return state
+
+      const players = state.players.map(player => {
+        if (player.id !== action.playerId) return player
+        const remainingLibrary = player.zones.library.filter(card => !revealedIdSet.has(card.instanceId))
+        return {
+          ...player,
+          zones: {
+            ...player.zones,
+            library: [...topCards, ...remainingLibrary, ...bottomCards],
+          },
+        }
+      })
+
+      return {
+        ...state,
+        players,
+        pendingScryChoice: null,
         actionSeq: state.actionSeq + 1,
         log: appendLog(state.log, {
           timestamp: new Date().toISOString(),
@@ -3457,10 +3552,14 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
 
       let triggerOccurrences: TriggerOccurrence[] = []
       let manualOnly = !ability.supported || !ability.effect
+      let pendingScryChoice = state.pendingScryChoice
       if (ability.supported && ability.effect) {
         const resolved = applyPlaneswalkerEffect(players, action.playerId, ability.effect, action.targetCardId, action.targetPlayerId)
         players = resolved.players
         triggerOccurrences = resolved.triggerOccurrences
+        if (ability.effect.kind === 'scry') {
+          pendingScryChoice = createScryChoice(players, action.playerId, card.name, ability.effect.amount)
+        }
         manualOnly = false
       }
 
@@ -3470,6 +3569,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       const nextState = queueTriggeredAbilities({
         ...state,
         players: cleaned.players,
+        pendingScryChoice,
         actionSeq: state.actionSeq + 1,
         log: appendLog(state.log, {
           timestamp: new Date().toISOString(),
@@ -3492,6 +3592,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
 
       let changed = false
       let pendingLandEffectChoice = state.pendingLandEffectChoice
+      let pendingScryChoice = state.pendingScryChoice
       const triggerOccurrences: TriggerOccurrence[] = []
       const players = state.players.map(player => {
         if (player.id !== action.playerId || player.landsPlayedThisTurn >= 1) return player
@@ -3508,6 +3609,9 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
             sourceName: card.name,
             effect: entryEffect.kind,
           }
+        }
+        if (entryEffect?.kind === 'scry') {
+          pendingScryChoice = createScryChoice(state.players, player.id, card.name, entryEffect.amount)
         }
         changed = true
         triggerOccurrences.push({ type: 'land_enters', controllerId: player.id, card: playedLand })
@@ -3530,6 +3634,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         ...state,
         players,
         pendingLandEffectChoice,
+        pendingScryChoice,
         actionSeq: state.actionSeq + 1,
         log: appendLog(state.log, {
           timestamp: new Date().toISOString(),
@@ -4161,6 +4266,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         pendingLandEffectChoice: null,
         pendingLibrarySearchChoice: null,
         pendingExploreChoice: null,
+        pendingScryChoice: null,
         pendingProliferateChoice: null,
         pendingTriggerTargetChoice: null,
         priorityPlayerId: null,
@@ -4191,6 +4297,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         pendingLandEffectChoice: null,
         pendingLibrarySearchChoice: null,
         pendingExploreChoice: null,
+        pendingScryChoice: null,
         pendingProliferateChoice: null,
         pendingTriggerTargetChoice: null,
         priorityPlayerId: null,
