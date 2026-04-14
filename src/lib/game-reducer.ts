@@ -1,6 +1,6 @@
-import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeckCard, PlayerZones, TurnPhase, StackItem, TokenTemplateKey, TriggerEffectPayload, ColorSymbol } from '@/types/game-state'
+import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeckCard, PlayerZones, TurnPhase, StackItem, TokenTemplateKey, TriggerEffectPayload, ColorSymbol, QueuedEffectStep } from '@/types/game-state'
 import { checkEliminations } from './game-engine'
-import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getActivatedAbilities, getEtbCounters, getLandEntryEffect, getLandManaOptions, getPlaneswalkerAbilities, getSimpleSpellDefinition, getTokenTemplate, getTriggeredAbilities, landEntersTapped, resolveManaCost, type PlaneswalkerAbilityEffect, type TriggeredAbilityDefinition, type TriggerEffectDefinition } from './card-rules'
+import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getActivatedAbilities, getEtbCounters, getLandEntryEffect, getLandManaOptions, getPlaneswalkerAbilities, getSimpleSpellDefinition, getSimpleSpellSequence, getTokenTemplate, getTriggeredAbilities, landEntersTapped, resolveManaCost, type PlaneswalkerAbilityEffect, type TriggeredAbilityDefinition, type TriggerEffectDefinition } from './card-rules'
 
 const MAX_LOG = 50
 const TURN_PHASES: TurnPhase[] = ['untap', 'upkeep', 'draw', 'main1', 'combat', 'main2', 'end']
@@ -23,6 +23,7 @@ export function createInitialGameState(roomCode: string, roomId = ''): GameState
     pendingExploreChoice: null,
     pendingScryChoice: null,
     pendingSurveilChoice: null,
+    pendingEffectSequence: null,
     pendingProliferateChoice: null,
     pendingTriggerTargetChoice: null,
     priorityPlayerId: null,
@@ -217,6 +218,121 @@ function millPlayerLibrary(players: Player[], playerId: string, amount: number):
   })
 }
 
+function drawCardsForPlayer(players: Player[], playerId: string, amount: number, loseLife = 0): Player[] {
+  if (amount <= 0 && loseLife <= 0) return players
+
+  return players.map(player => {
+    if (player.id !== playerId) return player
+    const drawnCards = player.zones.library.slice(0, amount)
+    return {
+      ...player,
+      life: player.life - loseLife,
+      zones: {
+        ...player.zones,
+        library: player.zones.library.slice(drawnCards.length),
+        hand: [...player.zones.hand, ...drawnCards],
+      },
+    }
+  })
+}
+
+function gainLifeForPlayer(players: Player[], playerId: string, amount: number): Player[] {
+  if (amount <= 0) return players
+
+  return players.map(player =>
+    player.id === playerId
+      ? { ...player, life: playerCanGainLife(players, playerId) ? player.life + amount : player.life }
+      : player
+  )
+}
+
+function createPendingEffectSequence(
+  context: Omit<NonNullable<GameState['pendingEffectSequence']>, 'steps'>,
+  steps: QueuedEffectStep[]
+): GameState['pendingEffectSequence'] {
+  return steps.length > 0 ? { ...context, steps } : null
+}
+
+function runQueuedEffects(
+  players: Player[],
+  context: Omit<NonNullable<GameState['pendingEffectSequence']>, 'steps'>,
+  steps: QueuedEffectStep[]
+): {
+  players: Player[]
+  pendingScryChoice: GameState['pendingScryChoice']
+  pendingSurveilChoice: GameState['pendingSurveilChoice']
+  pendingEffectSequence: GameState['pendingEffectSequence']
+} {
+  let nextPlayers = players
+
+  for (let index = 0; index < steps.length; index++) {
+    const step = steps[index]
+    const remainingSteps = steps.slice(index + 1)
+
+    switch (step.kind) {
+      case 'draw_cards':
+        nextPlayers = drawCardsForPlayer(nextPlayers, context.playerId, step.amount, step.loseLife ?? 0)
+        break
+      case 'gain_life':
+        nextPlayers = gainLifeForPlayer(nextPlayers, context.playerId, step.amount)
+        break
+      case 'mill':
+        nextPlayers = millPlayerLibrary(nextPlayers, step.target === 'player' ? context.targetPlayerId ?? context.playerId : context.playerId, step.amount)
+        break
+      case 'scry': {
+        const choice = createScryChoice(nextPlayers, context.playerId, context.sourceName, step.amount)
+        if (choice) {
+          return {
+            players: nextPlayers,
+            pendingScryChoice: choice,
+            pendingSurveilChoice: null,
+            pendingEffectSequence: createPendingEffectSequence(context, remainingSteps),
+          }
+        }
+        break
+      }
+      case 'surveil': {
+        const choice = createSurveilChoice(nextPlayers, context.playerId, context.sourceName, step.amount)
+        if (choice) {
+          return {
+            players: nextPlayers,
+            pendingScryChoice: null,
+            pendingSurveilChoice: choice,
+            pendingEffectSequence: createPendingEffectSequence(context, remainingSteps),
+          }
+        }
+        break
+      }
+    }
+  }
+
+  return {
+    players: nextPlayers,
+    pendingScryChoice: null,
+    pendingSurveilChoice: null,
+    pendingEffectSequence: null,
+  }
+}
+
+function resumePendingEffectSequence(state: GameState): GameState {
+  const sequence = state.pendingEffectSequence
+  if (!sequence) return state
+
+  const result = runQueuedEffects(state.players, {
+    playerId: sequence.playerId,
+    sourceName: sequence.sourceName,
+    targetPlayerId: sequence.targetPlayerId,
+  }, sequence.steps)
+
+  return {
+    ...state,
+    players: result.players,
+    pendingScryChoice: result.pendingScryChoice,
+    pendingSurveilChoice: result.pendingSurveilChoice,
+    pendingEffectSequence: result.pendingEffectSequence,
+  }
+}
+
 function shuffleCards<T>(cards: T[]): T[] {
   const next = [...cards]
   for (let i = next.length - 1; i > 0; i--) {
@@ -305,6 +421,7 @@ function beginActiveGame(state: GameState): GameState {
     pendingExploreChoice: null,
     pendingScryChoice: null,
     pendingSurveilChoice: null,
+    pendingEffectSequence: null,
     pendingProliferateChoice: null,
     pendingTriggerTargetChoice: null,
     priorityPlayerId: null,
@@ -1025,6 +1142,8 @@ function applyPlaneswalkerEffect(
         ),
         triggerOccurrences,
       }
+    case 'gain_life':
+      return { players: gainLifeForPlayer(players, sourcePlayerId, effect.amount), triggerOccurrences }
     case 'create_tokens': {
       const count = effect.count === 'opponents'
         ? players.filter(player => player.id !== sourcePlayerId && !player.isEliminated).length
@@ -1705,6 +1824,7 @@ function resolveStackTop(state: GameState): GameState {
   const triggerOccurrences: TriggerOccurrence[] = []
   let pendingScryChoice = state.pendingScryChoice
   let pendingSurveilChoice = state.pendingSurveilChoice
+  let pendingEffectSequence = state.pendingEffectSequence
   let pendingProliferateChoice = state.pendingProliferateChoice
 
   const targetPlayer = stackItem.targetPlayerId
@@ -2019,6 +2139,7 @@ function resolveStackTop(state: GameState): GameState {
       })
     } else {
     const definition = getSimpleSpellDefinition(stackItem.card)
+    const effectSequence = getSimpleSpellSequence(stackItem.card)
     if (!definition) {
       spellAutomated = false
       // Spell has no known effect — move to graveyard without any game effect
@@ -2033,22 +2154,24 @@ function resolveStackTop(state: GameState): GameState {
             }
           : player
       )
+    } else if (effectSequence.length > 1) {
+      players = addSpellToCasterGraveyard(players)
+      const result = runQueuedEffects(players, {
+        playerId: stackItem.casterId,
+        sourceName: stackItem.card.name,
+        targetPlayerId: stackItem.targetPlayerId,
+      }, effectSequence)
+      players = result.players
+      pendingScryChoice = result.pendingScryChoice
+      pendingSurveilChoice = result.pendingSurveilChoice
+      pendingEffectSequence = result.pendingEffectSequence
     } else {
       switch (definition.kind) {
         case 'draw_cards':
-          players = addSpellToCasterGraveyard(players).map(player =>
-            player.id === stackItem.casterId
-              ? {
-                  ...player,
-                  life: player.life - (definition.loseLife ?? 0),
-                  zones: {
-                    ...player.zones,
-                    library: player.zones.library.slice(Math.min(definition.amount, player.zones.library.length)),
-                    hand: [...player.zones.hand, ...player.zones.library.slice(0, definition.amount)],
-                  },
-                }
-              : player
-          )
+          players = drawCardsForPlayer(addSpellToCasterGraveyard(players), stackItem.casterId, definition.amount, definition.loseLife ?? 0)
+          break
+        case 'gain_life':
+          players = gainLifeForPlayer(addSpellToCasterGraveyard(players), stackItem.casterId, definition.amount)
           break
         case 'create_tokens': {
           const count = definition.count === 'opponents'
@@ -2239,6 +2362,7 @@ function resolveStackTop(state: GameState): GameState {
     stack: state.stack.slice(0, -1),
     pendingScryChoice,
     pendingSurveilChoice,
+    pendingEffectSequence,
     pendingProliferateChoice,
     pendingTriggerTargetChoice: getPendingTriggerTargetChoice(state.stack.slice(0, -1)),
     priorityPlayerId: state.turnOrder[state.currentTurnIndex] ?? null,
@@ -2645,7 +2769,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         }
       })
 
-      return {
+      const next = {
         ...state,
         players,
         pendingScryChoice: null,
@@ -2659,6 +2783,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           undoable: true,
         }),
       }
+      return checkEliminations(resumePendingEffectSequence(next))
     }
 
     case 'RESOLVE_SURVEIL_CHOICE': {
@@ -2690,7 +2815,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         }
       })
 
-      return {
+      const next = {
         ...state,
         players,
         pendingSurveilChoice: null,
@@ -2704,6 +2829,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           undoable: true,
         }),
       }
+      return checkEliminations(resumePendingEffectSequence(next))
     }
 
     case 'RESOLVE_LIBRARY_SEARCH': {
@@ -4408,6 +4534,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         pendingExploreChoice: null,
         pendingScryChoice: null,
         pendingSurveilChoice: null,
+        pendingEffectSequence: null,
         pendingProliferateChoice: null,
         pendingTriggerTargetChoice: null,
         priorityPlayerId: null,
@@ -4440,6 +4567,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         pendingExploreChoice: null,
         pendingScryChoice: null,
         pendingSurveilChoice: null,
+        pendingEffectSequence: null,
         pendingProliferateChoice: null,
         pendingTriggerTargetChoice: null,
         priorityPlayerId: null,

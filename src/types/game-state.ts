@@ -96,6 +96,13 @@ export type TriggerEffectPayload =
   | { kind: 'return_graveyard_creature_to_hand'; target: GraveyardTargetType }
   | { kind: 'drain_each_opponent'; amount: number; gainLife: number }
 
+export type QueuedEffectStep =
+  | { kind: 'draw_cards'; amount: number; loseLife?: number }
+  | { kind: 'gain_life'; amount: number }
+  | { kind: 'scry'; amount: number }
+  | { kind: 'surveil'; amount: number }
+  | { kind: 'mill'; amount: number; target: 'none' | 'player' }
+
 export interface TargetDistributionChoice {
   cardId: string
   amount: number
@@ -175,6 +182,7 @@ export interface GameState {
   pendingExploreChoice: ExploreChoiceState | null
   pendingScryChoice: ScryChoiceState | null
   pendingSurveilChoice: SurveilChoiceState | null
+  pendingEffectSequence: PendingEffectSequenceState | null
   pendingProliferateChoice: ProliferateChoiceState | null
   pendingTriggerTargetChoice: TriggerTargetChoiceState | null
   priorityPlayerId: string | null
@@ -233,6 +241,13 @@ export interface SurveilChoiceState {
   sourceName: string
   amount: number
   revealedCards: GameCard[]
+}
+
+export interface PendingEffectSequenceState {
+  playerId: string
+  sourceName: string
+  targetPlayerId?: string
+  steps: QueuedEffectStep[]
 }
 
 export interface ProliferateChoiceState {

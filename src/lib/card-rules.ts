@@ -1,4 +1,4 @@
-import type { CastOptions, ColorSymbol, GameCard, GraveyardTargetType, ManaPool, Player, TokenTemplateKey, TriggerTargetType } from '@/types/game-state'
+import type { CastOptions, ColorSymbol, GameCard, GraveyardTargetType, ManaPool, Player, QueuedEffectStep, TokenTemplateKey, TriggerTargetType } from '@/types/game-state'
 
 const COLOR_ORDER: ColorSymbol[] = ['W', 'U', 'B', 'R', 'G', 'C']
 const BASIC_LAND_TYPES: Array<{ pattern: RegExp; color: ColorSymbol }> = [
@@ -26,6 +26,7 @@ function looksLikeLandByText(card: Pick<GameCard, 'typeLine' | 'oracleText' | 'm
 
 export type SimpleSpellDefinition =
   | { kind: 'draw_cards'; amount: number; loseLife?: number; target: 'none' }
+  | { kind: 'gain_life'; amount: number; target: 'none' }
   | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number | 'opponents'; tapped?: boolean; target: 'none' }
   | { kind: 'scry'; amount: number; target: 'none' }
   | { kind: 'surveil'; amount: number; target: 'none' }
@@ -1144,6 +1145,10 @@ export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine
   if (!typeLine.includes('instant') && !typeLine.includes('sorcery')) return null
 
   const oracleText = (card.oracleText ?? '').replace(/\n/g, ' ').toLowerCase()
+  const sequence = parseSimpleEffectSequence(oracleText)
+  if (sequence[0]) {
+    return sequenceStepToSimpleSpell(sequence[0])
+  }
 
   const scryMatch = oracleText.match(/scry (\d+)/)
   if (scryMatch) {
@@ -1175,6 +1180,11 @@ export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine
       loseLife: loseLifeMatch ? Number(loseLifeMatch[1]) : undefined,
       target: 'none',
     }
+  }
+
+  const gainLifeMatch = oracleText.match(/you gain (\d+) life/)
+  if (gainLifeMatch) {
+    return { kind: 'gain_life', amount: Number(gainLifeMatch[1]), target: 'none' }
   }
 
   const tokenSpell = parseCreateTokenEffect(oracleText, /create ([^.]+?) tokens?/i)
@@ -1317,6 +1327,14 @@ export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine
   }
 
   return null
+}
+
+export function getSimpleSpellSequence(card: Pick<GameCard, 'typeLine' | 'oracleText'>): QueuedEffectStep[] {
+  const typeLine = card.typeLine.toLowerCase()
+  if (!typeLine.includes('instant') && !typeLine.includes('sorcery')) return []
+
+  const oracleText = (card.oracleText ?? '').replace(/\n/g, ' ').toLowerCase()
+  return parseSimpleEffectSequence(oracleText)
 }
 
 export function getPlaneswalkerAbilities(card: Pick<GameCard, 'oracleText' | 'typeLine'>): PlaneswalkerAbilityDefinition[] {
@@ -1463,12 +1481,78 @@ function wordToNumber(value: string): number {
   return map[value] ?? 0
 }
 
+function parseSimpleEffectSequence(oracleText: string): QueuedEffectStep[] {
+  const matches: Array<{ index: number; step: QueuedEffectStep }> = []
+  const collect = (pattern: RegExp, toStep: (match: RegExpExecArray) => QueuedEffectStep | null) => {
+    pattern.lastIndex = 0
+    let match = pattern.exec(oracleText)
+    while (match) {
+      const step = toStep(match)
+      if (step) {
+        matches.push({ index: match.index, step })
+      }
+      match = pattern.exec(oracleText)
+    }
+  }
+
+  collect(/\bscry (\d+)/g, match => ({ kind: 'scry', amount: Number(match[1]) }))
+  collect(/\bsurveil (\d+)/g, match => ({ kind: 'surveil', amount: Number(match[1]) }))
+  collect(/\btarget player mills? (a|one|two|three|four|five|six|seven|\d+) cards?/g, match => ({
+    kind: 'mill',
+    amount: wordToNumber(match[1] ?? '0'),
+    target: 'player',
+  }))
+  collect(/\b(?:you mill|mill) (a|one|two|three|four|five|six|seven|\d+) cards?/g, match => ({
+    kind: 'mill',
+    amount: wordToNumber(match[1] ?? '0'),
+    target: 'none',
+  }))
+  collect(/\bdraw (a|one|two|three|four|five|six|seven|\d+) cards?/g, match => {
+    const loseLifeMatch = oracleText.match(/lose (\d+) life/)
+    return {
+      kind: 'draw_cards',
+      amount: wordToNumber(match[1] ?? '0'),
+      loseLife: loseLifeMatch ? Number(loseLifeMatch[1]) : undefined,
+    }
+  })
+  collect(/\byou gain (\d+) life/g, match => ({
+    kind: 'gain_life',
+    amount: Number(match[1]),
+  }))
+
+  return matches
+    .filter(entry => {
+      if (entry.step.kind === 'scry' || entry.step.kind === 'surveil') return entry.step.amount > 0
+      if (entry.step.kind === 'mill' || entry.step.kind === 'draw_cards' || entry.step.kind === 'gain_life') return entry.step.amount > 0
+      return true
+    })
+    .sort((a, b) => a.index - b.index)
+    .map(entry => entry.step)
+}
+
+function sequenceStepToSimpleSpell(step: QueuedEffectStep): SimpleSpellDefinition {
+  switch (step.kind) {
+    case 'draw_cards':
+      return { kind: 'draw_cards', amount: step.amount, loseLife: step.loseLife, target: 'none' }
+    case 'gain_life':
+      return { kind: 'gain_life', amount: step.amount, target: 'none' }
+    case 'scry':
+      return { kind: 'scry', amount: step.amount, target: 'none' }
+    case 'surveil':
+      return { kind: 'surveil', amount: step.amount, target: 'none' }
+    case 'mill':
+      return { kind: 'mill', amount: step.amount, target: step.target }
+  }
+}
+
 function simpleSpellToTriggerEffect(definition: SimpleSpellDefinition): { effect: TriggerEffectDefinition; target: TriggeredAbilityDefinition['target'] } | null {
   switch (definition.kind) {
     case 'create_tokens':
       return { effect: definition, target: 'none' }
     case 'draw_cards':
       return { effect: { kind: 'draw_cards', amount: definition.amount }, target: 'none' }
+    case 'gain_life':
+      return { effect: { kind: 'gain_life', amount: definition.amount }, target: 'none' }
     case 'scry':
       return { effect: { kind: 'scry', amount: definition.amount }, target: 'none' }
     case 'surveil':

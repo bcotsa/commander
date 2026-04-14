@@ -9,6 +9,7 @@ import {
   getLandEntryEffect,
   getLandManaOptions,
   getSimpleSpellDefinition,
+  getSimpleSpellSequence,
   getTriggeredAbilities,
 } from '../card-rules'
 import type { GameCard, ManaPool } from '@/types/game-state'
@@ -310,6 +311,18 @@ describe('getSimpleSpellDefinition', () => {
       expect(def.amount).toBe(7)
       expect(def.target).toBe('player')
     }
+  })
+
+  it('returns ordered simple effect sequences', () => {
+    const sequence = getSimpleSpellSequence({
+      typeLine: 'Sorcery',
+      oracleText: 'Scry 2, then draw a card.',
+    })
+
+    expect(sequence).toEqual([
+      { kind: 'scry', amount: 2 },
+      { kind: 'draw_cards', amount: 1, loseLife: undefined },
+    ])
   })
 
   it('returns null for permanents', () => {

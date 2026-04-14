@@ -1119,6 +1119,116 @@ describe('Surveil and mill', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Queued effect sequences
+// ---------------------------------------------------------------------------
+
+describe('Queued effect sequences', () => {
+  it('continues with draw after resolving a scry choice', () => {
+    const topA = makeCard({ instanceId: 'seq-a', name: 'Sequence A' })
+    const topB = makeCard({ instanceId: 'seq-b', name: 'Sequence B' })
+    const restC = makeCard({ instanceId: 'seq-c', name: 'Sequence C' })
+    const restD = makeCard({ instanceId: 'seq-d', name: 'Sequence D' })
+    const spell = makeCard({
+      instanceId: 'spell-scry-draw',
+      name: 'Scry Then Draw',
+      typeLine: 'Sorcery',
+      manaCost: null,
+      oracleText: 'Scry 2, then draw a card.',
+    })
+    const base = twoPlayerGame()
+    const state = {
+      ...base,
+      stack: [{
+        id: 'stack-scry-draw',
+        card: spell,
+        casterId: 'p1',
+        casterName: 'Alice',
+        source: 'hand' as const,
+        kind: 'spell' as const,
+      }],
+      players: base.players.map(player =>
+        player.id === 'p1'
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                library: [topA, topB, restC, restD],
+              },
+            }
+          : player
+      ),
+    }
+
+    const waitingForScry = gameReducer(state, { type: 'RESOLVE_STACK' })
+    expect(waitingForScry.pendingScryChoice?.revealedCards.map(card => card.name)).toEqual(['Sequence A', 'Sequence B'])
+    expect(getPlayer(waitingForScry, 'p1').zones.hand.map(card => card.name)).not.toContain('Sequence B')
+
+    const resolved = gameReducer(waitingForScry, {
+      type: 'RESOLVE_SCRY_CHOICE',
+      playerId: 'p1',
+      topCardIds: [topB.instanceId],
+      bottomCardIds: [topA.instanceId],
+    })
+
+    expect(resolved.pendingScryChoice).toBeNull()
+    expect(resolved.pendingEffectSequence).toBeNull()
+    expect(getPlayer(resolved, 'p1').zones.hand.map(card => card.name)).toContain('Sequence B')
+    expect(getPlayer(resolved, 'p1').zones.library.map(card => card.name)).toEqual(['Sequence C', 'Sequence D', 'Sequence A'])
+  })
+
+  it('continues with draw after resolving a surveil choice', () => {
+    const topA = makeCard({ instanceId: 'surveil-seq-a', name: 'Surveil Sequence A' })
+    const topB = makeCard({ instanceId: 'surveil-seq-b', name: 'Surveil Sequence B' })
+    const spell = makeCard({
+      instanceId: 'spell-surveil-draw',
+      name: 'Surveil Then Draw',
+      typeLine: 'Instant',
+      manaCost: null,
+      oracleText: 'Surveil 1. Draw a card.',
+    })
+    const base = twoPlayerGame()
+    const state = {
+      ...base,
+      stack: [{
+        id: 'stack-surveil-draw',
+        card: spell,
+        casterId: 'p1',
+        casterName: 'Alice',
+        source: 'hand' as const,
+        kind: 'spell' as const,
+      }],
+      players: base.players.map(player =>
+        player.id === 'p1'
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                library: [topA, topB],
+              },
+            }
+          : player
+      ),
+    }
+
+    const waitingForSurveil = gameReducer(state, { type: 'RESOLVE_STACK' })
+    expect(waitingForSurveil.pendingSurveilChoice?.revealedCards.map(card => card.name)).toEqual(['Surveil Sequence A'])
+
+    const resolved = gameReducer(waitingForSurveil, {
+      type: 'RESOLVE_SURVEIL_CHOICE',
+      playerId: 'p1',
+      topCardIds: [],
+      graveyardCardIds: [topA.instanceId],
+    })
+
+    expect(resolved.pendingSurveilChoice).toBeNull()
+    expect(resolved.pendingEffectSequence).toBeNull()
+    expect(getPlayer(resolved, 'p1').zones.hand.map(card => card.name)).toContain('Surveil Sequence B')
+    expect(getPlayer(resolved, 'p1').zones.graveyard.map(card => card.name)).toContain('Surveil Sequence A')
+    expect(getPlayer(resolved, 'p1').zones.library).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Sequence number
 // ---------------------------------------------------------------------------
 
