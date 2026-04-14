@@ -28,6 +28,8 @@ export type SimpleSpellDefinition =
   | { kind: 'draw_cards'; amount: number; loseLife?: number; target: 'none' }
   | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number | 'opponents'; tapped?: boolean; target: 'none' }
   | { kind: 'scry'; amount: number; target: 'none' }
+  | { kind: 'surveil'; amount: number; target: 'none' }
+  | { kind: 'mill'; amount: number; target: 'none' | 'player' }
   | { kind: 'proliferate'; target: 'none' }
   | { kind: 'destroy_target_creature'; target: 'battlefield_creature'; loseLife?: number }
   | { kind: 'destroy_target_creature_or_planeswalker'; target: 'battlefield_creature_or_planeswalker'; loseLife?: number }
@@ -64,7 +66,7 @@ export interface PlaneswalkerAbilityDefinition {
   id: string
   label: string
   loyaltyDelta: number
-  target: 'none' | 'battlefield_creature' | 'battlefield_creature_or_planeswalker' | 'battlefield_nonland_permanent' | 'battlefield_permanent' | 'creature_or_player' | GraveyardTargetType
+  target: 'none' | 'player' | 'battlefield_creature' | 'battlefield_creature_or_planeswalker' | 'battlefield_nonland_permanent' | 'battlefield_permanent' | 'creature_or_player' | GraveyardTargetType
   effect: PlaneswalkerAbilityEffect | null
   supported: boolean
 }
@@ -88,6 +90,8 @@ export type TriggerEffectDefinition =
   | { kind: 'draw_cards'; amount: number }
   | { kind: 'gain_life'; amount: number }
   | { kind: 'scry'; amount: number }
+  | { kind: 'surveil'; amount: number }
+  | { kind: 'mill'; amount: number }
   | { kind: 'proliferate' }
   | { kind: 'put_minus_one_counter_target_creature'; amount: number }
   | { kind: 'put_minus_one_counters_each_creature'; amount: number }
@@ -121,6 +125,7 @@ export interface TriggeredAbilityDefinition {
 export type LandEntryEffectDefinition =
   | { kind: 'gain_life'; amount: number }
   | { kind: 'scry'; amount: number }
+  | { kind: 'surveil'; amount: number }
   | { kind: 'bounce_land' }
   | { kind: 'exile_graveyard' }
 
@@ -1008,6 +1013,30 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
     })
   }
 
+  const castSurveil = oracleText.match(/whenever you cast a spell, surveil (\d+)/)
+  if (castSurveil) {
+    abilities.push({
+      id: 'cast-surveil',
+      label: 'Cast trigger',
+      event: 'spell_cast',
+      match: 'spell_you_cast',
+      effect: { kind: 'surveil', amount: Number(castSurveil[1]) },
+      target: 'none',
+    })
+  }
+
+  const castMill = oracleText.match(/whenever you cast a spell, mill (a|one|two|three|four|five|six|seven|\d+) cards?/)
+  if (castMill) {
+    abilities.push({
+      id: 'cast-mill',
+      label: 'Cast trigger',
+      event: 'spell_cast',
+      match: 'spell_you_cast',
+      effect: { kind: 'mill', amount: wordToNumber(castMill[1] ?? '0') },
+      target: 'none',
+    })
+  }
+
   if (oracleText.includes('whenever you create or sacrifice a token')) {
     abilities.push({
       id: 'token-create-or-sac-drain',
@@ -1116,6 +1145,26 @@ export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine
 
   const oracleText = (card.oracleText ?? '').replace(/\n/g, ' ').toLowerCase()
 
+  const scryMatch = oracleText.match(/scry (\d+)/)
+  if (scryMatch) {
+    return { kind: 'scry', amount: Number(scryMatch[1]), target: 'none' }
+  }
+
+  const surveilMatch = oracleText.match(/surveil (\d+)/)
+  if (surveilMatch) {
+    return { kind: 'surveil', amount: Number(surveilMatch[1]), target: 'none' }
+  }
+
+  const targetMillMatch = oracleText.match(/target player mills? (a|one|two|three|four|five|six|seven|\d+) cards?/)
+  if (targetMillMatch) {
+    return { kind: 'mill', amount: wordToNumber(targetMillMatch[1] ?? '0'), target: 'player' }
+  }
+
+  const youMillMatch = oracleText.match(/(?:you mill|mill) (a|one|two|three|four|five|six|seven|\d+) cards?/)
+  if (youMillMatch) {
+    return { kind: 'mill', amount: wordToNumber(youMillMatch[1] ?? '0'), target: 'none' }
+  }
+
   const drawMatch = oracleText.match(/draw (a|one|two|three|four|five|six|seven|\d+) cards?/)
   if (drawMatch) {
     const amount = wordToNumber(drawMatch[1] ?? '0')
@@ -1141,11 +1190,6 @@ export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine
 
   if (oracleText.includes('proliferate')) {
     return { kind: 'proliferate', target: 'none' }
-  }
-
-  const scryMatch = oracleText.match(/scry (\d+)/)
-  if (scryMatch) {
-    return { kind: 'scry', amount: Number(scryMatch[1]), target: 'none' }
   }
 
   const minusOneEach = oracleText.match(/put (a|one|two|three|four|five|six|seven|\d+) -1\/-1 counters? on each creature/)
@@ -1385,6 +1429,11 @@ export function getLandEntryEffect(card: Pick<GameCard, 'name' | 'typeLine' | 'o
     return { kind: 'scry', amount: Number(scryMatch[1]) }
   }
 
+  const surveilMatch = oracleText.match(/when [^.,]* enters(?: the battlefield)?, surveil (\d+)/)
+  if (surveilMatch) {
+    return { kind: 'surveil', amount: Number(surveilMatch[1]) }
+  }
+
   if (oracleText.includes('return a land you control to its owner\'s hand')) {
     return { kind: 'bounce_land' }
   }
@@ -1422,6 +1471,12 @@ function simpleSpellToTriggerEffect(definition: SimpleSpellDefinition): { effect
       return { effect: { kind: 'draw_cards', amount: definition.amount }, target: 'none' }
     case 'scry':
       return { effect: { kind: 'scry', amount: definition.amount }, target: 'none' }
+    case 'surveil':
+      return { effect: { kind: 'surveil', amount: definition.amount }, target: 'none' }
+    case 'mill':
+      return definition.target === 'none'
+        ? { effect: { kind: 'mill', amount: definition.amount }, target: 'none' }
+        : null
     case 'proliferate':
       return { effect: { kind: 'proliferate' }, target: 'none' }
     case 'put_minus_one_counter_target_creature':

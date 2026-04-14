@@ -283,6 +283,35 @@ describe('getSimpleSpellDefinition', () => {
     }
   })
 
+  it('detects surveil spells before draw text', () => {
+    const card = {
+      name: 'Consider-like Effect',
+      typeLine: 'Instant',
+      oracleText: 'Surveil 1. Draw a card.',
+    }
+    const def = getSimpleSpellDefinition(card)
+    expect(def).not.toBeNull()
+    expect(def!.kind).toBe('surveil')
+    if (def!.kind === 'surveil') {
+      expect(def.amount).toBe(1)
+    }
+  })
+
+  it('detects target player mill spells', () => {
+    const card = {
+      name: 'Mind Sculpt',
+      typeLine: 'Sorcery',
+      oracleText: 'Target player mills seven cards.',
+    }
+    const def = getSimpleSpellDefinition(card)
+    expect(def).not.toBeNull()
+    expect(def!.kind).toBe('mill')
+    if (def!.kind === 'mill') {
+      expect(def.amount).toBe(7)
+      expect(def.target).toBe('player')
+    }
+  })
+
   it('returns null for permanents', () => {
     const card = {
       name: 'Grizzly Bears',
@@ -341,6 +370,14 @@ describe('getTriggeredAbilities', () => {
     })
     expect(abilities.some(ability => ability.event === 'enters_battlefield' && ability.effect.kind === 'scry')).toBe(true)
   })
+
+  it('parses generic ETB surveil triggers', () => {
+    const abilities = getTriggeredAbilities({
+      name: 'Dimir Informant',
+      oracleText: 'When Dimir Informant enters the battlefield, surveil 2.',
+    })
+    expect(abilities.some(ability => ability.event === 'enters_battlefield' && ability.effect.kind === 'surveil')).toBe(true)
+  })
 })
 
 describe('getLandEntryEffect', () => {
@@ -351,5 +388,14 @@ describe('getLandEntryEffect', () => {
       oracleText: 'Temple of Malady enters the battlefield tapped. When Temple of Malady enters the battlefield, scry 1.',
     })
     expect(effect).toEqual({ kind: 'scry', amount: 1 })
+  })
+
+  it('detects lands that surveil on entry', () => {
+    const effect = getLandEntryEffect({
+      name: 'Undercity Sewers',
+      typeLine: 'Land — Island Swamp',
+      oracleText: 'When Undercity Sewers enters the battlefield, surveil 1.',
+    })
+    expect(effect).toEqual({ kind: 'surveil', amount: 1 })
   })
 })

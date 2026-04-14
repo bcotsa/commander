@@ -22,6 +22,7 @@ export function createInitialGameState(roomCode: string, roomId = ''): GameState
     pendingLibrarySearchChoice: null,
     pendingExploreChoice: null,
     pendingScryChoice: null,
+    pendingSurveilChoice: null,
     pendingProliferateChoice: null,
     pendingTriggerTargetChoice: null,
     priorityPlayerId: null,
@@ -183,6 +184,39 @@ function createScryChoice(players: Player[], playerId: string, sourceName: strin
   }
 }
 
+function createSurveilChoice(players: Player[], playerId: string, sourceName: string, amount: number): GameState['pendingSurveilChoice'] {
+  const player = players.find(entry => entry.id === playerId)
+  if (!player || amount <= 0) return null
+
+  const revealedCards = player.zones.library.slice(0, amount).map(card => ({ ...card }))
+  if (revealedCards.length === 0) return null
+
+  return {
+    playerId,
+    sourceName,
+    amount,
+    revealedCards,
+  }
+}
+
+function millPlayerLibrary(players: Player[], playerId: string, amount: number): Player[] {
+  if (amount <= 0) return players
+
+  return players.map(player => {
+    if (player.id !== playerId) return player
+    const milledCards = player.zones.library.slice(0, amount)
+    if (milledCards.length === 0) return player
+    return {
+      ...player,
+      zones: {
+        ...player.zones,
+        library: player.zones.library.slice(milledCards.length),
+        graveyard: [...player.zones.graveyard, ...milledCards.map(normalizeLeavingCard)],
+      },
+    }
+  })
+}
+
 function shuffleCards<T>(cards: T[]): T[] {
   const next = [...cards]
   for (let i = next.length - 1; i > 0; i--) {
@@ -270,6 +304,7 @@ function beginActiveGame(state: GameState): GameState {
     pendingLibrarySearchChoice: null,
     pendingExploreChoice: null,
     pendingScryChoice: null,
+    pendingSurveilChoice: null,
     pendingProliferateChoice: null,
     pendingTriggerTargetChoice: null,
     priorityPlayerId: null,
@@ -1022,6 +1057,10 @@ function applyPlaneswalkerEffect(
     }
     case 'scry':
       return { players, triggerOccurrences }
+    case 'surveil':
+      return { players, triggerOccurrences }
+    case 'mill':
+      return { players: millPlayerLibrary(players, effect.target === 'player' ? targetPlayerId ?? sourcePlayerId : sourcePlayerId, effect.amount), triggerOccurrences }
     case 'proliferate':
       return { players, triggerOccurrences }
     case 'destroy_target_creature':
@@ -1308,6 +1347,14 @@ function resolveTriggerEffect(effect: TriggerEffectDefinition, state: GameState,
 
   if (effect.kind === 'scry') {
     return { kind: 'scry', amount: effect.amount }
+  }
+
+  if (effect.kind === 'surveil') {
+    return { kind: 'surveil', amount: effect.amount }
+  }
+
+  if (effect.kind === 'mill') {
+    return { kind: 'mill', amount: effect.amount }
   }
 
   if (effect.kind === 'proliferate') {
@@ -1657,6 +1704,7 @@ function resolveStackTop(state: GameState): GameState {
   }))
   const triggerOccurrences: TriggerOccurrence[] = []
   let pendingScryChoice = state.pendingScryChoice
+  let pendingSurveilChoice = state.pendingSurveilChoice
   let pendingProliferateChoice = state.pendingProliferateChoice
 
   const targetPlayer = stackItem.targetPlayerId
@@ -1758,6 +1806,12 @@ function resolveStackTop(state: GameState): GameState {
         break
       case 'scry':
         pendingScryChoice = createScryChoice(players, stackItem.casterId, stackItem.card.name, effect.amount)
+        break
+      case 'surveil':
+        pendingSurveilChoice = createSurveilChoice(players, stackItem.casterId, stackItem.card.name, effect.amount)
+        break
+      case 'mill':
+        players = millPlayerLibrary(players, stackItem.casterId, effect.amount)
         break
       case 'proliferate':
         pendingProliferateChoice = {
@@ -2030,6 +2084,14 @@ function resolveStackTop(state: GameState): GameState {
           players = addSpellToCasterGraveyard(players)
           pendingScryChoice = createScryChoice(players, stackItem.casterId, stackItem.card.name, definition.amount)
           break
+        case 'surveil':
+          players = addSpellToCasterGraveyard(players)
+          pendingSurveilChoice = createSurveilChoice(players, stackItem.casterId, stackItem.card.name, definition.amount)
+          break
+        case 'mill':
+          players = addSpellToCasterGraveyard(players)
+          players = millPlayerLibrary(players, definition.target === 'player' ? stackItem.targetPlayerId ?? stackItem.casterId : stackItem.casterId, definition.amount)
+          break
         case 'proliferate':
           players = addSpellToCasterGraveyard(players)
           pendingProliferateChoice = {
@@ -2176,6 +2238,7 @@ function resolveStackTop(state: GameState): GameState {
     players: cleaned.players,
     stack: state.stack.slice(0, -1),
     pendingScryChoice,
+    pendingSurveilChoice,
     pendingProliferateChoice,
     pendingTriggerTargetChoice: getPendingTriggerTargetChoice(state.stack.slice(0, -1)),
     priorityPlayerId: state.turnOrder[state.currentTurnIndex] ?? null,
@@ -2265,6 +2328,10 @@ function describe(state: GameState, action: ActionPayload): string {
     case 'RESOLVE_SCRY_CHOICE': {
       const choice = state.pendingScryChoice
       return `${player(action.playerId)} resolved ${choice?.sourceName ?? 'scry'}`
+    }
+    case 'RESOLVE_SURVEIL_CHOICE': {
+      const choice = state.pendingSurveilChoice
+      return `${player(action.playerId)} resolved ${choice?.sourceName ?? 'surveil'}`
     }
     case 'RESOLVE_PROLIFERATE_CHOICE':
       return `${player(action.playerId)} proliferated`
@@ -2373,6 +2440,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
     'RESOLVE_LIBRARY_SEARCH',
     'RESOLVE_EXPLORE_CHOICE',
     'RESOLVE_SCRY_CHOICE',
+    'RESOLVE_SURVEIL_CHOICE',
     'RESOLVE_PROLIFERATE_CHOICE',
     'SET_TRIGGER_TARGET',
     'RESOLVE_LAND_EFFECT',
@@ -2421,6 +2489,20 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       'RESET_GAME',
     ])
     if (!allowedDuringScryChoice.has(action.type)) {
+      return state
+    }
+  }
+
+  if (state.pendingSurveilChoice) {
+    const allowedDuringSurveilChoice = new Set<ActionPayload['type']>([
+      'RESOLVE_SURVEIL_CHOICE',
+      'PLAYER_CONNECTED',
+      'PLAYER_JOIN',
+      'SET_PLAYER_NAME',
+      'UNDO',
+      'RESET_GAME',
+    ])
+    if (!allowedDuringSurveilChoice.has(action.type)) {
       return state
     }
   }
@@ -2567,6 +2649,51 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         ...state,
         players,
         pendingScryChoice: null,
+        actionSeq: state.actionSeq + 1,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
+          description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }
+    }
+
+    case 'RESOLVE_SURVEIL_CHOICE': {
+      const choice = state.pendingSurveilChoice
+      if (!choice || choice.playerId !== action.playerId) return state
+
+      const revealedIds = choice.revealedCards.map(card => card.instanceId)
+      const revealedIdSet = new Set(revealedIds)
+      const chosenIds = [...action.topCardIds, ...action.graveyardCardIds]
+      const chosenIdSet = new Set(chosenIds)
+      if (chosenIds.length !== revealedIds.length || chosenIdSet.size !== revealedIds.length) return state
+      if (!revealedIds.every(id => chosenIdSet.has(id))) return state
+
+      const revealedById = new Map(choice.revealedCards.map(card => [card.instanceId, card]))
+      const topCards = action.topCardIds.map(id => revealedById.get(id)).filter((card): card is GameCard => Boolean(card))
+      const graveyardCards = action.graveyardCardIds.map(id => revealedById.get(id)).filter((card): card is GameCard => Boolean(card))
+      if (topCards.length + graveyardCards.length !== revealedIds.length) return state
+
+      const players = state.players.map(player => {
+        if (player.id !== action.playerId) return player
+        const remainingLibrary = player.zones.library.filter(card => !revealedIdSet.has(card.instanceId))
+        return {
+          ...player,
+          zones: {
+            ...player.zones,
+            library: [...topCards, ...remainingLibrary],
+            graveyard: [...player.zones.graveyard, ...graveyardCards.map(normalizeLeavingCard)],
+          },
+        }
+      })
+
+      return {
+        ...state,
+        players,
+        pendingSurveilChoice: null,
         actionSeq: state.actionSeq + 1,
         log: appendLog(state.log, {
           timestamp: new Date().toISOString(),
@@ -3512,6 +3639,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         const target = targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!target || (!isCreatureCard(target) && !isPlaneswalkerCard(target))) return state
       }
+      if (ability.target === 'player' && !action.targetPlayerId) return state
 
       const targetedBattlefieldCard =
         targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ??
@@ -3553,12 +3681,16 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       let triggerOccurrences: TriggerOccurrence[] = []
       let manualOnly = !ability.supported || !ability.effect
       let pendingScryChoice = state.pendingScryChoice
+      let pendingSurveilChoice = state.pendingSurveilChoice
       if (ability.supported && ability.effect) {
         const resolved = applyPlaneswalkerEffect(players, action.playerId, ability.effect, action.targetCardId, action.targetPlayerId)
         players = resolved.players
         triggerOccurrences = resolved.triggerOccurrences
         if (ability.effect.kind === 'scry') {
           pendingScryChoice = createScryChoice(players, action.playerId, card.name, ability.effect.amount)
+        }
+        if (ability.effect.kind === 'surveil') {
+          pendingSurveilChoice = createSurveilChoice(players, action.playerId, card.name, ability.effect.amount)
         }
         manualOnly = false
       }
@@ -3570,6 +3702,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         ...state,
         players: cleaned.players,
         pendingScryChoice,
+        pendingSurveilChoice,
         actionSeq: state.actionSeq + 1,
         log: appendLog(state.log, {
           timestamp: new Date().toISOString(),
@@ -3593,6 +3726,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       let changed = false
       let pendingLandEffectChoice = state.pendingLandEffectChoice
       let pendingScryChoice = state.pendingScryChoice
+      let pendingSurveilChoice = state.pendingSurveilChoice
       const triggerOccurrences: TriggerOccurrence[] = []
       const players = state.players.map(player => {
         if (player.id !== action.playerId || player.landsPlayedThisTurn >= 1) return player
@@ -3612,6 +3746,9 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         }
         if (entryEffect?.kind === 'scry') {
           pendingScryChoice = createScryChoice(state.players, player.id, card.name, entryEffect.amount)
+        }
+        if (entryEffect?.kind === 'surveil') {
+          pendingSurveilChoice = createSurveilChoice(state.players, player.id, card.name, entryEffect.amount)
         }
         changed = true
         triggerOccurrences.push({ type: 'land_enters', controllerId: player.id, card: playedLand })
@@ -3635,6 +3772,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         players,
         pendingLandEffectChoice,
         pendingScryChoice,
+        pendingSurveilChoice,
         actionSeq: state.actionSeq + 1,
         log: appendLog(state.log, {
           timestamp: new Date().toISOString(),
@@ -3828,6 +3966,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!targetCard || (!isCreatureCard(targetCard) && !isPlaneswalkerCard(targetCard))) return state
       }
+
+      if (definition?.target === 'player' && !targetPlayer) return state
 
       if (card.name === "Black Sun's Zenith" && typeof action.options?.xValue !== 'number') return state
       if (card.name === 'Deadly Dispute') {
@@ -4267,6 +4407,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         pendingLibrarySearchChoice: null,
         pendingExploreChoice: null,
         pendingScryChoice: null,
+        pendingSurveilChoice: null,
         pendingProliferateChoice: null,
         pendingTriggerTargetChoice: null,
         priorityPlayerId: null,
@@ -4298,6 +4439,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         pendingLibrarySearchChoice: null,
         pendingExploreChoice: null,
         pendingScryChoice: null,
+        pendingSurveilChoice: null,
         pendingProliferateChoice: null,
         pendingTriggerTargetChoice: null,
         priorityPlayerId: null,

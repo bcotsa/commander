@@ -8,6 +8,7 @@ import { MulliganOverlay } from '@/components/game/MulliganOverlay'
 import { ProliferateChoiceOverlay } from '@/components/game/ProliferateChoiceOverlay'
 import { ScryChoiceOverlay } from '@/components/game/ScryChoiceOverlay'
 import { StackPanel } from '@/components/game/StackPanel'
+import { SurveilChoiceOverlay } from '@/components/game/SurveilChoiceOverlay'
 import { TriggerTargetOverlay } from '@/components/game/TriggerTargetOverlay'
 import { TurnTracker } from '@/components/game/TurnTracker'
 import { CommanderDamageModal } from '@/components/modals/CommanderDamageModal'
@@ -180,6 +181,21 @@ export function Game() {
             playerId: state.pendingScryChoice?.playerId ?? myPlayerId,
             topCardIds,
             bottomCardIds,
+          })}
+        />
+      )}
+
+      {state.pendingSurveilChoice && (
+        <SurveilChoiceOverlay
+          choice={state.pendingSurveilChoice}
+          players={state.players}
+          myPlayerId={myPlayerId}
+          canControlAllPlayers={Boolean(isHost && state.hostControlsAllPlayers)}
+          onConfirm={(topCardIds, graveyardCardIds) => sendAction({
+            type: 'RESOLVE_SURVEIL_CHOICE',
+            playerId: state.pendingSurveilChoice?.playerId ?? myPlayerId,
+            topCardIds,
+            graveyardCardIds,
           })}
         />
       )}

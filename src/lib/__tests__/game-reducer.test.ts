@@ -1033,6 +1033,92 @@ describe('Scry choices', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Surveil & mill
+// ---------------------------------------------------------------------------
+
+describe('Surveil and mill', () => {
+  it('keeps chosen surveil cards on top and moves the rest to graveyard', () => {
+    const libraryTop = makeCard({ instanceId: 'surveil-a', name: 'Surveil A' })
+    const librarySecond = makeCard({ instanceId: 'surveil-b', name: 'Surveil B' })
+    const libraryRest = makeCard({ instanceId: 'surveil-c', name: 'Surveil C' })
+    const base = twoPlayerGame()
+    const state = {
+      ...base,
+      pendingSurveilChoice: {
+        playerId: 'p1',
+        sourceName: 'Dimir Informant',
+        amount: 2,
+        revealedCards: [libraryTop, librarySecond],
+      },
+      players: base.players.map(player =>
+        player.id === 'p1'
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                library: [libraryTop, librarySecond, libraryRest],
+              },
+            }
+          : player
+      ),
+    }
+
+    const next = gameReducer(state, {
+      type: 'RESOLVE_SURVEIL_CHOICE',
+      playerId: 'p1',
+      topCardIds: [librarySecond.instanceId],
+      graveyardCardIds: [libraryTop.instanceId],
+    })
+
+    expect(next.pendingSurveilChoice).toBeNull()
+    expect(getPlayer(next, 'p1').zones.library.map(card => card.name)).toEqual(['Surveil B', 'Surveil C'])
+    expect(getPlayer(next, 'p1').zones.graveyard.map(card => card.name)).toContain('Surveil A')
+  })
+
+  it('mills the targeted player when a target player mill spell resolves', () => {
+    const millOne = makeCard({ instanceId: 'mill-a', name: 'Mill A' })
+    const millTwo = makeCard({ instanceId: 'mill-b', name: 'Mill B' })
+    const safeCard = makeCard({ instanceId: 'mill-c', name: 'Safe C' })
+    const millSpell = makeCard({
+      instanceId: 'spell-mill',
+      name: 'Mind Sculpt',
+      typeLine: 'Sorcery',
+      manaCost: null,
+      oracleText: 'Target player mills two cards.',
+    })
+    const base = twoPlayerGame()
+    const state = {
+      ...base,
+      stack: [{
+        id: 'stack-mill',
+        card: millSpell,
+        casterId: 'p1',
+        casterName: 'Alice',
+        source: 'hand' as const,
+        kind: 'spell' as const,
+        targetPlayerId: 'p2',
+      }],
+      players: base.players.map(player =>
+        player.id === 'p2'
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                library: [millOne, millTwo, safeCard],
+              },
+            }
+          : player
+      ),
+    }
+
+    const next = gameReducer(state, { type: 'RESOLVE_STACK' })
+
+    expect(getPlayer(next, 'p2').zones.library.map(card => card.name)).toEqual(['Safe C'])
+    expect(getPlayer(next, 'p2').zones.graveyard.map(card => card.name)).toEqual(['Mill A', 'Mill B'])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Sequence number
 // ---------------------------------------------------------------------------
 
