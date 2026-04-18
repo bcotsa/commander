@@ -1,4 +1,5 @@
 import type { CastOptions, ColorSymbol, GameCard, GraveyardTargetType, ManaPool, Player, QueuedEffectStep, TokenTemplateKey, TriggerTargetType } from '@/types/game-state'
+import { getBespokeActivatedAbilities, getBespokeCastChoiceSpec, getBespokeTriggeredAbilities } from './card-support'
 
 const COLOR_ORDER: ColorSymbol[] = ['W', 'U', 'B', 'R', 'G', 'C']
 const BASIC_LAND_TYPES: Array<{ pattern: RegExp; color: ColorSymbol }> = [
@@ -550,28 +551,8 @@ export function resolveManaCost(manaCost: string | null, xValue = 0): string | n
 }
 
 export function getCastChoiceSpec(card: Pick<GameCard, 'name' | 'manaCost'>, _player: Pick<Player, 'life'>): CastChoiceSpec | null {
-  if (card.name === "Black Sun's Zenith") {
-    return { kind: 'x_value', title: card.name, min: 0, max: 20 }
-  }
-
-  if (card.name === 'Deadly Dispute') {
-    return { kind: 'sacrifice_cost', title: card.name, filter: 'artifact_or_creature' }
-  }
-
-  if (card.name === 'Cathartic Reunion') {
-    return { kind: 'discard_cards', title: card.name, count: 2, min: 2, max: 2 }
-  }
-
-  if (card.name === 'Cathartic Pyre') {
-    return {
-      kind: 'modal',
-      title: card.name,
-      modes: [
-        { id: 'damage', label: '3 damage to target creature or planeswalker' },
-        { id: 'loot', label: 'Discard up to two cards, then draw that many' },
-      ],
-    }
-  }
+  const bespokeSpec = getBespokeCastChoiceSpec(card, _player)
+  if (bespokeSpec) return bespokeSpec
 
   if (card.manaCost?.includes('{X}')) {
     return { kind: 'x_value', title: card.name, min: 0, max: 20 }
@@ -606,7 +587,6 @@ export function getLandManaOptions(card: Pick<GameCard, 'name' | 'typeLine' | 'o
 
 export function getActivatedAbilities(card: Pick<GameCard, 'name' | 'typeLine' | 'oracleText' | 'tapped'>, player: Pick<Player, 'commander'>): ActivatedAbilityDefinition[] {
   const abilities: ActivatedAbilityDefinition[] = []
-  const lowerName = card.name.toLowerCase()
   const oracleText = card.oracleText ?? ''
   const lowerOracleText = oracleText.toLowerCase()
 
@@ -646,116 +626,7 @@ export function getActivatedAbilities(card: Pick<GameCard, 'name' | 'typeLine' |
     return abilities
   }
 
-  if (lowerName === 'treasure') {
-    const colors: ColorSymbol[] = player.commander?.colorIdentity?.length ? player.commander.colorIdentity : ['W', 'U', 'B', 'R', 'G']
-    for (const color of colors) {
-      abilities.push({
-        id: `treasure-${color}`,
-        label: `Sac for ${color}`,
-        kind: 'add_mana',
-        color,
-        amount: 1,
-        requiresTap: true,
-        sacrifice: true,
-        genericCost: 0,
-      })
-    }
-  }
-
-  if (lowerName === 'food') {
-    abilities.push({
-      id: 'food-life',
-      label: '2, Tap, Sac: Gain 3',
-      kind: 'gain_life',
-      requiresTap: true,
-      sacrifice: true,
-      genericCost: 2,
-      amount: 3,
-    })
-  }
-
-  if (lowerName === 'clue') {
-    abilities.push({
-      id: 'clue-draw',
-      label: '2, Sac: Draw',
-      kind: 'draw_card',
-      requiresTap: false,
-      sacrifice: true,
-      genericCost: 2,
-    })
-  }
-
-  if (lowerName === 'map') {
-    abilities.push({
-      id: 'map-explore',
-      label: '1, Tap, Sac: Explore',
-      kind: 'explore_target_creature',
-      requiresTap: true,
-      sacrifice: true,
-      genericCost: 1,
-    })
-  }
-
-  if (lowerName === 'sol ring') {
-    abilities.push({ id: 'mana-C-2', label: 'Tap for CC', kind: 'add_mana', color: 'C', amount: 2, requiresTap: true })
-  }
-
-  if (lowerName === 'arcane signet' || lowerName === "commander's sphere") {
-    const colors: ColorSymbol[] = player.commander?.colorIdentity?.length ? player.commander.colorIdentity : ['W', 'U', 'B', 'R', 'G']
-    for (const color of colors) {
-      abilities.push({
-        id: `mana-${color}-1`,
-        label: `Tap for ${color}`,
-        kind: 'add_mana',
-        color,
-        amount: 1,
-        requiresTap: true,
-      })
-    }
-  }
-
-  if (lowerName === "commander's sphere") {
-    abilities.push({ id: 'draw-sac', label: 'Sacrifice: Draw', kind: 'draw_card', requiresTap: false, sacrifice: true, genericCost: 0 })
-  }
-
-  if (lowerName === 'devoted druid') {
-    abilities.push({ id: 'mana-G-1', label: 'Tap for G', kind: 'add_mana', color: 'G', amount: 1, requiresTap: true })
-    abilities.push({ id: 'untap-minus-one', label: 'Put -1/-1: Untap', kind: 'untap_self_add_minus_one_counter', requiresTap: false })
-  }
-
-  if (lowerName === 'ignoble hierarch') {
-    for (const color of ['B', 'R', 'G'] as const) {
-      abilities.push({ id: `mana-${color}-1`, label: `Tap for ${color}`, kind: 'add_mana', color, amount: 1, requiresTap: true })
-    }
-  }
-
-  if (lowerName === 'llanowar elves' || lowerName === 'elvish mystic' || lowerName === 'fyndhorn elves') {
-    abilities.push({ id: 'mana-G-1', label: 'Tap for G', kind: 'add_mana', color: 'G', amount: 1, requiresTap: true })
-  }
-
-  if (lowerName === 'channeler initiate') {
-    for (const color of ['W', 'U', 'B', 'R', 'G'] as const) {
-      abilities.push({
-        id: `remove-minus-one-${color}`,
-        label: `Remove -1/-1: Add ${color}`,
-        kind: 'remove_minus_one_counter_add_mana',
-        color,
-        amount: 1,
-        requiresTap: true,
-      })
-    }
-  }
-
-  if (lowerName === 'hazel of the rootbloom') {
-    abilities.push({
-      id: 'hazel-token-mana',
-      label: 'Tap tokens: Add mana',
-      kind: 'add_mana_from_tapped_tokens',
-      requiresTap: true,
-      lifeCost: 2,
-      genericCost: 0,
-    })
-  }
+  abilities.push(...getBespokeActivatedAbilities(card, player))
 
   const genericTapMana = oracleText.match(/\{T\}:\s*Add ((?:\{[WUBRGC]\})+)/i)
   if (abilities.length === 0 && genericTapMana) {
@@ -781,7 +652,7 @@ export function getActivatedAbilities(card: Pick<GameCard, 'name' | 'typeLine' |
 }
 
 export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'>): TriggeredAbilityDefinition[] {
-  const abilities: TriggeredAbilityDefinition[] = []
+  const abilities: TriggeredAbilityDefinition[] = getBespokeTriggeredAbilities(card)
   const oracleText = (card.oracleText ?? '').replace(/\n/g, ' ').toLowerCase()
   const lowerName = card.name.toLowerCase()
 
@@ -853,28 +724,6 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
     })
   }
 
-  if (lowerName === 'morbid opportunist') {
-    abilities.push({
-      id: 'dies-draw',
-      label: 'Dies trigger',
-      event: 'creature_dies',
-      match: 'any_creature',
-      effect: { kind: 'draw_cards', amount: 1 },
-      target: 'none',
-    })
-  }
-
-  if (lowerName === 'dread tiller') {
-    abilities.push({
-      id: 'etb-minus-one-target',
-      label: 'ETB trigger',
-      event: 'enters_battlefield',
-      match: 'self',
-      target: 'battlefield_creature',
-      effect: { kind: 'put_minus_one_counter_target_creature', amount: 1 },
-    })
-  }
-
   const selfDiesGainLife = oracleText.match(/when this (?:creature )?dies, you gain (\d+) life/)
   if (selfDiesGainLife) {
     abilities.push({
@@ -906,17 +755,6 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       match: 'self',
       target: 'opponent_graveyard_creature',
       effect: { kind: 'return_graveyard_creature_to_battlefield', target: 'opponent_graveyard_creature', exileOnLeave: lowerName === 'puppeteer clique' },
-    })
-  }
-
-  if (lowerName === 'necroskitter') {
-    abilities.push({
-      id: 'opponent-counter-dies-reanimate',
-      label: 'Dies trigger',
-      event: 'creature_dies',
-      match: 'opponent_creature_with_minus_one_counter_dies',
-      target: 'opponent_graveyard_creature',
-      effect: { kind: 'return_graveyard_creature_to_battlefield', target: 'opponent_graveyard_creature' },
     })
   }
 
@@ -953,17 +791,6 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       match: 'your_end_step',
       effect: endStepTokens,
       target: 'none',
-    })
-  }
-
-  if (lowerName === 'hazel of the rootbloom') {
-    abilities.push({
-      id: 'hazel-copy-token',
-      label: 'End step trigger',
-      event: 'end_step',
-      match: 'your_end_step',
-      target: 'token_you_control',
-      effect: { kind: 'copy_token', count: 1, doubleIfTargetSubtype: 'squirrel' },
     })
   }
 

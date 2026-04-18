@@ -1,6 +1,7 @@
 import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeckCard, PlayerZones, TurnPhase, StackItem, TokenTemplateKey, TriggerEffectPayload, ColorSymbol, QueuedEffectStep } from '@/types/game-state'
 import { checkEliminations } from './game-engine'
 import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getActivatedAbilities, getEtbCounters, getLandEntryEffect, getLandManaOptions, getPlaneswalkerAbilities, getSimpleSpellDefinition, getSimpleSpellSequence, getTokenTemplate, getTriggeredAbilities, landEntersTapped, resolveManaCost, type PlaneswalkerAbilityEffect, type TriggeredAbilityDefinition, type TriggerEffectDefinition } from './card-rules'
+import { hasBespokeSpellResolution } from './card-support'
 
 const MAX_LOG = 50
 const TURN_PHASES: TurnPhase[] = ['untap', 'upkeep', 'draw', 'main1', 'combat', 'main2', 'end']
@@ -4176,7 +4177,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       if (!caster || !card || isPermanentCard(card) || isLandCard(card)) return state
 
       const definition = getSimpleSpellDefinition(card)
-      const supportsCustomChoiceSpell = ["Black Sun's Zenith", 'Painful Truths', 'Deadly Dispute', 'Cathartic Pyre', 'Cathartic Reunion'].includes(card.name)
+      const supportsCustomChoiceSpell = hasBespokeSpellResolution(card.name)
       if (!definition && !supportsCustomChoiceSpell) return state
 
       const targetPlayer = action.targetPlayerId

@@ -13,6 +13,7 @@ import {
   getSimpleSpellSequence,
   getTriggeredAbilities,
 } from '../card-rules'
+import { getSupportedBespokeCardNames, hasBespokeSpellResolution } from '../card-support'
 import type { GameCard, ManaPool } from '@/types/game-state'
 
 // ---------------------------------------------------------------------------
@@ -160,6 +161,18 @@ describe('autoPayManaCost', () => {
 })
 
 describe('getActivatedAbilities', () => {
+  it('exposes supported bespoke card names for deck support tracking', () => {
+    const supported = getSupportedBespokeCardNames()
+
+    expect(supported).toContain('Hazel of the Rootbloom')
+    expect(supported).toContain("Black Sun's Zenith")
+  })
+
+  it('identifies bespoke spell-resolution cards', () => {
+    expect(hasBespokeSpellResolution('Deadly Dispute')).toBe(true)
+    expect(hasBespokeSpellResolution('Grizzly Bears')).toBe(false)
+  })
+
   it('detects Hazel token mana ability', () => {
     const abilities = getActivatedAbilities(makeCard({
       name: 'Hazel of the Rootbloom',

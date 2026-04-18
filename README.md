@@ -132,7 +132,18 @@ Important engine files:
 
 - [src/lib/game-reducer.ts](/Users/bcotsa/projects/Commander/src/lib/game-reducer.ts)
 - [src/lib/card-rules.ts](/Users/bcotsa/projects/Commander/src/lib/card-rules.ts)
+- [src/lib/card-support/index.ts](/Users/bcotsa/projects/Commander/src/lib/card-support/index.ts)
 - [src/types/game-state.ts](/Users/bcotsa/projects/Commander/src/types/game-state.ts)
+
+## Bespoke Card Support
+
+The engine uses a hybrid card-support model:
+
+- generic Oracle-text patterns live in [src/lib/card-rules.ts](/Users/bcotsa/projects/Commander/src/lib/card-rules.ts)
+- named-card support lives in [src/lib/card-support/index.ts](/Users/bcotsa/projects/Commander/src/lib/card-support/index.ts)
+- deeper bespoke spell resolution still runs through [src/lib/game-reducer.ts](/Users/bcotsa/projects/Commander/src/lib/game-reducer.ts), gated by the card-support registry
+
+Use the bespoke registry for playgroup cards that need exact handling instead of adding new scattered `card.name === ...` checks.
 
 ## Release Version
 
@@ -151,4 +162,3 @@ Likely next phases include:
 - better spell/stack coverage
 - more accurate response windows
 - improved multiplayer rules enforcement
-
