@@ -863,7 +863,7 @@ export function PlayerTile({
                 </button>
               )
             })}
-          {canControlPlayer && (selected.zone === 'battlefield' || selected.zone === 'lands') && (
+          {canControlPlayer && (selected.zone === 'battlefield' || selected.zone === 'lands') && card.tokenKey !== 'treasure' && (
             <button
               onClick={() => {
                 onToggleTapped(card.instanceId)

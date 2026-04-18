@@ -954,6 +954,51 @@ describe('Toggle card tapped', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Token activated abilities
+// ---------------------------------------------------------------------------
+
+describe('Token activated abilities', () => {
+  it('sacrifices a Treasure when activating it for mana', () => {
+    const treasure = makeCard({
+      instanceId: 'treasure-1',
+      name: 'Treasure',
+      typeLine: 'Token Artifact — Treasure',
+      oracleText: '{T}, Sacrifice this artifact: Add one mana of any color.',
+      power: null,
+      toughness: null,
+      isToken: true,
+      tokenKey: 'treasure',
+    })
+    const base = twoPlayerGame()
+    const state = {
+      ...base,
+      players: base.players.map(player =>
+        player.id === 'p1'
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                battlefield: [treasure],
+              },
+            }
+          : player
+      ),
+    }
+
+    const next = gameReducer(state, {
+      type: 'ACTIVATE_ABILITY',
+      playerId: 'p1',
+      cardId: treasure.instanceId,
+      abilityId: 'treasure-G',
+    })
+
+    expect(getPlayer(next, 'p1').manaPool.G).toBe(1)
+    expect(getPlayer(next, 'p1').zones.battlefield).toHaveLength(0)
+    expect(getPlayer(next, 'p1').zones.graveyard).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Scry
 // ---------------------------------------------------------------------------
 

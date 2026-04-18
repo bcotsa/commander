@@ -376,6 +376,20 @@ describe('getTriggeredAbilities', () => {
     expect(abilities.some(ability => ability.event === 'attacks')).toBe(true)
   })
 
+  it('does not duplicate simple ETB token triggers', () => {
+    const abilities = getTriggeredAbilities({
+      name: 'Prosperous Innkeeper',
+      oracleText: 'When Prosperous Innkeeper enters the battlefield, create a Treasure token.',
+    })
+    const treasureEtbTriggers = abilities.filter(ability =>
+      ability.event === 'enters_battlefield'
+      && ability.match === 'self'
+      && ability.effect.kind === 'create_tokens'
+      && ability.effect.tokenKey === 'treasure'
+    )
+    expect(treasureEtbTriggers).toHaveLength(1)
+  })
+
   it('parses generic ETB scry triggers', () => {
     const abilities = getTriggeredAbilities({
       name: 'Watcher for Tomorrow',

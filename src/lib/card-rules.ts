@@ -1094,7 +1094,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
   }
 
   const genericEtbEffect = parseTriggeredSimpleEffect(oracleText, /(?:when|whenever) [^.,]* enters(?: the battlefield)?, ([^.]+)/i)
-  if (genericEtbEffect) {
+  if (genericEtbEffect && !hasDuplicateTriggeredAbility(abilities, 'enters_battlefield', 'self', genericEtbEffect.effect, genericEtbEffect.target)) {
     abilities.push({
       id: 'generic-etb-effect',
       label: 'ETB trigger',
@@ -1106,7 +1106,7 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
   }
 
   const genericAttackEffect = parseTriggeredSimpleEffect(oracleText, /(?:when|whenever) [^.,]* attacks, ([^.]+)/i)
-  if (genericAttackEffect) {
+  if (genericAttackEffect && !hasDuplicateTriggeredAbility(abilities, 'attacks', 'self', genericAttackEffect.effect, genericAttackEffect.target)) {
     abilities.push({
       id: 'generic-attack-effect',
       label: 'Attack trigger',
@@ -1119,22 +1119,26 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
 
   const genericEtbOrAttackEffect = parseTriggeredSimpleEffect(oracleText, /(?:when|whenever) [^.,]* enters(?: the battlefield)? or attacks, ([^.]+)/i)
   if (genericEtbOrAttackEffect) {
-    abilities.push({
-      id: 'generic-etb-or-attack-effect-etb',
-      label: 'ETB trigger',
-      event: 'enters_battlefield',
-      match: 'self',
-      effect: genericEtbOrAttackEffect.effect,
-      target: genericEtbOrAttackEffect.target,
-    })
-    abilities.push({
-      id: 'generic-etb-or-attack-effect-attack',
-      label: 'Attack trigger',
-      event: 'attacks',
-      match: 'self',
-      effect: genericEtbOrAttackEffect.effect,
-      target: genericEtbOrAttackEffect.target,
-    })
+    if (!hasDuplicateTriggeredAbility(abilities, 'enters_battlefield', 'self', genericEtbOrAttackEffect.effect, genericEtbOrAttackEffect.target)) {
+      abilities.push({
+        id: 'generic-etb-or-attack-effect-etb',
+        label: 'ETB trigger',
+        event: 'enters_battlefield',
+        match: 'self',
+        effect: genericEtbOrAttackEffect.effect,
+        target: genericEtbOrAttackEffect.target,
+      })
+    }
+    if (!hasDuplicateTriggeredAbility(abilities, 'attacks', 'self', genericEtbOrAttackEffect.effect, genericEtbOrAttackEffect.target)) {
+      abilities.push({
+        id: 'generic-etb-or-attack-effect-attack',
+        label: 'Attack trigger',
+        event: 'attacks',
+        match: 'self',
+        effect: genericEtbOrAttackEffect.effect,
+        target: genericEtbOrAttackEffect.target,
+      })
+    }
   }
 
   return abilities
@@ -1548,7 +1552,15 @@ function sequenceStepToSimpleSpell(step: QueuedEffectStep): SimpleSpellDefinitio
 function simpleSpellToTriggerEffect(definition: SimpleSpellDefinition): { effect: TriggerEffectDefinition; target: TriggeredAbilityDefinition['target'] } | null {
   switch (definition.kind) {
     case 'create_tokens':
-      return { effect: definition, target: 'none' }
+      return {
+        effect: {
+          kind: 'create_tokens',
+          tokenKey: definition.tokenKey,
+          count: definition.count,
+          tapped: definition.tapped,
+        },
+        target: 'none',
+      }
     case 'draw_cards':
       return { effect: { kind: 'draw_cards', amount: definition.amount }, target: 'none' }
     case 'gain_life':
@@ -1574,6 +1586,31 @@ function simpleSpellToTriggerEffect(definition: SimpleSpellDefinition): { effect
     default:
       return null
   }
+}
+
+function hasDuplicateTriggeredAbility(
+  abilities: TriggeredAbilityDefinition[],
+  event: TriggerEventType,
+  match: TriggeredAbilityDefinition['match'],
+  effect: TriggerEffectDefinition,
+  target: TriggeredAbilityDefinition['target']
+): boolean {
+  return abilities.some(ability =>
+    ability.event === event
+    && ability.match === match
+    && (ability.target ?? 'none') === (target ?? 'none')
+    && triggerEffectsAreEquivalent(ability.effect, effect)
+  )
+}
+
+function triggerEffectsAreEquivalent(left: TriggerEffectDefinition, right: TriggerEffectDefinition): boolean {
+  if (left.kind !== right.kind) return false
+  if (left.kind === 'create_tokens' && right.kind === 'create_tokens') {
+    return left.tokenKey === right.tokenKey
+      && left.count === right.count
+      && Boolean(left.tapped) === Boolean(right.tapped)
+  }
+  return JSON.stringify(left) === JSON.stringify(right)
 }
 
 function parseTriggeredSimpleEffect(
