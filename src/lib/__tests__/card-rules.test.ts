@@ -14,7 +14,9 @@ import {
   getTriggeredAbilities,
 } from '../card-rules'
 import { getSupportedBespokeCardNames, hasBespokeSpellResolution } from '../card-support'
+import { auditImportedDeck } from '../deck-support-audit'
 import type { GameCard, ManaPool } from '@/types/game-state'
+import type { ImportedDeck, ImportedDeckCard } from '@/types/game-state'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -43,6 +45,22 @@ function makeCard(overrides: Partial<GameCard> = {}): GameCard {
     isCommander: false,
     isToken: false,
     ...overrides,
+  }
+}
+
+function makeImportedDeckCard(overrides: Partial<ImportedDeckCard>): ImportedDeckCard {
+  return {
+    scryfallId: null,
+    name: overrides.name ?? 'Test Card',
+    quantity: overrides.quantity ?? 1,
+    imageUri: '',
+    colorIdentity: [],
+    manaCost: overrides.manaCost ?? null,
+    oracleText: overrides.oracleText ?? null,
+    typeLine: overrides.typeLine ?? 'Creature — Human',
+    power: overrides.power ?? 2,
+    toughness: overrides.toughness ?? 2,
+    loyalty: overrides.loyalty ?? null,
   }
 }
 
@@ -181,6 +199,62 @@ describe('getActivatedAbilities', () => {
     }), { commander: null })
 
     expect(abilities.some(ability => ability.kind === 'add_mana_from_tapped_tokens')).toBe(true)
+  })
+})
+
+describe('auditImportedDeck', () => {
+  it('summarizes resolved deck support levels and queues unsupported spells first', () => {
+    const deck: ImportedDeck = {
+      source: 'moxfield',
+      sourceId: 'test',
+      sourceUrl: '',
+      name: 'Audit Test Deck',
+      format: 'commander',
+      lastSyncedAt: '2026-04-18T00:00:00.000Z',
+      cardCount: 3,
+      commanders: [
+        makeImportedDeckCard({
+          name: 'Hazel of the Rootbloom',
+          typeLine: 'Legendary Creature — Squirrel Druid',
+          manaCost: '{2}{B}{G}',
+          oracleText: 'At the beginning of your end step, create a token that\'s a copy of target token you control. If that token is a Squirrel, instead create two tokens that are copies of it.',
+          power: 3,
+          toughness: 5,
+        }),
+      ],
+      mainboard: [
+        makeImportedDeckCard({
+          name: 'Forest',
+          typeLine: 'Basic Land — Forest',
+          oracleText: '{T}: Add {G}.',
+          power: null,
+          toughness: null,
+        }),
+        makeImportedDeckCard({
+          name: 'Murder',
+          typeLine: 'Instant',
+          manaCost: '{1}{B}{B}',
+          oracleText: 'Destroy target creature.',
+          power: null,
+          toughness: null,
+        }),
+        makeImportedDeckCard({
+          name: 'Mystery Spell',
+          typeLine: 'Sorcery',
+          manaCost: '{2}{U}',
+          oracleText: 'Do a very complicated unsupported thing.',
+          power: null,
+          toughness: null,
+        }),
+      ],
+    }
+
+    const audit = auditImportedDeck(deck)
+
+    expect(audit.summary.automated.unique).toBe(2)
+    expect(audit.summary.partial.unique).toBe(1)
+    expect(audit.summary.unsupported.unique).toBe(1)
+    expect(audit.priorityQueue[0]?.name).toBe('Mystery Spell')
   })
 })
 

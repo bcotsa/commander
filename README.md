@@ -145,6 +145,16 @@ The engine uses a hybrid card-support model:
 
 Use the bespoke registry for playgroup cards that need exact handling instead of adding new scattered `card.name === ...` checks.
 
+## Deck Support Audits
+
+Run the static built-in deck audit with:
+
+```sh
+npm run audit:decks
+```
+
+This CLI compares the hardcoded test decklists against the bespoke registry and a small static core list. For deeper Oracle-text classification, use `auditImportedDeck` from [src/lib/deck-support-audit.ts](/Users/bcotsa/projects/Commander/src/lib/deck-support-audit.ts) after a deck has been resolved through the normal importer.
+
 ## Release Version
 
 The app shows a semantic version badge in the UI from:
