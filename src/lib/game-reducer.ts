@@ -139,6 +139,23 @@ function createTokenCard(tokenKey: TokenTemplateKey, tapped = false): GameCard {
   }
 }
 
+function copyTokenCard(source: GameCard): GameCard {
+  return {
+    ...source,
+    instanceId: `token-copy-${source.tokenKey ?? source.name}-${crypto.randomUUID()}`,
+    tapped: false,
+    markedDamage: 0,
+    summoningSick: isCreatureCard(source),
+    plusOneCounters: 0,
+    minusOneCounters: 0,
+    loyalty: source.startingLoyalty,
+    loyaltyActivatedThisTurn: false,
+    isCommander: false,
+    isToken: true,
+    exileOnLeave: false,
+  }
+}
+
 type TriggerOccurrence =
   | { type: 'enters_battlefield'; controllerId: string; card: GameCard }
   | { type: 'land_enters'; controllerId: string; card: GameCard }
@@ -156,6 +173,19 @@ function createTokensForPlayer(player: Player, tokenKey: TokenTemplateKey, count
   if (count <= 0) return []
 
   const tokens = Array.from({ length: count }, () => createTokenCard(tokenKey, tapped))
+  return applyTokenCreationReplacements(player, tokens, tapped)
+}
+
+function createTokenCopiesForPlayer(player: Player, targetToken: GameCard, count: number): GameCard[] {
+  if (count <= 0) return []
+
+  const tokens = Array.from({ length: count }, () => copyTokenCard(targetToken))
+  return applyTokenCreationReplacements(player, tokens, false)
+}
+
+function applyTokenCreationReplacements(player: Player, tokens: GameCard[], tapped = false): GameCard[] {
+  if (tokens.length === 0) return tokens
+
   const lowerBattlefieldNames = player.zones.battlefield.map(card => card.name.toLowerCase())
   const chatterfangCount = lowerBattlefieldNames.filter(name => name === 'chatterfang, squirrel general').length
 
@@ -168,6 +198,18 @@ function createTokensForPlayer(player: Player, tokenKey: TokenTemplateKey, count
   }
 
   return totalTokens
+}
+
+function pushTokenEnterOccurrences(triggerOccurrences: TriggerOccurrence[], controllerId: string, tokens: GameCard[]) {
+  if (tokens.length > 0) {
+    triggerOccurrences.push({ type: 'token_created', controllerId, card: tokens[0] })
+  }
+  for (const token of tokens) {
+    triggerOccurrences.push({ type: 'enters_battlefield', controllerId, card: token })
+    if (isCreatureCard(token)) {
+      triggerOccurrences.push({ type: 'creature_enters', controllerId, card: token })
+    }
+  }
 }
 
 function createScryChoice(players: Player[], playerId: string, sourceName: string, amount: number): GameState['pendingScryChoice'] {
@@ -1445,6 +1487,14 @@ function resolveTriggerEffect(effect: TriggerEffectDefinition, state: GameState,
     }
   }
 
+  if (effect.kind === 'copy_token') {
+    return {
+      kind: 'copy_token',
+      count: effect.count,
+      doubleIfTargetSubtype: effect.doubleIfTargetSubtype,
+    }
+  }
+
   if (effect.kind === 'create_tokens_from_counter_placement') {
     return {
       kind: 'create_tokens',
@@ -1612,6 +1662,9 @@ function queueTriggeredAbilities(state: GameState, occurrences: TriggerOccurrenc
         )
         ? occurrence.card.instanceId
         : undefined
+    if (ability.target && ability.target !== 'none' && !targetCardId && !hasLegalTriggerTarget(state, ability.target, controllerId)) {
+      return
+    }
 
     triggers.push({
       id: crypto.randomUUID(),
@@ -1680,6 +1733,24 @@ function getPendingTriggerTargetChoice(stack: StackItem[]): GameState['pendingTr
     sourceName: nextTargetTrigger.card.name,
     targetType: nextTargetTrigger.triggerTargetType!,
   }
+}
+
+function hasLegalTriggerTarget(state: GameState, targetType: NonNullable<TriggeredAbilityDefinition['target']>, controllerId: string): boolean {
+  if (targetType === 'none') return true
+  if (targetType === 'battlefield_creature') {
+    return state.players.some(player => player.zones.battlefield.some(isCreatureCard))
+  }
+  if (targetType === 'token_you_control') {
+    return state.players
+      .find(player => player.id === controllerId)
+      ?.zones.battlefield.some(card => card.isToken) ?? false
+  }
+
+  return state.players.some(player => {
+    if (targetType === 'own_graveyard_creature' && player.id !== controllerId) return false
+    if (targetType === 'opponent_graveyard_creature' && player.id === controllerId) return false
+    return player.zones.graveyard.some(isCreatureCard)
+  })
 }
 
 function describeTarget(state: GameState, targetCardId?: string, targetPlayerId?: string): string {
@@ -1901,6 +1972,31 @@ function resolveStackTop(state: GameState): GameState {
             triggerOccurrences.push({ type: 'creature_enters', controllerId: stackItem.casterId, card: token })
           }
         }
+        break
+      }
+      case 'copy_token': {
+        const tokenController = players.find(player => player.id === stackItem.casterId)
+        const targetToken = stackItem.targetCardId
+          ? tokenController?.zones.battlefield.find(entry => entry.instanceId === stackItem.targetCardId && entry.isToken) ?? null
+          : null
+        const copyCount = targetToken && effect.doubleIfTargetSubtype && targetToken.typeLine.toLowerCase().includes(effect.doubleIfTargetSubtype.toLowerCase())
+          ? effect.count * 2
+          : effect.count
+        const createdTokens = tokenController && targetToken
+          ? createTokenCopiesForPlayer(tokenController, targetToken, copyCount)
+          : []
+        players = players.map(player =>
+          player.id === stackItem.casterId
+            ? {
+                ...player,
+                zones: {
+                  ...player.zones,
+                  battlefield: [...player.zones.battlefield, ...createdTokens],
+                },
+              }
+            : player
+        )
+        pushTokenEnterOccurrences(triggerOccurrences, stackItem.casterId, createdTokens)
         break
       }
       case 'draw_cards':
@@ -2951,6 +3047,10 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         ) ?? null
         const targetCard = targetOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!targetCard || !isCreatureCard(targetCard)) return state
+      } else if (choice.targetType === 'token_you_control') {
+        const controller = state.players.find(player => player.id === action.playerId) ?? null
+        const targetCard = controller?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
+        if (!targetCard || !targetCard.isToken) return state
       } else {
         const { owner, card } = findGraveyardCard(state.players, action.targetCardId)
         if (!owner || !card || !isCreatureCard(card) || !graveyardTargetMatches(choice.targetType, action.playerId, owner.id)) return state
@@ -3491,6 +3591,43 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           player
         )
         if ((ability.genericCost ?? 0) > 0 && !payment) return player
+
+        if (ability.kind === 'add_mana_from_tapped_tokens') {
+          const selectedTokenIds = action.options?.selectedCardIds ?? []
+          const manaColors = action.options?.manaColors ?? []
+          const selectedIdSet = new Set(selectedTokenIds)
+          const selectedTokens = player.zones.battlefield.filter(entry => selectedIdSet.has(entry.instanceId))
+          const allowedColors = new Set<ColorSymbol>(['W', 'U', 'B', 'R', 'G'])
+          if (selectedTokenIds.length === 0 || selectedTokens.length !== selectedTokenIds.length) return player
+          if (manaColors.length !== selectedTokenIds.length || !manaColors.every(color => allowedColors.has(color))) return player
+          if (selectedTokens.some(token => !token.isToken || token.tapped || token.instanceId === action.cardId)) return player
+          if (player.life < ability.lifeCost) return player
+
+          changed = true
+
+          const nextManaPool = { ...(payment?.manaPool ?? player.manaPool) }
+          for (const color of manaColors) {
+            nextManaPool[color] += 1
+          }
+
+          return {
+            ...player,
+            life: player.life - ability.lifeCost,
+            manaPool: nextManaPool,
+            zones: {
+              ...mergePaidCardsIntoZones(player, payment?.cards).zones,
+              battlefield: mergePaidCardsIntoZones(player, payment?.cards).zones.battlefield.map(entry => {
+                if (entry.instanceId === action.cardId) {
+                  return { ...entry, tapped: ability.requiresTap ? true : entry.tapped }
+                }
+                if (selectedIdSet.has(entry.instanceId)) {
+                  return { ...entry, tapped: true }
+                }
+                return entry
+              }),
+            },
+          }
+        }
 
         changed = true
 

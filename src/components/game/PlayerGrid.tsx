@@ -16,7 +16,7 @@ interface PlayerGridProps {
   onCardCounterChange: (playerId: string, cardId: string, counter: 'plusOne' | 'minusOne' | 'loyalty', delta: number) => void
   onMoveCard: (playerId: string, from: import('@/types/game-state').ZoneName, to: import('@/types/game-state').ZoneName, cardId: string) => void
   onToggleTapped: (playerId: string, cardId: string) => void
-  onActivateAbility: (playerId: string, cardId: string, abilityId: string, targetCardId?: string) => void
+  onActivateAbility: (playerId: string, cardId: string, abilityId: string, targetCardId?: string, options?: CastOptions) => void
   onActivatePlaneswalkerAbility: (playerId: string, cardId: string, abilityId: string, targetCardId?: string, targetPlayerId?: string) => void
   onPlayLand: (playerId: string, cardId: string) => void
   onCastCommander: (playerId: string, cardId: string, options?: CastOptions) => void
@@ -64,7 +64,7 @@ export function PlayerGrid({ players, currentTurnPlayerId, priorityPlayerId, isH
             onCardCounterChange={(cardId, counter, delta) => onCardCounterChange(player.id, cardId, counter, delta)}
             onMoveCard={(from, to, cardId) => onMoveCard(player.id, from, to, cardId)}
             onToggleTapped={(cardId) => onToggleTapped(player.id, cardId)}
-            onActivateAbility={(cardId, abilityId, targetCardId) => onActivateAbility(player.id, cardId, abilityId, targetCardId)}
+            onActivateAbility={(cardId, abilityId, targetCardId, options) => onActivateAbility(player.id, cardId, abilityId, targetCardId, options)}
             onActivatePlaneswalkerAbility={(cardId, abilityId, targetCardId, targetPlayerId) => onActivatePlaneswalkerAbility(player.id, cardId, abilityId, targetCardId, targetPlayerId)}
             onPlayLand={(cardId) => onPlayLand(player.id, cardId)}
             onCastCommander={(cardId, options) => onCastCommander(player.id, cardId, options)}

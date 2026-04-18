@@ -16,12 +16,19 @@ export function TriggerTargetOverlay({
   onChoose,
 }: TriggerTargetOverlayProps) {
   const canControl = canControlAllPlayers || choice.playerId === myPlayerId
-  const creatureTargets = choice.targetType === 'battlefield_creature'
+  const targets = choice.targetType === 'battlefield_creature'
     ? players.flatMap(player =>
         player.zones.battlefield
           .filter(card => card.typeLine.toLowerCase().includes('creature'))
           .map(card => ({ player, card }))
       )
+    : choice.targetType === 'token_you_control'
+    ? players.flatMap(player => {
+        if (player.id !== choice.playerId) return []
+        return player.zones.battlefield
+          .filter(card => card.isToken)
+          .map(card => ({ player, card }))
+      })
     : players.flatMap(player => {
         if (choice.targetType === 'own_graveyard_creature' && player.id !== choice.playerId) return []
         if (choice.targetType === 'opponent_graveyard_creature' && player.id === choice.playerId) return []
@@ -31,6 +38,8 @@ export function TriggerTargetOverlay({
       })
   const targetLabel = choice.targetType === 'battlefield_creature'
     ? 'Choose a creature target for this trigger'
+    : choice.targetType === 'token_you_control'
+    ? 'Choose a token you control for this trigger'
     : 'Choose a graveyard creature target for this trigger'
 
   return (
@@ -42,7 +51,7 @@ export function TriggerTargetOverlay({
         </div>
 
         <div className="grid max-h-[60vh] gap-2 overflow-y-auto">
-          {creatureTargets.map(({ player, card }) => (
+          {targets.map(({ player, card }) => (
             <button
               key={card.instanceId}
               type="button"
@@ -53,9 +62,9 @@ export function TriggerTargetOverlay({
               {player.name}: {card.name}
             </button>
           ))}
-          {creatureTargets.length === 0 && (
+          {targets.length === 0 && (
             <div className="rounded-lg border border-dashed border-slate-700 px-4 py-6 text-sm text-slate-500">
-              No creature targets available
+              No targets available
             </div>
           )}
         </div>

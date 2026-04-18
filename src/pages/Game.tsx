@@ -94,7 +94,7 @@ export function Game() {
           onCardCounterChange={(pid, cardId, counter, delta) => sendAction({ type: 'CARD_COUNTER_CHANGE', playerId: pid, cardId, counter, delta })}
           onMoveCard={(pid, from, to, cardId) => sendAction({ type: 'MOVE_CARD', playerId: pid, from, to, cardId })}
           onToggleTapped={(pid, cardId) => sendAction({ type: 'TOGGLE_CARD_TAPPED', playerId: pid, cardId })}
-          onActivateAbility={(pid, cardId, abilityId, targetCardId) => sendAction({ type: 'ACTIVATE_ABILITY', playerId: pid, cardId, abilityId, targetCardId })}
+          onActivateAbility={(pid, cardId, abilityId, targetCardId, options) => sendAction({ type: 'ACTIVATE_ABILITY', playerId: pid, cardId, abilityId, targetCardId, options })}
           onActivatePlaneswalkerAbility={(pid, cardId, abilityId, targetCardId, targetPlayerId) => sendAction({ type: 'ACTIVATE_PLANESWALKER_ABILITY', playerId: pid, cardId, abilityId, targetCardId, targetPlayerId })}
           onPlayLand={(pid, cardId) => sendAction({ type: 'PLAY_LAND', playerId: pid, cardId })}
           onCastCommander={(pid, cardId, options) => sendAction({ type: 'CAST_COMMANDER', playerId: pid, cardId, options })}

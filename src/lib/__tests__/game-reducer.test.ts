@@ -996,6 +996,160 @@ describe('Token activated abilities', () => {
     expect(getPlayer(next, 'p1').zones.battlefield).toHaveLength(0)
     expect(getPlayer(next, 'p1').zones.graveyard).toHaveLength(0)
   })
+
+  it('activates Hazel by tapping chosen tokens for mana', () => {
+    const hazel = makeCard({
+      instanceId: 'hazel-1',
+      name: 'Hazel of the Rootbloom',
+      typeLine: 'Legendary Creature — Squirrel Druid',
+      oracleText: '{T}, Pay 2 life, Tap X untapped tokens you control: Add X mana in any combination of colors.',
+      power: 3,
+      toughness: 5,
+    })
+    const squirrel = makeCard({
+      instanceId: 'squirrel-1',
+      name: 'Squirrel',
+      typeLine: 'Token Creature — Squirrel',
+      oracleText: null,
+      power: 1,
+      toughness: 1,
+      isToken: true,
+      tokenKey: 'squirrel',
+    })
+    const food = makeCard({
+      instanceId: 'food-1',
+      name: 'Food',
+      typeLine: 'Token Artifact — Food',
+      oracleText: '{2}, {T}, Sacrifice this artifact: You gain 3 life.',
+      power: null,
+      toughness: null,
+      isToken: true,
+      tokenKey: 'food',
+    })
+    const base = twoPlayerGame()
+    const state = {
+      ...base,
+      players: base.players.map(player =>
+        player.id === 'p1'
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                battlefield: [hazel, squirrel, food],
+              },
+            }
+          : player
+      ),
+    }
+
+    const next = gameReducer(state, {
+      type: 'ACTIVATE_ABILITY',
+      playerId: 'p1',
+      cardId: hazel.instanceId,
+      abilityId: 'hazel-token-mana',
+      options: {
+        selectedCardIds: [squirrel.instanceId, food.instanceId],
+        manaColors: ['G', 'B'],
+      },
+    })
+
+    const p1 = getPlayer(next, 'p1')
+    expect(p1.life).toBe(38)
+    expect(p1.manaPool.G).toBe(1)
+    expect(p1.manaPool.B).toBe(1)
+    expect(p1.zones.battlefield.find(card => card.instanceId === hazel.instanceId)?.tapped).toBe(true)
+    expect(p1.zones.battlefield.find(card => card.instanceId === squirrel.instanceId)?.tapped).toBe(true)
+    expect(p1.zones.battlefield.find(card => card.instanceId === food.instanceId)?.tapped).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Token copy triggers
+// ---------------------------------------------------------------------------
+
+describe('Token copy triggers', () => {
+  it('does not queue Hazel trigger when no token target exists', () => {
+    const hazel = makeCard({
+      instanceId: 'hazel-no-token',
+      name: 'Hazel of the Rootbloom',
+      typeLine: 'Legendary Creature — Squirrel Druid',
+      oracleText: 'At the beginning of your end step, create a token that\'s a copy of target token you control. If that token is a Squirrel, instead create two tokens that are copies of it.',
+      power: 3,
+      toughness: 5,
+    })
+    const base = twoPlayerGame()
+    const state = {
+      ...base,
+      currentPhase: 'main2' as const,
+      players: base.players.map(player =>
+        player.id === 'p1'
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                battlefield: [hazel],
+              },
+            }
+          : player
+      ),
+    }
+
+    const next = gameReducer(state, { type: 'NEXT_STEP' })
+
+    expect(next.pendingTriggerTargetChoice).toBeNull()
+    expect(next.stack).toHaveLength(0)
+  })
+
+  it('copies a Squirrel token twice for Hazel end step trigger', () => {
+    const hazel = makeCard({
+      instanceId: 'hazel-copy-source',
+      name: 'Hazel of the Rootbloom',
+      typeLine: 'Legendary Creature — Squirrel Druid',
+      oracleText: 'At the beginning of your end step, choose up to one target token you control. Create a token that\'s a copy of it. If you control a Squirrel, create two tokens that are copies of it instead.',
+      power: 3,
+      toughness: 5,
+    })
+    const squirrel = makeCard({
+      instanceId: 'squirrel-copy-target',
+      name: 'Squirrel',
+      typeLine: 'Token Creature — Squirrel',
+      oracleText: null,
+      power: 1,
+      toughness: 1,
+      isToken: true,
+      tokenKey: 'squirrel',
+    })
+    const base = twoPlayerGame()
+    const state = {
+      ...base,
+      currentPhase: 'main2' as const,
+      players: base.players.map(player =>
+        player.id === 'p1'
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                battlefield: [hazel, squirrel],
+              },
+            }
+          : player
+      ),
+    }
+
+    const withTrigger = gameReducer(state, { type: 'NEXT_STEP' })
+    expect(withTrigger.pendingTriggerTargetChoice?.targetType).toBe('token_you_control')
+
+    const targeted = gameReducer(withTrigger, {
+      type: 'SET_TRIGGER_TARGET',
+      playerId: 'p1',
+      stackItemId: withTrigger.pendingTriggerTargetChoice?.stackItemId ?? '',
+      targetCardId: squirrel.instanceId,
+    })
+    const resolved = gameReducer(targeted, { type: 'RESOLVE_STACK' })
+
+    const p1 = getPlayer(resolved, 'p1')
+    expect(p1.zones.battlefield.filter(card => card.name === 'Squirrel')).toHaveLength(3)
+  })
 })
 
 // ---------------------------------------------------------------------------

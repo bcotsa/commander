@@ -8,6 +8,7 @@ import {
   formatManaPool,
   getLandEntryEffect,
   getLandManaOptions,
+  getActivatedAbilities,
   getSimpleSpellDefinition,
   getSimpleSpellSequence,
   getTriggeredAbilities,
@@ -155,6 +156,18 @@ describe('autoPayManaCost', () => {
     const result = autoPayManaCost(pool, [], '{G}', player)
     expect(result).not.toBeNull()
     expect(result!.manaPool.G).toBe(0)
+  })
+})
+
+describe('getActivatedAbilities', () => {
+  it('detects Hazel token mana ability', () => {
+    const abilities = getActivatedAbilities(makeCard({
+      name: 'Hazel of the Rootbloom',
+      typeLine: 'Legendary Creature — Squirrel Druid',
+      oracleText: '{T}, Pay 2 life, Tap X untapped tokens you control: Add X mana in any combination of colors.',
+    }), { commander: null })
+
+    expect(abilities.some(ability => ability.kind === 'add_mana_from_tapped_tokens')).toBe(true)
   })
 })
 
@@ -404,6 +417,19 @@ describe('getTriggeredAbilities', () => {
       oracleText: 'When Dimir Informant enters the battlefield, surveil 2.',
     })
     expect(abilities.some(ability => ability.event === 'enters_battlefield' && ability.effect.kind === 'surveil')).toBe(true)
+  })
+
+  it('detects Hazel end step token-copy trigger', () => {
+    const abilities = getTriggeredAbilities({
+      name: 'Hazel of the Rootbloom',
+      oracleText: 'At the beginning of your end step, choose up to one target token you control. Create a token that\'s a copy of it. If you control a Squirrel, create two tokens that are copies of it instead.',
+    })
+
+    expect(abilities.some(ability =>
+      ability.event === 'end_step'
+      && ability.target === 'token_you_control'
+      && ability.effect.kind === 'copy_token'
+    )).toBe(true)
   })
 })
 

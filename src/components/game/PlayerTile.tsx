@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { CastChoiceOverlay } from '@/components/game/CastChoiceOverlay'
 import { ColorPips } from '@/components/ui/ColorPips'
 import { CardPreview } from '@/components/ui/CardPreview'
-import type { CastOptions, Player, GameCard, ZoneName, TurnPhase, CombatState } from '@/types/game-state'
+import type { CastOptions, ColorSymbol, Player, GameCard, ZoneName, TurnPhase, CombatState } from '@/types/game-state'
 import { canAutoPayManaCost, formatManaPool, getActivatedAbilities, getCastChoiceSpec, getPlaneswalkerAbilities, getSimpleSpellDefinition } from '@/lib/card-rules'
 import { getTokenImageUri } from '@/lib/scryfall'
 
@@ -106,6 +106,118 @@ function CardThumb({
         {inner}
       </CardPreview>
     </button>
+  )
+}
+
+function TokenManaAbilityOverlay({
+  player,
+  sourceCard,
+  onCancel,
+  onConfirm,
+}: {
+  player: Player
+  sourceCard: GameCard
+  onCancel: () => void
+  onConfirm: (options: CastOptions) => void
+}) {
+  const availableColors: ColorSymbol[] = ['W', 'U', 'B', 'R', 'G']
+  const untappedTokens = player.zones.battlefield.filter(card =>
+    card.instanceId !== sourceCard.instanceId && card.isToken && !card.tapped
+  )
+  const [selectedCardIds, setSelectedCardIds] = useState<string[]>(untappedTokens[0] ? [untappedTokens[0].instanceId] : [])
+  const [color, setColor] = useState<ColorSymbol>(availableColors[0] ?? 'G')
+  const canConfirm = selectedCardIds.length > 0 && player.life >= 2 && !sourceCard.tapped
+
+  return (
+    <div className="fixed inset-0 z-[85] flex items-center justify-center bg-slate-950/90 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-xl rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl">
+        <div className="mb-4">
+          <div className="text-lg font-semibold text-white">{sourceCard.name}</div>
+          <div className="text-sm text-slate-400">
+            Pay 2 life, tap Hazel, and tap any number of untapped tokens to add that much mana.
+          </div>
+        </div>
+
+        <div className="mb-4">
+          <div className="mb-2 text-sm font-medium text-slate-200">Tokens to tap</div>
+          <div className="grid max-h-52 gap-2 overflow-y-auto">
+            {untappedTokens.map(token => {
+              const checked = selectedCardIds.includes(token.instanceId)
+              return (
+                <label key={token.instanceId} className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => {
+                      setSelectedCardIds(current =>
+                        checked
+                          ? current.filter(id => id !== token.instanceId)
+                          : [...current, token.instanceId]
+                      )
+                    }}
+                  />
+                  <span>{token.name}</span>
+                </label>
+              )
+            })}
+            {untappedTokens.length === 0 && (
+              <div className="rounded-lg border border-dashed border-slate-700 px-4 py-6 text-sm text-slate-500">
+                No untapped tokens available
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mb-4">
+          <div className="mb-2 text-sm font-medium text-slate-200">Mana color for this first pass</div>
+          <div className="flex flex-wrap gap-2">
+            {availableColors.map(entry => (
+              <button
+                key={entry}
+                type="button"
+                onClick={() => setColor(entry)}
+                className={`rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+                  color === entry
+                    ? 'border-emerald-400 bg-emerald-900/60 text-white'
+                    : 'border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                {entry}
+              </button>
+            ))}
+          </div>
+          <div className="mt-2 text-xs text-slate-500">
+            Adds {selectedCardIds.length} {color} mana. Mixed-color distribution can come next.
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between">
+          <div className="text-xs text-slate-500">
+            {sourceCard.tapped ? 'Hazel is tapped' : player.life < 2 ? 'Not enough life to pay' : `${selectedCardIds.length} token${selectedCardIds.length === 1 ? '' : 's'} selected`}
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => onConfirm({
+                selectedCardIds,
+                manaColors: selectedCardIds.map(() => color),
+              })}
+              disabled={!canConfirm}
+              className="rounded-lg bg-emerald-700 px-3 py-2 text-sm font-medium text-white transition-colors enabled:hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Add Mana
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -314,7 +426,7 @@ interface PlayerTileProps {
   onCardCounterChange: (cardId: string, counter: 'plusOne' | 'minusOne' | 'loyalty', delta: number) => void
   onMoveCard: (from: ZoneName, to: ZoneName, cardId: string) => void
   onToggleTapped: (cardId: string) => void
-  onActivateAbility: (cardId: string, abilityId: string, targetCardId?: string) => void
+  onActivateAbility: (cardId: string, abilityId: string, targetCardId?: string, options?: CastOptions) => void
   onActivatePlaneswalkerAbility: (cardId: string, abilityId: string, targetCardId?: string, targetPlayerId?: string) => void
   onPlayLand: (cardId: string) => void
   onCastCommander: (cardId: string, options?: CastOptions) => void
@@ -347,6 +459,7 @@ export function PlayerTile({
   const { library, hand, lands, battlefield, graveyard, exile, commandZone } = player.zones
   const [selected, setSelected] = useState<{ zone: ZoneName; card: GameCard } | null>(null)
   const [pendingCastCard, setPendingCastCard] = useState<{ zone: ZoneName; card: GameCard } | null>(null)
+  const [pendingTokenManaAbility, setPendingTokenManaAbility] = useState<{ card: GameCard; abilityId: string } | null>(null)
   const [expandedZone, setExpandedZone] = useState<{ zone: 'graveyard' | 'exile'; title: string } | null>(null)
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null)
   const cardButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({})
@@ -358,6 +471,7 @@ export function PlayerTile({
   function selectCard(zone: ZoneName, card: GameCard) {
     focusThisTile()
     setPendingCastCard(null)
+    setPendingTokenManaAbility(null)
     setSelected({ zone, card })
   }
 
@@ -424,6 +538,9 @@ export function PlayerTile({
 
   function canPayActivatedAbility(ability: ReturnType<typeof getActivatedAbilities>[number]): boolean {
     if (!selected) return false
+    if (ability.kind === 'add_mana_from_tapped_tokens') {
+      return !selected.card.tapped && player.life >= ability.lifeCost && battlefield.some(entry => entry.isToken && !entry.tapped)
+    }
     if (!ability.genericCost) return true
     return canAutoPayManaCost(
       player.manaPool,
@@ -443,6 +560,7 @@ export function PlayerTile({
       if (detail?.playerId === player.id) return
       setSelected(null)
       setPendingCastCard(null)
+      setPendingTokenManaAbility(null)
       setExpandedZone(null)
     }
 
@@ -498,7 +616,7 @@ export function PlayerTile({
         <div className="mb-1 truncate text-[10px] font-medium text-violet-200">{card.name}</div>
         <div className="flex flex-wrap gap-1">
           {canControlPlayer && (selected.zone === 'battlefield' || selected.zone === 'lands') && activatedAbilities
-            .filter(ability => ability.kind !== 'explore_target_creature')
+            .filter(ability => ability.kind !== 'explore_target_creature' && ability.kind !== 'add_mana_from_tapped_tokens')
             .map(ability => (
             <button
               key={ability.id}
@@ -512,6 +630,21 @@ export function PlayerTile({
               {ability.label}
             </button>
           ))}
+          {canControlPlayer && (selected.zone === 'battlefield' || selected.zone === 'lands') && activatedAbilities
+            .filter(ability => ability.kind === 'add_mana_from_tapped_tokens')
+            .map(ability => (
+              <button
+                key={ability.id}
+                onClick={() => {
+                  setPendingTokenManaAbility({ card, abilityId: ability.id })
+                  setSelected(null)
+                }}
+                disabled={!canPayActivatedAbility(ability)}
+                className="rounded-md bg-emerald-700 px-2 py-1 text-[10px] font-medium text-white transition-colors enabled:hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {ability.label}
+              </button>
+            ))}
           {canControlPlayer && (selected.zone === 'battlefield' || selected.zone === 'lands') && activatedAbilities
             .filter(ability => ability.kind === 'explore_target_creature')
             .flatMap(ability =>
@@ -1190,6 +1323,20 @@ export function PlayerTile({
               onCastPermanent(pendingCastCard.card.instanceId, options)
             }
             setPendingCastCard(null)
+            setSelected(null)
+          }}
+        />,
+        document.body
+      )}
+
+      {pendingTokenManaAbility && createPortal(
+        <TokenManaAbilityOverlay
+          player={player}
+          sourceCard={pendingTokenManaAbility.card}
+          onCancel={() => setPendingTokenManaAbility(null)}
+          onConfirm={(options) => {
+            onActivateAbility(pendingTokenManaAbility.card.instanceId, pendingTokenManaAbility.abilityId, undefined, options)
+            setPendingTokenManaAbility(null)
             setSelected(null)
           }}
         />,

@@ -52,6 +52,7 @@ export type CastChoiceSpec =
 
 export type ActivatedAbilityDefinition =
   | { id: string; label: string; kind: 'add_mana'; color: ColorSymbol; amount: number; requiresTap: boolean; sacrifice?: boolean; genericCost?: number }
+  | { id: string; label: string; kind: 'add_mana_from_tapped_tokens'; requiresTap: boolean; lifeCost: number; genericCost?: number }
   | { id: string; label: string; kind: 'draw_card'; requiresTap: boolean; sacrifice: boolean; genericCost: number }
   | { id: string; label: string; kind: 'gain_life'; requiresTap: boolean; sacrifice: boolean; genericCost: number; amount: number }
   | { id: string; label: string; kind: 'explore_target_creature'; requiresTap: boolean; sacrifice: boolean; genericCost: number }
@@ -87,6 +88,7 @@ export type TriggerEventType =
 
 export type TriggerEffectDefinition =
   | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number | 'opponents'; tapped?: boolean }
+  | { kind: 'copy_token'; count: number; doubleIfTargetSubtype?: string }
   | { kind: 'create_tokens_from_counter_placement'; tokenKey: TokenTemplateKey; mode: 'once' | 'per_counter'; tapped?: boolean }
   | { kind: 'draw_cards'; amount: number }
   | { kind: 'gain_life'; amount: number }
@@ -744,6 +746,17 @@ export function getActivatedAbilities(card: Pick<GameCard, 'name' | 'typeLine' |
     }
   }
 
+  if (lowerName === 'hazel of the rootbloom') {
+    abilities.push({
+      id: 'hazel-token-mana',
+      label: 'Tap tokens: Add mana',
+      kind: 'add_mana_from_tapped_tokens',
+      requiresTap: true,
+      lifeCost: 2,
+      genericCost: 0,
+    })
+  }
+
   const genericTapMana = oracleText.match(/\{T\}:\s*Add ((?:\{[WUBRGC]\})+)/i)
   if (abilities.length === 0 && genericTapMana) {
     const symbols = genericTapMana[1]?.match(/\{([WUBRGC])\}/g) ?? []
@@ -940,6 +953,17 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
       match: 'your_end_step',
       effect: endStepTokens,
       target: 'none',
+    })
+  }
+
+  if (lowerName === 'hazel of the rootbloom') {
+    abilities.push({
+      id: 'hazel-copy-token',
+      label: 'End step trigger',
+      event: 'end_step',
+      match: 'your_end_step',
+      target: 'token_you_control',
+      effect: { kind: 'copy_token', count: 1, doubleIfTargetSubtype: 'squirrel' },
     })
   }
 
@@ -1609,6 +1633,9 @@ function triggerEffectsAreEquivalent(left: TriggerEffectDefinition, right: Trigg
     return left.tokenKey === right.tokenKey
       && left.count === right.count
       && Boolean(left.tapped) === Boolean(right.tapped)
+  }
+  if (left.kind === 'copy_token' && right.kind === 'copy_token') {
+    return left.count === right.count && left.doubleIfTargetSubtype === right.doubleIfTargetSubtype
   }
   return JSON.stringify(left) === JSON.stringify(right)
 }

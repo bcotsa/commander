@@ -84,6 +84,7 @@ export type TokenTemplateKey =
 
 export type TriggerEffectPayload =
   | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number; tapped?: boolean }
+  | { kind: 'copy_token'; count: number; doubleIfTargetSubtype?: string }
   | { kind: 'draw_cards'; amount: number }
   | { kind: 'gain_life'; amount: number }
   | { kind: 'scry'; amount: number }
@@ -114,6 +115,7 @@ export interface CastOptions {
   selectedCardIds?: string[]
   sacrificedCardId?: string
   distributedTargets?: TargetDistributionChoice[]
+  manaColors?: ColorSymbol[]
 }
 
 export type ZoneName = keyof PlayerZones
@@ -277,7 +279,7 @@ export interface LibrarySearchChoiceState {
 }
 
 export type GraveyardTargetType = 'own_graveyard_creature' | 'any_graveyard_creature' | 'opponent_graveyard_creature'
-export type TriggerTargetType = 'battlefield_creature' | GraveyardTargetType
+export type TriggerTargetType = 'battlefield_creature' | 'token_you_control' | GraveyardTargetType
 
 // Discriminated union of all possible game actions
 export type ActionPayload =
@@ -303,7 +305,7 @@ export type ActionPayload =
   | { type: 'MOVE_CARD'; playerId: string; from: ZoneName; to: ZoneName; cardId: string }
   | { type: 'TOGGLE_CARD_TAPPED'; playerId: string; cardId: string }
   | { type: 'ADD_MANA'; playerId: string; cardId: string; color: ColorSymbol }
-  | { type: 'ACTIVATE_ABILITY'; playerId: string; cardId: string; abilityId: string; targetCardId?: string }
+  | { type: 'ACTIVATE_ABILITY'; playerId: string; cardId: string; abilityId: string; targetCardId?: string; options?: CastOptions }
   | { type: 'RESOLVE_LIBRARY_SEARCH'; playerId: string; sourceCardId: string; targetCardId?: string }
   | { type: 'RESOLVE_LAND_EFFECT'; playerId: string; sourceCardId: string; effect: 'bounce_land' | 'exile_graveyard'; targetCardId?: string; targetPlayerId?: string }
   | { type: 'RESOLVE_EXPLORE_CHOICE'; playerId: string; putInGraveyard: boolean }
