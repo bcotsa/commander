@@ -1,5 +1,5 @@
-import type { CastOptions, ColorSymbol, GameCard, GraveyardTargetType, ManaPool, Player, QueuedEffectStep, TokenTemplateKey, TriggerTargetType } from '@/types/game-state'
-import { getBespokeActivatedAbilities, getBespokeCastChoiceSpec, getBespokeTriggeredAbilities } from './card-support'
+import type { CastOptions, ColorSymbol, GameCard, GraveyardTargetType, ManaPool, Player, QueuedEffectStep, TokenTemplateKey, TriggerTargetType } from '../types/game-state.ts'
+import { getBespokeActivatedAbilities, getBespokeCastChoiceSpec, getBespokeTriggeredAbilities } from './card-support/index.ts'
 
 const COLOR_ORDER: ColorSymbol[] = ['W', 'U', 'B', 'R', 'G', 'C']
 const BASIC_LAND_TYPES: Array<{ pattern: RegExp; color: ColorSymbol }> = [

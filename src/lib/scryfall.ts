@@ -1,5 +1,5 @@
 import type { ScryfallCard, ScryfallSearchResult } from '@/types/scryfall'
-import type { CommanderCard, ColorSymbol, ImportedDeck, ImportedDeckCard, TokenTemplateKey } from '@/types/game-state'
+import type { CommanderCard, ColorSymbol, ImportedDeck, ImportedDeckCard, TokenTemplateKey } from '../types/game-state.ts'
 
 const BASE = 'https://api.scryfall.com'
 const TOKEN_QUERY_BY_KEY: Record<TokenTemplateKey, string> = {

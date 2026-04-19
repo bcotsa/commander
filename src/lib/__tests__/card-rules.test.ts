@@ -255,6 +255,9 @@ describe('auditImportedDeck', () => {
     expect(audit.summary.partial.unique).toBe(1)
     expect(audit.summary.unsupported.unique).toBe(1)
     expect(audit.priorityQueue[0]?.name).toBe('Mystery Spell')
+    expect(audit.cards.find(card => card.name === 'Murder')?.candidate).toBe('generic')
+    expect(audit.cards.find(card => card.name === 'Murder')?.confidence).toBe('runtime-verified')
+    expect(audit.cards.find(card => card.name === 'Hazel of the Rootbloom')?.candidate).toBe('bespoke')
   })
 })
 

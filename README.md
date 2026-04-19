@@ -147,13 +147,21 @@ Use the bespoke registry for playgroup cards that need exact handling instead of
 
 ## Deck Support Audits
 
-Run the static built-in deck audit with:
+Run the built-in deck audit with:
 
 ```sh
 npm run audit:decks
 ```
 
-This CLI compares the hardcoded test decklists against the bespoke registry and a small static core list. For deeper Oracle-text classification, use `auditImportedDeck` from [src/lib/deck-support-audit.ts](/Users/bcotsa/projects/Commander/src/lib/deck-support-audit.ts) after a deck has been resolved through the normal importer.
+This CLI resolves the hardcoded test decklists through the same Scryfall-backed importer used by the lobby, audits the resulting card snapshots with [src/lib/deck-support-audit.ts](/Users/bcotsa/projects/Commander/src/lib/deck-support-audit.ts), and writes a markdown report to [docs/deck-support-report.md](/Users/bcotsa/projects/Commander/docs/deck-support-report.md).
+
+The report tracks:
+
+- automated, partial, manual, and unsupported cards
+- generic vs. bespoke candidates
+- parser-match vs. runtime-verified confidence
+- reason codes for matched patterns
+- per-deck blocker counts and the top coverage gaps
 
 ## Release Version
 

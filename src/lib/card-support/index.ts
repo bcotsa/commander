@@ -1,5 +1,5 @@
-import type { ActivatedAbilityDefinition, CastChoiceSpec, TriggeredAbilityDefinition } from '@/lib/card-rules'
-import type { ColorSymbol, GameCard, Player } from '@/types/game-state'
+import type { ActivatedAbilityDefinition, CastChoiceSpec, TriggeredAbilityDefinition } from '../card-rules.ts'
+import type { ColorSymbol, GameCard, Player } from '../../types/game-state.ts'
 
 type CardForRules = Pick<GameCard, 'name' | 'typeLine' | 'oracleText' | 'tapped'>
 

@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "vitest run",
-    "audit:decks": "node scripts/audit-deck-support.mjs",
+    "audit:decks": "node --experimental-strip-types scripts/audit-deck-support.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
