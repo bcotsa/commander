@@ -469,6 +469,40 @@ describe('Move card', () => {
     const next = gameReducer(s, { type: 'MOVE_CARD', playerId: 'p1', from: 'battlefield', to: 'hand', cardId: tappedCard.instanceId })
     expect(getPlayer(next, 'p1').zones.hand[0].tapped).toBe(false)
   })
+
+  it('clears battlefield-only modifiers when a creature enters the graveyard', () => {
+    const modifiedCreature = makeCard({
+      name: 'Modified Guy',
+      tapped: true,
+      markedDamage: 2,
+      plusOneCounters: 3,
+      minusOneCounters: 1,
+      summoningSick: true,
+    })
+    const s = {
+      ...state,
+      players: state.players.map(p =>
+        p.id === 'p1'
+          ? { ...p, zones: { ...p.zones, battlefield: [modifiedCreature] } }
+          : p
+      ),
+    }
+
+    const next = gameReducer(s, {
+      type: 'MOVE_CARD',
+      playerId: 'p1',
+      from: 'battlefield',
+      to: 'graveyard',
+      cardId: modifiedCreature.instanceId,
+    })
+    const graveyardCard = getPlayer(next, 'p1').zones.graveyard[0]
+
+    expect(graveyardCard.tapped).toBe(false)
+    expect(graveyardCard.markedDamage).toBe(0)
+    expect(graveyardCard.plusOneCounters).toBe(0)
+    expect(graveyardCard.minusOneCounters).toBe(0)
+    expect(graveyardCard.summoningSick).toBe(false)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -743,6 +777,54 @@ describe('Combat', () => {
   })
 
   it('kills attacker when blocker has enough power', () => {
+    const bigBlocker = makeCard({ name: 'Big Blocker', power: 5, toughness: 5 })
+    state = {
+      ...state,
+      players: state.players.map(p =>
+        p.id === 'p1'
+          ? {
+              ...p,
+              zones: {
+                ...p.zones,
+                battlefield: p.zones.battlefield.map(card =>
+                  card.instanceId === attackerId
+                    ? { ...card, plusOneCounters: 2, minusOneCounters: 1, markedDamage: 1 }
+                    : card
+                ),
+              },
+            }
+          : p.id === 'p2'
+          ? { ...p, zones: { ...p.zones, battlefield: [bigBlocker] } }
+          : p
+      ),
+    }
+
+    let next = gameReducer(state, {
+      type: 'DECLARE_ATTACKER',
+      playerId: 'p1',
+      cardId: attackerId,
+      defendingPlayerId: 'p2',
+    })
+    next = gameReducer(next, {
+      type: 'ASSIGN_BLOCKER',
+      playerId: 'p2',
+      blockerId: bigBlocker.instanceId,
+      attackerId,
+    })
+    next = gameReducer(next, { type: 'RESOLVE_COMBAT' })
+
+    // Bears should die and lose battlefield-only modifiers in the graveyard.
+    const p1 = getPlayer(next, 'p1')
+    const graveyardAttacker = p1.zones.graveyard.find(c => c.instanceId === attackerId)
+    expect(p1.zones.battlefield.find(c => c.instanceId === attackerId)).toBeUndefined()
+    expect(graveyardAttacker).toBeDefined()
+    expect(graveyardAttacker?.plusOneCounters).toBe(0)
+    expect(graveyardAttacker?.minusOneCounters).toBe(0)
+    expect(graveyardAttacker?.markedDamage).toBe(0)
+    expect(graveyardAttacker?.tapped).toBe(false)
+  })
+
+  it('kills an unmodified attacker when blocker has enough power', () => {
     const bigBlocker = makeCard({ name: 'Big Blocker', power: 5, toughness: 5 })
     state = {
       ...state,

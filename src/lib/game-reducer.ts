@@ -1054,8 +1054,21 @@ function isNonlandPermanent(card: GameCard): boolean {
   return isPermanentCard(card) && !isLandCard(card)
 }
 
+const DEFAULT_NON_BATTLEFIELD_CARD_STATE = {
+  tapped: false,
+  markedDamage: 0,
+  loyaltyActivatedThisTurn: false,
+  plusOneCounters: 0,
+  minusOneCounters: 0,
+  summoningSick: false,
+} satisfies Pick<GameCard, 'tapped' | 'markedDamage' | 'loyaltyActivatedThisTurn' | 'plusOneCounters' | 'minusOneCounters' | 'summoningSick'>
+
 function normalizeLeavingCard(card: GameCard): GameCard {
-  return { ...card, tapped: false, markedDamage: 0 }
+  return {
+    ...card,
+    ...DEFAULT_NON_BATTLEFIELD_CARD_STATE,
+    loyalty: isPlaneswalkerCard(card) ? card.startingLoyalty : card.loyalty,
+  }
 }
 
 function putLeavingCardInDestination(zones: Player['zones'], card: GameCard): Player['zones'] {
@@ -1401,7 +1414,7 @@ function reanimateFromGraveyard(
     return { players, enteredCard: null, targetOwnerId: null }
   }
 
-  let movedCard = destination === 'battlefield' ? entersBattlefield(card) : { ...card, tapped: false, markedDamage: 0 }
+  let movedCard = destination === 'battlefield' ? entersBattlefield(card) : normalizeLeavingCard(card)
   if (destination === 'battlefield') {
     movedCard = {
       ...movedCard,
@@ -2127,7 +2140,7 @@ function resolveStackTop(state: GameState): GameState {
               ...player,
               zones: {
                 ...player.zones,
-                graveyard: [...player.zones.graveyard, { ...stackItem.card, tapped: false, markedDamage: 0 }],
+                graveyard: [...player.zones.graveyard, normalizeLeavingCard(stackItem.card)],
               },
             }
           : player
@@ -2143,7 +2156,7 @@ function resolveStackTop(state: GameState): GameState {
             isCreatureCard(entry) ? { ...entry, minusOneCounters: entry.minusOneCounters + amount } : entry
           ),
           library: player.id === stackItem.casterId
-            ? shuffleCards([...player.zones.library, { ...stackItem.card, tapped: false, markedDamage: 0 }])
+            ? shuffleCards([...player.zones.library, normalizeLeavingCard(stackItem.card)])
             : player.zones.library,
         },
       }))
@@ -2212,7 +2225,7 @@ function resolveStackTop(state: GameState): GameState {
                 ...player.zones.library.slice(0, discardedCards.length),
               ],
               library: player.zones.library.slice(Math.min(discardedCards.length, player.zones.library.length)),
-              graveyard: [...player.zones.graveyard, ...discardedCards.map(entry => ({ ...entry, tapped: false, markedDamage: 0 }))],
+              graveyard: [...player.zones.graveyard, ...discardedCards.map(normalizeLeavingCard)],
             },
           }
         })
@@ -2246,7 +2259,7 @@ function resolveStackTop(state: GameState): GameState {
               ...player,
               zones: {
                 ...player.zones,
-                graveyard: [...player.zones.graveyard, { ...stackItem.card, tapped: false, markedDamage: 0 }],
+                graveyard: [...player.zones.graveyard, normalizeLeavingCard(stackItem.card)],
               },
             }
           : player
@@ -4297,7 +4310,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
             hand: player.zones.hand.filter(entry => entry.instanceId !== action.cardId && !discardIds.has(entry.instanceId)),
             graveyard: [
               ...zonesAfterSacrifice.graveyard,
-              ...discardedCards.map(entry => ({ ...entry, tapped: false, markedDamage: 0 })),
+              ...discardedCards.map(normalizeLeavingCard),
             ],
           },
         }
