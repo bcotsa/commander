@@ -229,11 +229,55 @@ The `runtime-verified` tag has no source today. Stand up a small registry that i
 - Every "automated" card has a confidence tag, and `runtime-verified` actually traces to a passing test.
 - Per-deck blocker count (unsupported + unsupported-commander) is reported.
 
-### Phase 2: Generic Spell Coverage
+### Phase 2: Generic Spell Coverage Foundation
 
 Goal: make common instants and sorceries work without bespoke handlers.
 
-Land alongside: target picker subsystem, manual phase M3.
+This phase is split deliberately. The target picker and stack fallback must land before broad card coverage, otherwise every new spell becomes a one-off UI/reducer branch.
+
+#### Phase 2A: Shared Target Picker And Pending Choice Flow
+
+Goal: make target selection reusable, inspectable, and network-replayable.
+
+**Scope**
+
+- Replace one-off target choice state with a generic `pendingTargetChoice` model.
+- Support target sources: trigger first, then spell, then activated ability.
+- Keep pending choices in game state with chooser identity, source, target type, and stack item/action context.
+- Keep the picker non-blocking: users can hide it, inspect battlefield/graveyards/exile/stack, then reopen it from a persistent pending-choice banner.
+- Move legal-target filtering into shared helpers: battlefield creature, battlefield creature or planeswalker, battlefield nonland permanent, battlefield permanent, token you control, own/opponent/any graveyard creature, player/opponent player.
+- Add protection/hexproof/shroud as explicit stubs: deny obvious illegal targets where cheap, otherwise log known gaps.
+- Convert the current trigger target flow to this generic target model.
+- Convert one simple targeted spell path (`Murder`/`Terminate`/`Putrefy` style) to prove spells can use the same choice system.
+
+**Exit criteria**
+
+- Targeted triggers and at least one targeted spell use the same pending target model.
+- The chooser can dismiss and reopen the picker without losing the pending choice.
+- Legal targets are computed through shared helpers, not component-specific filtering.
+- Pending target choices survive multiplayer state sync.
+
+#### Phase 2B: Manual Stack Resolution
+
+Goal: make unsupported spells safe to play without blocking the game.
+
+**Scope**
+
+- Stack items expose "resolve automatically" when supported.
+- Unsupported or partial stack items expose "resolve manually."
+- Manual resolution moves the spell/card to the expected destination, clears the stack item, and logs that the table applied the effect manually.
+- Add explicit "remove from stack / counter / cancel" controls for test/admin mode and obvious stack cleanup.
+- Preserve priority behavior around manual resolution.
+
+**Exit criteria**
+
+- Any unsupported spell can still be cast and cleared from the stack.
+- Manual resolution is logged and undoable where deterministic.
+- A failed automation path no longer strands the game behind an unresolvable stack item.
+
+#### Phase 2C: Generic Spell Pattern Expansion
+
+Goal: broaden generic instant/sorcery coverage using the shared target and stack foundations.
 
 **Generic patterns**
 
@@ -318,15 +362,6 @@ Goal: make Commander feel like Commander. Build on the replacement primitive fro
 
 - A commander-centric deck plays a full game without commander rules being mostly manual.
 
-### Phase 1.5: Hidden Information (lifted out of Phase 7)
-
-Goal is "real playgroup games remotely," so hand/library hiding is a prerequisite, not late polish. Ship the small, blocking piece early:
-
-- hide opponent hands, libraries, and face-down choices
-- server-authoritative reveal (no relying on client to redact)
-
-This is a Phase 1.5 milestone — between coverage reporting and generic spell coverage. Keep the rest of multiplayer trust (authority, reconnect) in Phase 7.
-
 ### Phase 7: Multiplayer Trust
 
 Goal: real remote games at table-trust quality.
@@ -338,12 +373,16 @@ Goal: real remote games at table-trust quality.
 - prevent non-authorized player actions
 - tighter action validation
 - M2 manual-correction authority model (who can correct whose state)
+- Hidden information: hide opponent hands, libraries, and face-down choices.
+- Hidden information: support trusted client-side redaction first if useful for playtesting.
+- Hidden information: move to server-authoritative private zones/reveals for true remote play.
+- Hidden information: avoid relying on full-state client broadcasts for information that should be private.
 
 Manual override in real multiplayer requires host/admin authority, table confirmation, or an explicit permissive casual mode.
 
 **Exit criteria**
 
-- Two players play remotely without hidden-info leaks (validated against Phase 1.5).
+- Two players play remotely without hidden-info leaks.
 - Manual corrections are visible and trusted by the table.
 - M2 corrections respect the authority model.
 

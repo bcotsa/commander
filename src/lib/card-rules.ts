@@ -1,4 +1,4 @@
-import type { CastOptions, ColorSymbol, GameCard, GraveyardTargetType, ManaPool, Player, QueuedEffectStep, TokenTemplateKey, TriggerTargetType } from '../types/game-state.ts'
+import type { CastOptions, ColorSymbol, GameCard, GraveyardTargetType, ManaPool, Player, QueuedEffectStep, TargetChoiceType, TokenTemplateKey } from '../types/game-state.ts'
 import { getBespokeActivatedAbilities, getBespokeCastChoiceSpec, getBespokeTriggeredAbilities } from './card-support/index.ts'
 
 const COLOR_ORDER: ColorSymbol[] = ['W', 'U', 'B', 'R', 'G', 'C']
@@ -109,7 +109,7 @@ export interface TriggeredAbilityDefinition {
   label: string
   event: TriggerEventType
   effect: TriggerEffectDefinition
-  target?: 'none' | TriggerTargetType
+  target?: 'none' | TargetChoiceType
   match:
     | 'self'
     | 'another_creature_you_control'

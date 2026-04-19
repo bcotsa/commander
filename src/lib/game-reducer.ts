@@ -2,6 +2,7 @@ import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeck
 import { checkEliminations } from './game-engine'
 import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getActivatedAbilities, getEtbCounters, getLandEntryEffect, getLandManaOptions, getPlaneswalkerAbilities, getSimpleSpellDefinition, getSimpleSpellSequence, getTokenTemplate, getTriggeredAbilities, landEntersTapped, resolveManaCost, type PlaneswalkerAbilityEffect, type TriggeredAbilityDefinition, type TriggerEffectDefinition } from './card-rules'
 import { hasBespokeSpellResolution } from './card-support'
+import { hasLegalTarget, isLegalTarget } from './targeting'
 
 const MAX_LOG = 50
 const TURN_PHASES: TurnPhase[] = ['untap', 'upkeep', 'draw', 'main1', 'combat', 'main2', 'end']
@@ -26,7 +27,7 @@ export function createInitialGameState(roomCode: string, roomId = ''): GameState
     pendingSurveilChoice: null,
     pendingEffectSequence: null,
     pendingProliferateChoice: null,
-    pendingTriggerTargetChoice: null,
+    pendingTargetChoice: null,
     priorityPlayerId: null,
     priorityPassedIds: [],
     round: 1,
@@ -466,7 +467,7 @@ function beginActiveGame(state: GameState): GameState {
     pendingSurveilChoice: null,
     pendingEffectSequence: null,
     pendingProliferateChoice: null,
-    pendingTriggerTargetChoice: null,
+    pendingTargetChoice: null,
     priorityPlayerId: null,
     priorityPassedIds: [],
     combat: { attackers: [] },
@@ -1676,7 +1677,7 @@ function queueTriggeredAbilities(state: GameState, occurrences: TriggerOccurrenc
         )
         ? occurrence.card.instanceId
         : undefined
-    if (ability.target && ability.target !== 'none' && !targetCardId && !hasLegalTriggerTarget(state, ability.target, controllerId)) {
+    if (ability.target && ability.target !== 'none' && !targetCardId && !hasLegalTarget(state.players, ability.target, controllerId)) {
       return
     }
 
@@ -1689,7 +1690,7 @@ function queueTriggeredAbilities(state: GameState, occurrences: TriggerOccurrenc
       kind: 'trigger',
       abilityLabel: ability.label,
       triggerEffect,
-      triggerTargetType: ability.target && ability.target !== 'none' && !targetCardId ? ability.target : undefined,
+      targetChoiceType: ability.target && ability.target !== 'none' && !targetCardId ? ability.target : undefined,
       targetCardId,
     })
   }
@@ -1718,53 +1719,45 @@ function queueTriggeredAbilities(state: GameState, occurrences: TriggerOccurrenc
 
   if (triggers.length === 0) return state
 
-  const nextTargetTrigger = [...triggers].reverse().find(trigger => trigger.triggerTargetType && !trigger.targetCardId)
-  const pendingTriggerTargetChoice = nextTargetTrigger
+  const nextTargetTrigger = [...triggers].reverse().find(stackItemNeedsTarget)
+  const pendingTargetChoice = nextTargetTrigger
     ? {
         playerId: nextTargetTrigger.casterId,
         stackItemId: nextTargetTrigger.id,
         sourceName: nextTargetTrigger.card.name,
-        targetType: nextTargetTrigger.triggerTargetType!,
+        source: 'trigger' as const,
+        targetType: nextTargetTrigger.targetChoiceType!,
       }
-    : state.pendingTriggerTargetChoice
+    : state.pendingTargetChoice
 
   return {
     ...state,
     stack: [...state.stack, ...triggers],
-    pendingTriggerTargetChoice,
+    pendingTargetChoice,
     priorityPlayerId: state.turnOrder[state.currentTurnIndex] ?? null,
     priorityPassedIds: [],
     actionSeq: state.actionSeq + 1,
   }
 }
 
-function getPendingTriggerTargetChoice(stack: StackItem[]): GameState['pendingTriggerTargetChoice'] {
-  const nextTargetTrigger = [...stack].reverse().find(item => item.kind === 'trigger' && item.triggerTargetType && !item.targetCardId)
-  if (!nextTargetTrigger) return null
-  return {
-    playerId: nextTargetTrigger.casterId,
-    stackItemId: nextTargetTrigger.id,
-    sourceName: nextTargetTrigger.card.name,
-    targetType: nextTargetTrigger.triggerTargetType!,
+function stackItemNeedsTarget(item: StackItem): boolean {
+  if (!item.targetChoiceType) return false
+  if (item.targetChoiceType === 'player' || item.targetChoiceType === 'creature_or_player') {
+    return !item.targetCardId && !item.targetPlayerId
   }
+  return !item.targetCardId
 }
 
-function hasLegalTriggerTarget(state: GameState, targetType: NonNullable<TriggeredAbilityDefinition['target']>, controllerId: string): boolean {
-  if (targetType === 'none') return true
-  if (targetType === 'battlefield_creature') {
-    return state.players.some(player => player.zones.battlefield.some(isCreatureCard))
+function getPendingTargetChoice(stack: StackItem[]): GameState['pendingTargetChoice'] {
+  const nextTargetItem = [...stack].reverse().find(stackItemNeedsTarget)
+  if (!nextTargetItem) return null
+  return {
+    playerId: nextTargetItem.casterId,
+    stackItemId: nextTargetItem.id,
+    sourceName: nextTargetItem.card.name,
+    source: nextTargetItem.kind === 'trigger' ? 'trigger' : 'spell',
+    targetType: nextTargetItem.targetChoiceType!,
   }
-  if (targetType === 'token_you_control') {
-    return state.players
-      .find(player => player.id === controllerId)
-      ?.zones.battlefield.some(card => card.isToken) ?? false
-  }
-
-  return state.players.some(player => {
-    if (targetType === 'own_graveyard_creature' && player.id !== controllerId) return false
-    if (targetType === 'opponent_graveyard_creature' && player.id === controllerId) return false
-    return player.zones.graveyard.some(isCreatureCard)
-  })
 }
 
 function describeTarget(state: GameState, targetCardId?: string, targetPlayerId?: string): string {
@@ -1895,6 +1888,12 @@ function advanceThroughAutomaticPhases(state: GameState): GameState {
 function resolveStackTop(state: GameState): GameState {
   const stackItem = state.stack[state.stack.length - 1]
   if (!stackItem) return state
+  if (stackItemNeedsTarget(stackItem)) {
+    return {
+      ...state,
+      pendingTargetChoice: getPendingTargetChoice(state.stack),
+    }
+  }
 
   let players = state.players.map(player => ({
     ...player,
@@ -2474,7 +2473,7 @@ function resolveStackTop(state: GameState): GameState {
     pendingSurveilChoice,
     pendingEffectSequence,
     pendingProliferateChoice,
-    pendingTriggerTargetChoice: getPendingTriggerTargetChoice(state.stack.slice(0, -1)),
+    pendingTargetChoice: getPendingTargetChoice(state.stack.slice(0, -1)),
     priorityPlayerId: state.turnOrder[state.currentTurnIndex] ?? null,
     priorityPassedIds: [],
     actionSeq: state.actionSeq + 1,
@@ -2676,7 +2675,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
     'RESOLVE_SCRY_CHOICE',
     'RESOLVE_SURVEIL_CHOICE',
     'RESOLVE_PROLIFERATE_CHOICE',
-    'SET_TRIGGER_TARGET',
+    'SET_PENDING_TARGET',
     'RESOLVE_LAND_EFFECT',
   ])
   if (!nonUndoable.has(action.type) && state.phase === 'active') {
@@ -2769,16 +2768,16 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
     }
   }
 
-  if (state.pendingTriggerTargetChoice) {
-    const allowedDuringTriggerTargetChoice = new Set<ActionPayload['type']>([
-      'SET_TRIGGER_TARGET',
+  if (state.pendingTargetChoice) {
+    const allowedDuringTargetChoice = new Set<ActionPayload['type']>([
+      'SET_PENDING_TARGET',
       'PLAYER_CONNECTED',
       'PLAYER_JOIN',
       'SET_PLAYER_NAME',
       'UNDO',
       'RESET_GAME',
     ])
-    if (!allowedDuringTriggerTargetChoice.has(action.type)) {
+    if (!allowedDuringTargetChoice.has(action.type)) {
       return state
     }
   }
@@ -3051,31 +3050,24 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       }
     }
 
-    case 'SET_TRIGGER_TARGET': {
-      const choice = state.pendingTriggerTargetChoice
+    case 'SET_PENDING_TARGET': {
+      const choice = state.pendingTargetChoice
       if (!choice || choice.playerId !== action.playerId || choice.stackItemId !== action.stackItemId) return state
 
-      if (choice.targetType === 'battlefield_creature') {
-        const targetOwner = state.players.find(player =>
-          player.zones.battlefield.some(entry => entry.instanceId === action.targetCardId)
-        ) ?? null
-        const targetCard = targetOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
-        if (!targetCard || !isCreatureCard(targetCard)) return state
-      } else if (choice.targetType === 'token_you_control') {
-        const controller = state.players.find(player => player.id === action.playerId) ?? null
-        const targetCard = controller?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
-        if (!targetCard || !targetCard.isToken) return state
-      } else {
-        const { owner, card } = findGraveyardCard(state.players, action.targetCardId)
-        if (!owner || !card || !isCreatureCard(card) || !graveyardTargetMatches(choice.targetType, action.playerId, owner.id)) return state
-      }
+      if (!isLegalTarget(state.players, choice.targetType, action.playerId, action.targetCardId, action.targetPlayerId)) return state
 
       return {
         ...state,
         stack: state.stack.map(item =>
-          item.id === action.stackItemId ? { ...item, targetCardId: action.targetCardId } : item
+          item.id === action.stackItemId
+            ? { ...item, targetCardId: action.targetCardId, targetPlayerId: action.targetPlayerId }
+            : item
         ),
-        pendingTriggerTargetChoice: null,
+        pendingTargetChoice: getPendingTargetChoice(state.stack.map(item =>
+          item.id === action.stackItemId
+            ? { ...item, targetCardId: action.targetCardId, targetPlayerId: action.targetPlayerId }
+            : item
+        )),
         actionSeq: state.actionSeq + 1,
         log: appendLog(state.log, {
           timestamp: new Date().toISOString(),
@@ -4202,26 +4194,41 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
             player.zones.lands.some(entry => entry.instanceId === action.targetCardId)
           ) ?? null
         : null
+      const needsPendingTarget = Boolean(
+        definition?.target &&
+        definition.target !== 'none' &&
+        !action.targetCardId &&
+        !action.targetPlayerId
+      )
+      const targetChoiceType = needsPendingTarget && definition?.target && definition.target !== 'none'
+        ? definition.target
+        : undefined
 
-      if (definition?.target === 'battlefield_creature') {
+      if (targetChoiceType && !hasLegalTarget(state.players, targetChoiceType, action.playerId)) return state
+
+      if (!targetChoiceType && definition?.target && definition.target !== 'none' && !isLegalTarget(state.players, definition.target, action.playerId, action.targetCardId, action.targetPlayerId)) {
+        return state
+      }
+
+      if (!targetChoiceType && definition?.target === 'battlefield_creature') {
         const targetCard =
           targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!targetCard || !isCreatureCard(targetCard)) return state
       }
 
-      if (definition?.target === 'battlefield_creature_or_planeswalker') {
+      if (!targetChoiceType && definition?.target === 'battlefield_creature_or_planeswalker') {
         const targetCard =
           targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!targetCard || (!isCreatureCard(targetCard) && !isPlaneswalkerCard(targetCard))) return state
       }
 
-      if (definition?.target === 'battlefield_nonland_permanent') {
+      if (!targetChoiceType && definition?.target === 'battlefield_nonland_permanent') {
         const targetCard =
           targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!targetCard || !isNonlandPermanent(targetCard)) return state
       }
 
-      if (definition?.target === 'battlefield_permanent') {
+      if (!targetChoiceType && definition?.target === 'battlefield_permanent') {
         const targetCard =
           targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ??
           targetBattlefieldOwner?.zones.lands.find(entry => entry.instanceId === action.targetCardId) ??
@@ -4229,22 +4236,22 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         if (!targetCard || (!isPermanentCard(targetCard) && !isLandCard(targetCard))) return state
       }
 
-      if (definition?.target === 'own_graveyard_creature') {
+      if (!targetChoiceType && definition?.target === 'own_graveyard_creature') {
         const targetCard = caster.zones.graveyard.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!targetCard || !isCreatureCard(targetCard)) return state
       }
-      if (definition?.target === 'any_graveyard_creature' || definition?.target === 'opponent_graveyard_creature') {
+      if (!targetChoiceType && (definition?.target === 'any_graveyard_creature' || definition?.target === 'opponent_graveyard_creature')) {
         const { owner, card: targetCard } = findGraveyardCard(state.players, action.targetCardId)
         if (!owner || !targetCard || !isCreatureCard(targetCard) || !graveyardTargetMatches(definition.target, action.playerId, owner.id)) return state
       }
 
-      if (definition?.target === 'creature_or_player' && !targetPlayer) {
+      if (!targetChoiceType && definition?.target === 'creature_or_player' && !targetPlayer) {
         const targetCard =
           targetBattlefieldOwner?.zones.battlefield.find(entry => entry.instanceId === action.targetCardId) ?? null
         if (!targetCard || (!isCreatureCard(targetCard) && !isPlaneswalkerCard(targetCard))) return state
       }
 
-      if (definition?.target === 'player' && !targetPlayer) return state
+      if (!targetChoiceType && definition?.target === 'player' && !targetPlayer) return state
 
       if (card.name === "Black Sun's Zenith" && typeof action.options?.xValue !== 'number') return state
       if (card.name === 'Deadly Dispute') {
@@ -4329,10 +4336,26 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           kind: 'spell',
           targetCardId: action.targetCardId,
           targetPlayerId: action.targetPlayerId,
+          targetChoiceType,
           castOptions: action.options,
           spentMana,
         }
       )
+      if (targetChoiceType) {
+        const stackItem = nextState.stack[nextState.stack.length - 1]
+        nextState = {
+          ...nextState,
+          pendingTargetChoice: stackItem
+            ? {
+                playerId: action.playerId,
+                stackItemId: stackItem.id,
+                sourceName: stackItem.card.name,
+                source: 'spell',
+                targetType: targetChoiceType,
+              }
+            : nextState.pendingTargetChoice,
+        }
+      }
       const occurrences: TriggerOccurrence[] = [{ type: 'spell_cast', controllerId: action.playerId, card: withCastOptions(card, action.options?.xValue) }]
       if (sacrificedCard) {
         pushLeaveBattlefieldOccurrences(occurrences, action.playerId, sacrificedCard)
@@ -4687,7 +4710,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         pendingSurveilChoice: null,
         pendingEffectSequence: null,
         pendingProliferateChoice: null,
-        pendingTriggerTargetChoice: null,
+        pendingTargetChoice: null,
         priorityPlayerId: null,
         priorityPassedIds: [],
         actionSeq: state.actionSeq + 1,
@@ -4720,7 +4743,7 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         pendingSurveilChoice: null,
         pendingEffectSequence: null,
         pendingProliferateChoice: null,
-        pendingTriggerTargetChoice: null,
+        pendingTargetChoice: null,
         priorityPlayerId: null,
         priorityPassedIds: [],
         round: 1,

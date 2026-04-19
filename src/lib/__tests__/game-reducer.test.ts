@@ -648,6 +648,68 @@ describe('Casting payments', () => {
     expect(getPlayer(next, 'p1').zones.lands[0]?.tapped).toBe(true)
     expect(getPlayer(next, 'p2').zones.lands[0]?.tapped).toBe(false)
   })
+
+  it('can cast a targeted spell and choose the target from shared pending target state', () => {
+    let state = twoPlayerGame()
+    const murder = makeCard({
+      instanceId: 'murder-1',
+      name: 'Murder',
+      typeLine: 'Instant',
+      manaCost: '{1}{B}{B}',
+      oracleText: 'Destroy target creature.',
+      power: null,
+      toughness: null,
+    })
+    const target = makeCard({
+      instanceId: 'target-creature-1',
+      name: 'Target Creature',
+      power: 2,
+      toughness: 2,
+    })
+    const swamps = [0, 1, 2].map(index => makeLand({
+      instanceId: `swamp-${index}`,
+      name: 'Swamp',
+      typeLine: 'Basic Land — Swamp',
+      oracleText: '{T}: Add {B}.',
+    }))
+
+    state = {
+      ...state,
+      players: state.players.map(player => {
+        if (player.id === 'p1') {
+          return { ...player, zones: { ...player.zones, hand: [murder], lands: swamps } }
+        }
+        if (player.id === 'p2') {
+          return { ...player, zones: { ...player.zones, battlefield: [target] } }
+        }
+        return player
+      }),
+    }
+
+    const cast = gameReducer(state, {
+      type: 'CAST_SPELL',
+      playerId: 'p1',
+      cardId: murder.instanceId,
+    })
+
+    expect(cast.stack).toHaveLength(1)
+    expect(cast.pendingTargetChoice?.source).toBe('spell')
+    expect(cast.pendingTargetChoice?.targetType).toBe('battlefield_creature')
+
+    const targeted = gameReducer(cast, {
+      type: 'SET_PENDING_TARGET',
+      playerId: 'p1',
+      stackItemId: cast.pendingTargetChoice?.stackItemId ?? '',
+      targetCardId: target.instanceId,
+    })
+
+    expect(targeted.pendingTargetChoice).toBeNull()
+    expect(targeted.stack[0]?.targetCardId).toBe(target.instanceId)
+
+    const resolved = gameReducer(targeted, { type: 'RESOLVE_STACK' })
+    expect(getPlayer(resolved, 'p2').zones.battlefield.find(card => card.instanceId === target.instanceId)).toBeUndefined()
+    expect(getPlayer(resolved, 'p2').zones.graveyard.find(card => card.instanceId === target.instanceId)).toBeDefined()
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1178,7 +1240,7 @@ describe('Token copy triggers', () => {
 
     const next = gameReducer(state, { type: 'NEXT_STEP' })
 
-    expect(next.pendingTriggerTargetChoice).toBeNull()
+    expect(next.pendingTargetChoice).toBeNull()
     expect(next.stack).toHaveLength(0)
   })
 
@@ -1219,12 +1281,13 @@ describe('Token copy triggers', () => {
     }
 
     const withTrigger = gameReducer(state, { type: 'NEXT_STEP' })
-    expect(withTrigger.pendingTriggerTargetChoice?.targetType).toBe('token_you_control')
+    expect(withTrigger.pendingTargetChoice?.targetType).toBe('token_you_control')
+    expect(withTrigger.pendingTargetChoice?.source).toBe('trigger')
 
     const targeted = gameReducer(withTrigger, {
-      type: 'SET_TRIGGER_TARGET',
+      type: 'SET_PENDING_TARGET',
       playerId: 'p1',
-      stackItemId: withTrigger.pendingTriggerTargetChoice?.stackItemId ?? '',
+      stackItemId: withTrigger.pendingTargetChoice?.stackItemId ?? '',
       targetCardId: squirrel.instanceId,
     })
     const resolved = gameReducer(targeted, { type: 'RESOLVE_STACK' })

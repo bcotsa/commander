@@ -1,11 +1,12 @@
-import type { Player, TriggerTargetChoiceState } from '@/types/game-state'
+import { getLegalTargetOptions, targetChoiceLabel } from '@/lib/targeting'
+import type { Player, PendingTargetChoiceState } from '@/types/game-state'
 
 interface TriggerTargetOverlayProps {
-  choice: TriggerTargetChoiceState
+  choice: PendingTargetChoiceState
   players: Player[]
   myPlayerId: string
   canControlAllPlayers: boolean
-  onChoose: (targetCardId: string) => void
+  onChoose: (target: { targetCardId?: string; targetPlayerId?: string }) => void
   onDismiss: () => void
 }
 
@@ -18,31 +19,8 @@ export function TriggerTargetOverlay({
   onDismiss,
 }: TriggerTargetOverlayProps) {
   const canControl = canControlAllPlayers || choice.playerId === myPlayerId
-  const targets = choice.targetType === 'battlefield_creature'
-    ? players.flatMap(player =>
-        player.zones.battlefield
-          .filter(card => card.typeLine.toLowerCase().includes('creature'))
-          .map(card => ({ player, card }))
-      )
-    : choice.targetType === 'token_you_control'
-    ? players.flatMap(player => {
-        if (player.id !== choice.playerId) return []
-        return player.zones.battlefield
-          .filter(card => card.isToken)
-          .map(card => ({ player, card }))
-      })
-    : players.flatMap(player => {
-        if (choice.targetType === 'own_graveyard_creature' && player.id !== choice.playerId) return []
-        if (choice.targetType === 'opponent_graveyard_creature' && player.id === choice.playerId) return []
-        return player.zones.graveyard
-          .filter(card => card.typeLine.toLowerCase().includes('creature'))
-          .map(card => ({ player, card }))
-      })
-  const targetLabel = choice.targetType === 'battlefield_creature'
-    ? 'Choose a creature target for this trigger'
-    : choice.targetType === 'token_you_control'
-    ? 'Choose a token you control for this trigger'
-    : 'Choose a graveyard creature target for this trigger'
+  const targets = getLegalTargetOptions(players, choice.targetType, choice.playerId)
+  const targetLabel = targetChoiceLabel(choice.targetType)
 
   const chooserName = players.find(player => player.id === choice.playerId)?.name ?? 'Player'
 
@@ -70,31 +48,49 @@ export function TriggerTargetOverlay({
         </p>
 
         <div className="grid max-h-[48vh] gap-2 overflow-y-auto pr-1">
-          {targets.map(({ player, card }) => (
-            <button
-              key={card.instanceId}
-              type="button"
-              onClick={() => canControl && onChoose(card.instanceId)}
-              disabled={!canControl}
-              className="group flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/90 p-2 text-left text-sm text-slate-200 transition-colors enabled:hover:border-amber-300/60 enabled:hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {card.imageUri ? (
-                <img
-                  src={card.imageUri}
-                  alt=""
-                  className="h-16 w-11 shrink-0 rounded object-cover"
-                />
-              ) : (
+          {targets.map(target => (
+            target.kind === 'player' ? (
+              <button
+                key={target.player.id}
+                type="button"
+                onClick={() => canControl && onChoose({ targetPlayerId: target.player.id })}
+                disabled={!canControl}
+                className="group flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/90 p-2 text-left text-sm text-slate-200 transition-colors enabled:hover:border-amber-300/60 enabled:hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
                 <span className="flex h-16 w-11 shrink-0 items-center justify-center rounded border border-slate-700 bg-slate-950 text-[10px] text-slate-500">
-                  No art
+                  Player
                 </span>
-              )}
-              <span>
-                <span className="block font-semibold text-white group-enabled:group-hover:text-amber-100">{card.name}</span>
-                <span className="block text-xs text-slate-400">{player.name}</span>
-                <span className="block text-xs text-slate-500">{card.typeLine}</span>
-              </span>
-            </button>
+                <span>
+                  <span className="block font-semibold text-white group-enabled:group-hover:text-amber-100">{target.player.name}</span>
+                  <span className="block text-xs text-slate-400">Life {target.player.life}</span>
+                </span>
+              </button>
+            ) : (
+              <button
+                key={target.card.instanceId}
+                type="button"
+                onClick={() => canControl && onChoose({ targetCardId: target.card.instanceId })}
+                disabled={!canControl}
+                className="group flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/90 p-2 text-left text-sm text-slate-200 transition-colors enabled:hover:border-amber-300/60 enabled:hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {target.card.imageUri ? (
+                  <img
+                    src={target.card.imageUri}
+                    alt=""
+                    className="h-16 w-11 shrink-0 rounded object-cover"
+                  />
+                ) : (
+                  <span className="flex h-16 w-11 shrink-0 items-center justify-center rounded border border-slate-700 bg-slate-950 text-[10px] text-slate-500">
+                    No art
+                  </span>
+                )}
+                <span>
+                  <span className="block font-semibold text-white group-enabled:group-hover:text-amber-100">{target.card.name}</span>
+                  <span className="block text-xs text-slate-400">{target.player.name}</span>
+                  <span className="block text-xs text-slate-500">{target.card.typeLine}</span>
+                </span>
+              </button>
+            )
           ))}
           {targets.length === 0 && (
             <div className="rounded-lg border border-dashed border-slate-700 px-4 py-6 text-sm text-slate-500">

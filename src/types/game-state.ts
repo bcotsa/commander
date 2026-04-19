@@ -186,7 +186,7 @@ export interface GameState {
   pendingSurveilChoice: SurveilChoiceState | null
   pendingEffectSequence: PendingEffectSequenceState | null
   pendingProliferateChoice: ProliferateChoiceState | null
-  pendingTriggerTargetChoice: TriggerTargetChoiceState | null
+  pendingTargetChoice: PendingTargetChoiceState | null
   priorityPlayerId: string | null
   priorityPassedIds: string[]
   round: number
@@ -219,7 +219,7 @@ export interface StackItem {
   targetPlayerId?: string
   abilityLabel?: string
   triggerEffect?: TriggerEffectPayload
-  triggerTargetType?: TriggerTargetType
+  targetChoiceType?: TargetChoiceType
   castOptions?: CastOptions
   spentMana?: ManaPool
 }
@@ -257,11 +257,12 @@ export interface ProliferateChoiceState {
   sourceName: string
 }
 
-export interface TriggerTargetChoiceState {
+export interface PendingTargetChoiceState {
   playerId: string
   stackItemId: string
   sourceName: string
-  targetType: TriggerTargetType
+  source: 'spell' | 'trigger' | 'activated_ability'
+  targetType: TargetChoiceType
 }
 
 export interface LandEffectChoiceState {
@@ -279,7 +280,15 @@ export interface LibrarySearchChoiceState {
 }
 
 export type GraveyardTargetType = 'own_graveyard_creature' | 'any_graveyard_creature' | 'opponent_graveyard_creature'
-export type TriggerTargetType = 'battlefield_creature' | 'token_you_control' | GraveyardTargetType
+export type TargetChoiceType =
+  | 'battlefield_creature'
+  | 'battlefield_creature_or_planeswalker'
+  | 'battlefield_nonland_permanent'
+  | 'battlefield_permanent'
+  | 'creature_or_player'
+  | 'player'
+  | 'token_you_control'
+  | GraveyardTargetType
 
 // Discriminated union of all possible game actions
 export type ActionPayload =
@@ -312,7 +321,7 @@ export type ActionPayload =
   | { type: 'RESOLVE_SCRY_CHOICE'; playerId: string; topCardIds: string[]; bottomCardIds: string[] }
   | { type: 'RESOLVE_SURVEIL_CHOICE'; playerId: string; topCardIds: string[]; graveyardCardIds: string[] }
   | { type: 'RESOLVE_PROLIFERATE_CHOICE'; playerId: string; targetPlayerIds: string[]; targetCardIds: string[] }
-  | { type: 'SET_TRIGGER_TARGET'; playerId: string; stackItemId: string; targetCardId: string }
+  | { type: 'SET_PENDING_TARGET'; playerId: string; stackItemId: string; targetCardId?: string; targetPlayerId?: string }
   | { type: 'PLAY_LAND'; playerId: string; cardId: string }
   | { type: 'CAST_COMMANDER'; playerId: string; cardId: string; options?: CastOptions }
   | { type: 'CAST_PERMANENT'; playerId: string; cardId: string; options?: CastOptions }

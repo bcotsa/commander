@@ -36,11 +36,11 @@ export function Game() {
   const currentTurnPlayerId = state.turnOrder[state.currentTurnIndex] ?? null
   const targetPlayer = state.players.find(p => p.id === modalTargetPlayerId) ?? null
   const winner = getWinner(state)
-  const pendingTriggerChoice = state.pendingTriggerTargetChoice
-  const [hiddenTriggerChoiceId, setHiddenTriggerChoiceId] = useState<string | null>(null)
-  const triggerChoiceHidden = Boolean(pendingTriggerChoice && hiddenTriggerChoiceId === pendingTriggerChoice.stackItemId)
-  const triggerChoicePlayerName = pendingTriggerChoice
-    ? state.players.find(player => player.id === pendingTriggerChoice.playerId)?.name ?? 'Player'
+  const pendingTargetChoice = state.pendingTargetChoice
+  const [hiddenTargetChoiceId, setHiddenTargetChoiceId] = useState<string | null>(null)
+  const targetChoiceHidden = Boolean(pendingTargetChoice && hiddenTargetChoiceId === pendingTargetChoice.stackItemId)
+  const targetChoicePlayerName = pendingTargetChoice
+    ? state.players.find(player => player.id === pendingTargetChoice.playerId)?.name ?? 'Player'
     : 'Player'
 
   // Redirect if state not loaded
@@ -57,15 +57,15 @@ export function Game() {
   }, [winner]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!pendingTriggerChoice) {
-      setHiddenTriggerChoiceId(null)
+    if (!pendingTargetChoice) {
+      setHiddenTargetChoiceId(null)
       return
     }
 
-    setHiddenTriggerChoiceId(current =>
-      current && current !== pendingTriggerChoice.stackItemId ? null : current
+    setHiddenTargetChoiceId(current =>
+      current && current !== pendingTargetChoice.stackItemId ? null : current
     )
-  }, [pendingTriggerChoice?.stackItemId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pendingTargetChoice?.stackItemId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const canUndo = state.log.some(e => e.undoable)
 
@@ -232,39 +232,40 @@ export function Game() {
         />
       )}
 
-      {pendingTriggerChoice && (
+      {pendingTargetChoice && (
         <div className="fixed bottom-20 left-1/2 z-[80] w-[min(calc(100vw-1.5rem),34rem)] -translate-x-1/2 rounded-2xl border border-amber-300/40 bg-slate-950/95 p-3 shadow-2xl shadow-black/40 backdrop-blur-md">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">Pending target</div>
               <div className="text-sm text-white">
-                {triggerChoicePlayerName} needs to choose for <span className="font-semibold">{pendingTriggerChoice.sourceName}</span>
+                {targetChoicePlayerName} needs to choose for <span className="font-semibold">{pendingTargetChoice.sourceName}</span>
               </div>
             </div>
             <button
               type="button"
-              onClick={() => setHiddenTriggerChoiceId(triggerChoiceHidden ? null : pendingTriggerChoice.stackItemId)}
+              onClick={() => setHiddenTargetChoiceId(targetChoiceHidden ? null : pendingTargetChoice.stackItemId)}
               className="rounded-full bg-amber-200 px-4 py-2 text-xs font-bold text-slate-950 transition-colors hover:bg-amber-100"
             >
-              {triggerChoiceHidden ? 'Choose Target' : 'Hide Picker'}
+              {targetChoiceHidden ? 'Choose Target' : 'Hide Picker'}
             </button>
           </div>
         </div>
       )}
 
-      {pendingTriggerChoice && !triggerChoiceHidden && (
+      {pendingTargetChoice && !targetChoiceHidden && (
         <TriggerTargetOverlay
-          choice={pendingTriggerChoice}
+          choice={pendingTargetChoice}
           players={state.players}
           myPlayerId={myPlayerId}
           canControlAllPlayers={Boolean(isHost && state.hostControlsAllPlayers)}
-          onChoose={(targetCardId) => sendAction({
-            type: 'SET_TRIGGER_TARGET',
-            playerId: pendingTriggerChoice.playerId,
-            stackItemId: pendingTriggerChoice.stackItemId,
-            targetCardId,
+          onChoose={(target) => sendAction({
+            type: 'SET_PENDING_TARGET',
+            playerId: pendingTargetChoice.playerId,
+            stackItemId: pendingTargetChoice.stackItemId,
+            targetCardId: target.targetCardId,
+            targetPlayerId: target.targetPlayerId,
           })}
-          onDismiss={() => setHiddenTriggerChoiceId(pendingTriggerChoice.stackItemId)}
+          onDismiss={() => setHiddenTargetChoiceId(pendingTargetChoice.stackItemId)}
         />
       )}
 

@@ -713,6 +713,18 @@ export function PlayerTile({
               Cast Spell…
             </button>
           )}
+          {canControlPlayer && selected.zone === 'hand' && !selectedIsLand && !selectedIsPermanent && !selectedCastChoiceSpec && selectedSpell && selectedSpell.target !== 'none' && (
+            <button
+              onClick={() => {
+                onCastSpell(card.instanceId)
+                setSelected(null)
+              }}
+              disabled={!selectedCanPay}
+              className="rounded-md bg-amber-700 px-2 py-1 text-[10px] font-medium text-white transition-colors enabled:hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Cast, Choose Target
+            </button>
+          )}
           {canControlPlayer && selected.zone === 'hand' && !selectedIsLand && !selectedIsPermanent && !selectedCastChoiceSpec && (selectedSpell?.target === 'creature_or_player' || selectedSpell?.target === 'player') &&
             allPlayers.filter(otherPlayer => !otherPlayer.isEliminated).map(otherPlayer => (
               <button
