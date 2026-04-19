@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { PlayerGrid } from '@/components/game/PlayerGrid'
 import { ExploreChoiceOverlay } from '@/components/game/ExploreChoiceOverlay'
@@ -36,6 +36,12 @@ export function Game() {
   const currentTurnPlayerId = state.turnOrder[state.currentTurnIndex] ?? null
   const targetPlayer = state.players.find(p => p.id === modalTargetPlayerId) ?? null
   const winner = getWinner(state)
+  const pendingTriggerChoice = state.pendingTriggerTargetChoice
+  const [hiddenTriggerChoiceId, setHiddenTriggerChoiceId] = useState<string | null>(null)
+  const triggerChoiceHidden = Boolean(pendingTriggerChoice && hiddenTriggerChoiceId === pendingTriggerChoice.stackItemId)
+  const triggerChoicePlayerName = pendingTriggerChoice
+    ? state.players.find(player => player.id === pendingTriggerChoice.playerId)?.name ?? 'Player'
+    : 'Player'
 
   // Redirect if state not loaded
   useEffect(() => {
@@ -49,6 +55,17 @@ export function Game() {
       showToast(`🏆 ${name} wins!`)
     }
   }, [winner]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!pendingTriggerChoice) {
+      setHiddenTriggerChoiceId(null)
+      return
+    }
+
+    setHiddenTriggerChoiceId(current =>
+      current && current !== pendingTriggerChoice.stackItemId ? null : current
+    )
+  }, [pendingTriggerChoice?.stackItemId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const canUndo = state.log.some(e => e.undoable)
 
@@ -215,18 +232,39 @@ export function Game() {
         />
       )}
 
-      {state.pendingTriggerTargetChoice && (
+      {pendingTriggerChoice && (
+        <div className="fixed bottom-20 left-1/2 z-[80] w-[min(calc(100vw-1.5rem),34rem)] -translate-x-1/2 rounded-2xl border border-amber-300/40 bg-slate-950/95 p-3 shadow-2xl shadow-black/40 backdrop-blur-md">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">Pending target</div>
+              <div className="text-sm text-white">
+                {triggerChoicePlayerName} needs to choose for <span className="font-semibold">{pendingTriggerChoice.sourceName}</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setHiddenTriggerChoiceId(triggerChoiceHidden ? null : pendingTriggerChoice.stackItemId)}
+              className="rounded-full bg-amber-200 px-4 py-2 text-xs font-bold text-slate-950 transition-colors hover:bg-amber-100"
+            >
+              {triggerChoiceHidden ? 'Choose Target' : 'Hide Picker'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {pendingTriggerChoice && !triggerChoiceHidden && (
         <TriggerTargetOverlay
-          choice={state.pendingTriggerTargetChoice}
+          choice={pendingTriggerChoice}
           players={state.players}
           myPlayerId={myPlayerId}
           canControlAllPlayers={Boolean(isHost && state.hostControlsAllPlayers)}
           onChoose={(targetCardId) => sendAction({
             type: 'SET_TRIGGER_TARGET',
-            playerId: state.pendingTriggerTargetChoice?.playerId ?? myPlayerId,
-            stackItemId: state.pendingTriggerTargetChoice?.stackItemId ?? '',
+            playerId: pendingTriggerChoice.playerId,
+            stackItemId: pendingTriggerChoice.stackItemId,
             targetCardId,
           })}
+          onDismiss={() => setHiddenTriggerChoiceId(pendingTriggerChoice.stackItemId)}
         />
       )}
 
