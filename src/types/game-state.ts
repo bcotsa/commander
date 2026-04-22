@@ -291,6 +291,7 @@ export type TargetChoiceType =
   | 'player'
   | 'token_you_control'
   | GraveyardTargetType
+export type ManualStackDestination = 'graveyard' | 'exile' | 'battlefield' | 'hand' | 'commandZone'
 
 // Discriminated union of all possible game actions
 export type ActionPayload =
@@ -335,6 +336,7 @@ export type ActionPayload =
   | { type: 'REMOVE_BLOCKER'; playerId: string; blockerId: string; attackerId: string }
   | { type: 'RESOLVE_COMBAT' }
   | { type: 'RESOLVE_STACK' }
+  | { type: 'MANUAL_RESOLVE_STACK'; playerId: string; outcome: 'resolve' | 'counter'; destination?: ManualStackDestination }
   | { type: 'PASS_PRIORITY'; playerId: string }
   | { type: 'SET_PLAYER_NAME'; playerId: string; name: string }
   | { type: 'UNDO' }

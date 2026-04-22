@@ -37,6 +37,9 @@ export function Game() {
   const targetPlayer = state.players.find(p => p.id === modalTargetPlayerId) ?? null
   const winner = getWinner(state)
   const pendingTargetChoice = state.pendingTargetChoice
+  const manualStackPlayerId = state.priorityPlayerId && (state.priorityPlayerId === myPlayerId || (isHost && state.hostControlsAllPlayers))
+    ? state.priorityPlayerId
+    : null
   const [hiddenTargetChoiceId, setHiddenTargetChoiceId] = useState<string | null>(null)
   const targetChoiceHidden = Boolean(pendingTargetChoice && hiddenTargetChoiceId === pendingTargetChoice.stackItemId)
   const targetChoicePlayerName = pendingTargetChoice
@@ -93,6 +96,13 @@ export function Game() {
         players={state.players}
         priorityPlayerId={state.priorityPlayerId}
         passedIds={state.priorityPassedIds}
+        manualPlayerId={manualStackPlayerId}
+        onManualResolve={(playerId, outcome, destination) => sendAction({
+          type: 'MANUAL_RESOLVE_STACK',
+          playerId,
+          outcome,
+          destination,
+        })}
       />
 
       {/* Player grid — fills remaining space */}

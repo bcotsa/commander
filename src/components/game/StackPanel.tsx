@@ -1,11 +1,13 @@
 import { CardPreview } from '@/components/ui/CardPreview'
-import type { Player, StackItem } from '@/types/game-state'
+import type { ManualStackDestination, Player, StackItem } from '@/types/game-state'
 
 interface StackPanelProps {
   stack: StackItem[]
   players: Player[]
   priorityPlayerId: string | null
   passedIds: string[]
+  manualPlayerId?: string | null
+  onManualResolve?: (playerId: string, outcome: 'resolve' | 'counter', destination?: ManualStackDestination) => void
 }
 
 function describeTarget(stackItem: StackItem, players: Player[]): string | null {
@@ -33,7 +35,32 @@ function stackItemLabel(stackItem: StackItem): string {
   return stackItem.card.name
 }
 
-export function StackPanel({ stack, players, priorityPlayerId, passedIds }: StackPanelProps) {
+function manualOptions(stackItem: StackItem): Array<{ label: string; outcome: 'resolve' | 'counter'; destination?: ManualStackDestination }> {
+  if (stackItem.kind === 'ability' || stackItem.kind === 'trigger') {
+    return [
+      { label: 'Resolve Manual', outcome: 'resolve' },
+      { label: 'Counter', outcome: 'counter' },
+    ]
+  }
+
+  const options: Array<{ label: string; outcome: 'resolve' | 'counter'; destination?: ManualStackDestination }> = [
+    { label: 'Resolve', outcome: 'resolve' },
+    { label: 'Counter', outcome: 'counter' },
+    { label: 'To Battlefield', outcome: 'resolve', destination: 'battlefield' },
+    { label: 'To Graveyard', outcome: 'resolve', destination: 'graveyard' },
+    { label: 'Exile', outcome: 'resolve', destination: 'exile' },
+    { label: 'To Hand', outcome: 'resolve', destination: 'hand' },
+  ]
+
+  if (stackItem.kind === 'commander' || stackItem.card.isCommander) {
+    options.push({ label: 'To Command', outcome: 'resolve', destination: 'commandZone' })
+    options.push({ label: 'Counter to Command', outcome: 'counter', destination: 'commandZone' })
+  }
+
+  return options
+}
+
+export function StackPanel({ stack, players, priorityPlayerId, passedIds, manualPlayerId, onManualResolve }: StackPanelProps) {
   if (stack.length === 0) {
     return (
       <div className="border-b border-slate-800 bg-slate-950/70 px-3 py-2">
@@ -93,6 +120,26 @@ export function StackPanel({ stack, players, priorityPlayerId, passedIds }: Stac
                   <span>{stackItem.kind}</span>
                   {target && <span>Target: {target}</span>}
                 </div>
+                {isTop && manualPlayerId && onManualResolve && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {manualOptions(stackItem).map(option => (
+                      <button
+                        key={`${option.label}-${option.destination ?? 'default'}`}
+                        type="button"
+                        onClick={() => onManualResolve(manualPlayerId, option.outcome, option.destination)}
+                        className={`rounded-md px-2 py-1 text-[10px] font-medium transition-colors ${
+                          option.outcome === 'counter'
+                            ? 'bg-rose-800 text-white hover:bg-rose-700'
+                            : option.destination === 'battlefield'
+                              ? 'bg-emerald-800 text-white hover:bg-emerald-700'
+                              : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )
           })}

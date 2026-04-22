@@ -1346,6 +1346,124 @@ describe('Shared target choice for abilities', () => {
   })
 })
 
+describe('Manual stack resolution', () => {
+  it('manually resolves a spell to the graveyard by default', () => {
+    const spell = makeCard({
+      instanceId: 'manual-spell-1',
+      name: 'Mystery Spell',
+      typeLine: 'Instant',
+      manaCost: '{2}{B}',
+      power: null,
+      toughness: null,
+    })
+    const base = twoPlayerGame()
+    const state = {
+      ...base,
+      priorityPlayerId: 'p1',
+      stack: [{
+        id: 'stack-manual-spell',
+        card: spell,
+        casterId: 'p1',
+        casterName: 'Alice',
+        source: 'hand' as const,
+        kind: 'spell' as const,
+      }],
+    }
+
+    const next = gameReducer(state, {
+      type: 'MANUAL_RESOLVE_STACK',
+      playerId: 'p1',
+      outcome: 'resolve',
+    })
+
+    expect(next.stack).toHaveLength(0)
+    expect(getPlayer(next, 'p1').zones.graveyard.find(card => card.instanceId === spell.instanceId)).toBeDefined()
+  })
+
+  it('can manually place a permanent from the stack onto the battlefield', () => {
+    const creature = makeCard({
+      instanceId: 'manual-permanent-1',
+      name: 'Odd Creature',
+      typeLine: 'Creature — Beast',
+      manaCost: '{3}{G}',
+      power: 4,
+      toughness: 4,
+    })
+    const base = twoPlayerGame()
+    const state = {
+      ...base,
+      priorityPlayerId: 'p1',
+      stack: [{
+        id: 'stack-manual-permanent',
+        card: creature,
+        casterId: 'p1',
+        casterName: 'Alice',
+        source: 'hand' as const,
+        kind: 'permanent' as const,
+      }],
+    }
+
+    const next = gameReducer(state, {
+      type: 'MANUAL_RESOLVE_STACK',
+      playerId: 'p1',
+      outcome: 'resolve',
+      destination: 'battlefield',
+    })
+
+    expect(next.stack).toHaveLength(0)
+    expect(getPlayer(next, 'p1').zones.battlefield.find(card => card.instanceId === creature.instanceId)?.summoningSick).toBe(true)
+  })
+
+  it('can manually clear an ability from the stack without duplicating the source card', () => {
+    const source = makeCard({
+      instanceId: 'manual-ability-source',
+      name: 'Map',
+      typeLine: 'Token Artifact — Map',
+      oracleText: '{1}, {T}, Sacrifice this artifact: Target creature you control explores. Activate only as a sorcery.',
+      power: null,
+      toughness: null,
+      isToken: true,
+      tokenKey: 'map',
+    })
+    const base = twoPlayerGame()
+    const state = {
+      ...base,
+      priorityPlayerId: 'p1',
+      players: base.players.map(player =>
+        player.id === 'p1'
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                battlefield: [source],
+              },
+            }
+          : player
+      ),
+      stack: [{
+        id: 'stack-manual-ability',
+        card: source,
+        casterId: 'p1',
+        casterName: 'Alice',
+        source: 'battlefield' as const,
+        kind: 'ability' as const,
+        abilitySource: 'activated' as const,
+        abilityId: 'map-explore',
+        abilityLabel: 'Explore target creature',
+      }],
+    }
+
+    const next = gameReducer(state, {
+      type: 'MANUAL_RESOLVE_STACK',
+      playerId: 'p1',
+      outcome: 'counter',
+    })
+
+    expect(next.stack).toHaveLength(0)
+    expect(getPlayer(next, 'p1').zones.battlefield.filter(card => card.instanceId === source.instanceId)).toHaveLength(1)
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Token copy triggers
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeckCard, PlayerZones, TurnPhase, StackItem, TokenTemplateKey, TriggerEffectPayload, ColorSymbol, QueuedEffectStep } from '@/types/game-state'
+import type { GameState, ActionPayload, Player, LogEntry, GameCard, ImportedDeckCard, PlayerZones, TurnPhase, StackItem, TokenTemplateKey, TriggerEffectPayload, ColorSymbol, QueuedEffectStep, ManualStackDestination } from '@/types/game-state'
 import { checkEliminations } from './game-engine'
 import { autoPayManaCost, canAutoPayManaCost, emptyManaPool, getActivatedAbilities, getEtbCounters, getLandEntryEffect, getLandManaOptions, getPlaneswalkerAbilities, getSimpleSpellDefinition, getSimpleSpellSequence, getTokenTemplate, getTriggeredAbilities, landEntersTapped, resolveManaCost, type PlaneswalkerAbilityEffect, type TriggeredAbilityDefinition, type TriggerEffectDefinition } from './card-rules'
 import { hasBespokeSpellResolution } from './card-support'
@@ -1937,6 +1937,137 @@ function pushStackItem(
   }
 }
 
+function defaultManualStackDestination(stackItem: StackItem, outcome: 'resolve' | 'counter'): ManualStackDestination | null {
+  if (stackItem.kind === 'ability' || stackItem.kind === 'trigger') return null
+
+  if (outcome === 'counter') {
+    return stackItem.kind === 'commander' ? 'commandZone' : 'graveyard'
+  }
+
+  if (stackItem.kind === 'permanent' || stackItem.kind === 'commander') return 'battlefield'
+  return 'graveyard'
+}
+
+function moveStackCardToManualDestination(
+  players: Player[],
+  stackItem: StackItem,
+  destination: ManualStackDestination
+): { players: Player[]; triggerOccurrences: TriggerOccurrence[] } {
+  const triggerOccurrences: TriggerOccurrence[] = []
+
+  if (stackItem.kind === 'ability' || stackItem.kind === 'trigger' || stackItem.card.isToken) {
+    return { players, triggerOccurrences }
+  }
+
+  const movedCard = destination === 'battlefield' ? entersBattlefield(stackItem.card) : normalizeLeavingCard(stackItem.card)
+  const nextPlayers = players.map(player => {
+    if (player.id !== stackItem.casterId) return player
+
+    if (destination === 'battlefield') {
+      return {
+        ...player,
+        zones: {
+          ...player.zones,
+          battlefield: [...player.zones.battlefield, movedCard],
+        },
+      }
+    }
+
+    if (destination === 'hand') {
+      return {
+        ...player,
+        zones: {
+          ...player.zones,
+          hand: [...player.zones.hand, movedCard],
+        },
+      }
+    }
+
+    if (destination === 'exile') {
+      return {
+        ...player,
+        zones: {
+          ...player.zones,
+          exile: [...player.zones.exile, movedCard],
+        },
+      }
+    }
+
+    if (destination === 'commandZone') {
+      return {
+        ...player,
+        zones: {
+          ...player.zones,
+          commandZone: [...player.zones.commandZone, { ...movedCard, isCommander: true }],
+        },
+      }
+    }
+
+    return {
+      ...player,
+      zones: {
+        ...player.zones,
+        graveyard: [...player.zones.graveyard, movedCard],
+      },
+    }
+  })
+
+  if (destination === 'battlefield') {
+    triggerOccurrences.push({ type: 'enters_battlefield', controllerId: stackItem.casterId, card: movedCard })
+    if (isCreatureCard(movedCard)) {
+      triggerOccurrences.push({ type: 'creature_enters', controllerId: stackItem.casterId, card: movedCard })
+    }
+  }
+
+  return { players: nextPlayers, triggerOccurrences }
+}
+
+function resolveStackTopManually(
+  state: GameState,
+  outcome: 'resolve' | 'counter',
+  destination?: ManualStackDestination
+): GameState {
+  const stackItem = state.stack[state.stack.length - 1]
+  if (!stackItem) return state
+
+  const finalDestination = destination ?? defaultManualStackDestination(stackItem, outcome)
+  let players = state.players.map(player => ({
+    ...player,
+    zones: {
+      ...player.zones,
+      battlefield: player.zones.battlefield.map(card => ({ ...card })),
+      lands: player.zones.lands.map(card => ({ ...card })),
+      graveyard: player.zones.graveyard.map(card => ({ ...card })),
+      exile: player.zones.exile.map(card => ({ ...card })),
+      hand: player.zones.hand.map(card => ({ ...card })),
+      commandZone: player.zones.commandZone.map(card => ({ ...card })),
+    },
+  }))
+
+  let triggerOccurrences: TriggerOccurrence[] = []
+  if (finalDestination) {
+    const moved = moveStackCardToManualDestination(players, stackItem, finalDestination)
+    players = moved.players
+    triggerOccurrences = moved.triggerOccurrences
+  }
+
+  const cleaned = cleanupBattlefieldState(players)
+  triggerOccurrences.push(...cleaned.triggerOccurrences)
+
+  const nextBase = {
+    ...state,
+    players: cleaned.players,
+    stack: state.stack.slice(0, -1),
+    pendingTargetChoice: getPendingTargetChoice(state.stack.slice(0, -1)),
+    priorityPlayerId: state.turnOrder[state.currentTurnIndex] ?? null,
+    priorityPassedIds: [],
+    actionSeq: state.actionSeq + 1,
+  }
+
+  const next = queueTriggeredAbilities(nextBase, triggerOccurrences)
+  return checkEliminations(next)
+}
+
 function queuePhaseTriggers(state: GameState, phase: TurnPhase, turnIndex = state.currentTurnIndex): GameState {
   const activePlayerId = state.turnOrder[turnIndex]
   if (!activePlayerId) return state
@@ -2767,6 +2898,14 @@ function describe(state: GameState, action: ActionPayload): string {
           ? `${top.card.name} — ${top.abilityLabel ?? (top.kind === 'trigger' ? 'trigger' : 'ability')}`
           : top?.card.name ?? 'top of stack'
       }`
+    }
+    case 'MANUAL_RESOLVE_STACK': {
+      const top = state.stack[state.stack.length - 1]
+      const defaultDestination = top ? defaultManualStackDestination(top, action.outcome) : null
+      const destination = action.destination ?? defaultDestination
+      const outcomeLabel = action.outcome === 'counter' ? 'countered' : 'resolved manually'
+      const destinationLabel = destination ? ` to ${destination}` : ''
+      return `${player(action.playerId)} ${outcomeLabel} ${top?.card.name ?? 'the top of stack'}${destinationLabel}`
     }
     case 'PASS_PRIORITY':
       return `${player(action.playerId)} passed priority`
@@ -4913,6 +5052,24 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
           timestamp: new Date().toISOString(),
           playerId: '',
           playerName: '',
+          description: describe(state, action),
+          action,
+          undoable: true,
+        }),
+      }
+    }
+
+    case 'MANUAL_RESOLVE_STACK': {
+      if (state.stack.length === 0) return state
+      if (state.priorityPlayerId !== action.playerId) return state
+
+      const next = resolveStackTopManually(state, action.outcome, action.destination)
+      return {
+        ...next,
+        log: appendLog(state.log, {
+          timestamp: new Date().toISOString(),
+          playerId: action.playerId,
+          playerName: state.players.find(p => p.id === action.playerId)?.name ?? '',
           description: describe(state, action),
           action,
           undoable: true,
