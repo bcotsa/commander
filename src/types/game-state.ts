@@ -213,11 +213,13 @@ export interface StackItem {
   card: GameCard
   casterId: string
   casterName: string
-  source: 'hand' | 'commandZone'
-  kind: 'commander' | 'permanent' | 'spell' | 'trigger'
+  source: 'hand' | 'commandZone' | 'battlefield' | 'lands'
+  kind: 'commander' | 'permanent' | 'spell' | 'trigger' | 'ability'
   targetCardId?: string
   targetPlayerId?: string
   abilityLabel?: string
+  abilitySource?: 'activated' | 'planeswalker'
+  abilityId?: string
   triggerEffect?: TriggerEffectPayload
   targetChoiceType?: TargetChoiceType
   castOptions?: CastOptions

@@ -26,6 +26,13 @@ function describeTarget(stackItem: StackItem, players: Player[]): string | null 
   return null
 }
 
+function stackItemLabel(stackItem: StackItem): string {
+  if ((stackItem.kind === 'trigger' || stackItem.kind === 'ability') && stackItem.abilityLabel) {
+    return `${stackItem.card.name} — ${stackItem.abilityLabel}`
+  }
+  return stackItem.card.name
+}
+
 export function StackPanel({ stack, players, priorityPlayerId, passedIds }: StackPanelProps) {
   if (stack.length === 0) {
     return (
@@ -69,16 +76,12 @@ export function StackPanel({ stack, players, priorityPlayerId, passedIds }: Stac
                   {stackItem.card.imageUri ? (
                     <CardPreview imageUri={stackItem.card.imageUri} name={stackItem.card.name}>
                       <span className="truncate text-sm font-semibold text-white underline decoration-dotted underline-offset-2 cursor-help">
-                        {stackItem.kind === 'trigger'
-                          ? `${stackItem.card.name} — ${stackItem.abilityLabel ?? 'Trigger'}`
-                          : stackItem.card.name}
+                        {stackItemLabel(stackItem)}
                       </span>
                     </CardPreview>
                   ) : (
                     <span className="truncate text-sm font-semibold text-white">
-                      {stackItem.kind === 'trigger'
-                        ? `${stackItem.card.name} — ${stackItem.abilityLabel ?? 'Trigger'}`
-                        : stackItem.card.name}
+                      {stackItemLabel(stackItem)}
                     </span>
                   )}
                   <span className="flex-shrink-0 text-[10px] uppercase tracking-wide text-slate-500">

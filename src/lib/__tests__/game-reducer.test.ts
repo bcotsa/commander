@@ -1207,6 +1207,145 @@ describe('Token activated abilities', () => {
   })
 })
 
+describe('Shared target choice for abilities', () => {
+  it('puts targeted planeswalker abilities onto the stack and resolves them after choosing a target', () => {
+    const planeswalker = makeCard({
+      instanceId: 'vraska-test',
+      name: 'Test Vraska',
+      typeLine: 'Legendary Planeswalker — Vraska',
+      oracleText: '+1: Destroy target creature.',
+      power: null,
+      toughness: null,
+      startingLoyalty: 4,
+      loyalty: 4,
+    })
+    const target = makeCard({
+      instanceId: 'pw-target-creature',
+      name: 'Target Creature',
+      power: 3,
+      toughness: 3,
+    })
+    const base = twoPlayerGame()
+    const state = {
+      ...base,
+      players: base.players.map(player =>
+        player.id === 'p1'
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                battlefield: [planeswalker],
+              },
+            }
+          : player.id === 'p2'
+            ? {
+                ...player,
+                zones: {
+                  ...player.zones,
+                  battlefield: [target],
+                },
+              }
+            : player
+      ),
+    }
+
+    const activated = gameReducer(state, {
+      type: 'ACTIVATE_PLANESWALKER_ABILITY',
+      playerId: 'p1',
+      cardId: planeswalker.instanceId,
+      abilityId: 'loyalty-0-1',
+    })
+
+    expect(activated.stack).toHaveLength(1)
+    expect(activated.stack[0]?.kind).toBe('ability')
+    expect(activated.pendingTargetChoice?.source).toBe('activated_ability')
+    expect(activated.pendingTargetChoice?.targetType).toBe('battlefield_creature')
+    expect(getPlayer(activated, 'p1').zones.battlefield.find(card => card.instanceId === planeswalker.instanceId)?.loyalty).toBe(5)
+
+    const targeted = gameReducer(activated, {
+      type: 'SET_PENDING_TARGET',
+      playerId: 'p1',
+      stackItemId: activated.pendingTargetChoice?.stackItemId ?? '',
+      targetCardId: target.instanceId,
+    })
+
+    const resolved = gameReducer(targeted, { type: 'RESOLVE_STACK' })
+    expect(getPlayer(resolved, 'p2').zones.battlefield.find(card => card.instanceId === target.instanceId)).toBeUndefined()
+    expect(getPlayer(resolved, 'p2').zones.graveyard.find(card => card.instanceId === target.instanceId)).toBeDefined()
+  })
+
+  it('puts explore abilities onto the stack and opens the explore choice after target selection', () => {
+    const map = makeCard({
+      instanceId: 'map-1',
+      name: 'Map',
+      typeLine: 'Token Artifact — Map',
+      oracleText: '{1}, {T}, Sacrifice this artifact: Target creature you control explores. Activate only as a sorcery.',
+      power: null,
+      toughness: null,
+      isToken: true,
+      tokenKey: 'map',
+    })
+    const creature = makeCard({
+      instanceId: 'explore-creature-1',
+      name: 'Explorer',
+      power: 2,
+      toughness: 2,
+    })
+    const forest = makeLand({
+      instanceId: 'explore-forest-1',
+      name: 'Forest',
+    })
+    const revealed = makeCard({
+      instanceId: 'explore-top-1',
+      name: 'Top Spell',
+      typeLine: 'Creature — Scout',
+      power: 1,
+      toughness: 1,
+    })
+    const base = twoPlayerGame()
+    const state = {
+      ...base,
+      players: base.players.map(player =>
+        player.id === 'p1'
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                battlefield: [map, creature],
+                lands: [forest],
+                library: [revealed],
+              },
+            }
+          : player
+      ),
+    }
+
+    const activated = gameReducer(state, {
+      type: 'ACTIVATE_ABILITY',
+      playerId: 'p1',
+      cardId: map.instanceId,
+      abilityId: 'map-explore',
+    })
+
+    expect(activated.stack).toHaveLength(1)
+    expect(activated.stack[0]?.kind).toBe('ability')
+    expect(activated.pendingTargetChoice?.source).toBe('activated_ability')
+    expect(getPlayer(activated, 'p1').zones.battlefield.find(card => card.instanceId === map.instanceId)).toBeUndefined()
+
+    const targeted = gameReducer(activated, {
+      type: 'SET_PENDING_TARGET',
+      playerId: 'p1',
+      stackItemId: activated.pendingTargetChoice?.stackItemId ?? '',
+      targetCardId: creature.instanceId,
+    })
+
+    const resolved = gameReducer(targeted, { type: 'RESOLVE_STACK' })
+    expect(resolved.pendingExploreChoice?.targetCardId).toBe(creature.instanceId)
+    expect(getPlayer(resolved, 'p1').zones.battlefield.find(card => card.instanceId === creature.instanceId)?.plusOneCounters).toBe(1)
+    expect(getPlayer(resolved, 'p1').zones.library).toHaveLength(0)
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Token copy triggers
 // ---------------------------------------------------------------------------

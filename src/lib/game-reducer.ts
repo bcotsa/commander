@@ -1357,6 +1357,142 @@ function applyPlaneswalkerEffect(
   }
 }
 
+function resolveAbilityStackItem(
+  players: Player[],
+  stackItem: StackItem
+): {
+  players: Player[]
+  triggerOccurrences: TriggerOccurrence[]
+  pendingExploreChoice: GameState['pendingExploreChoice']
+  pendingScryChoice: GameState['pendingScryChoice']
+  pendingSurveilChoice: GameState['pendingSurveilChoice']
+  pendingProliferateChoice: GameState['pendingProliferateChoice']
+  automated: boolean
+} {
+  if (stackItem.kind !== 'ability' || !stackItem.abilityId) {
+    return {
+      players,
+      triggerOccurrences: [],
+      pendingExploreChoice: null,
+      pendingScryChoice: null,
+      pendingSurveilChoice: null,
+      pendingProliferateChoice: null,
+      automated: false,
+    }
+  }
+
+  if (stackItem.abilitySource === 'planeswalker') {
+    const ability = getPlaneswalkerAbilities(stackItem.card).find(entry => entry.id === stackItem.abilityId)
+    if (!ability?.supported || !ability.effect) {
+      return {
+        players,
+        triggerOccurrences: [],
+        pendingExploreChoice: null,
+        pendingScryChoice: null,
+        pendingSurveilChoice: null,
+        pendingProliferateChoice: null,
+        automated: false,
+      }
+    }
+
+    const resolved = applyPlaneswalkerEffect(players, stackItem.casterId, ability.effect, stackItem.targetCardId, stackItem.targetPlayerId)
+
+    return {
+      players: resolved.players,
+      triggerOccurrences: resolved.triggerOccurrences,
+      pendingExploreChoice: null,
+      pendingScryChoice: ability.effect.kind === 'scry'
+        ? createScryChoice(resolved.players, stackItem.casterId, stackItem.card.name, ability.effect.amount)
+        : null,
+      pendingSurveilChoice: ability.effect.kind === 'surveil'
+        ? createSurveilChoice(resolved.players, stackItem.casterId, stackItem.card.name, ability.effect.amount)
+        : null,
+      pendingProliferateChoice: ability.effect.kind === 'proliferate'
+        ? {
+            playerId: stackItem.casterId,
+            sourceName: stackItem.card.name,
+          }
+        : null,
+      automated: true,
+    }
+  }
+
+  if (stackItem.abilitySource === 'activated') {
+    const sourcePlayer = players.find(player => player.id === stackItem.casterId)
+    const ability = getActivatedAbilities(stackItem.card, sourcePlayer ?? { commander: null }).find(entry => entry.id === stackItem.abilityId)
+    if (!ability || ability.kind !== 'explore_target_creature') {
+      return {
+        players,
+        triggerOccurrences: [],
+        pendingExploreChoice: null,
+        pendingScryChoice: null,
+        pendingSurveilChoice: null,
+        pendingProliferateChoice: null,
+        automated: false,
+      }
+    }
+
+    const target = sourcePlayer?.zones.battlefield.find(entry => entry.instanceId === stackItem.targetCardId) ?? null
+    if (!sourcePlayer || !target || !isCreatureCard(target)) {
+      return {
+        players,
+        triggerOccurrences: [],
+        pendingExploreChoice: null,
+        pendingScryChoice: null,
+        pendingSurveilChoice: null,
+        pendingProliferateChoice: null,
+        automated: true,
+      }
+    }
+
+    const topCard = sourcePlayer.zones.library[0] ?? null
+    const isTopLand = topCard ? isLandCard(topCard) : false
+
+    return {
+      players: players.map(player =>
+        player.id === stackItem.casterId
+          ? {
+              ...player,
+              zones: {
+                ...player.zones,
+                battlefield: player.zones.battlefield.map(entry =>
+                  entry.instanceId === stackItem.targetCardId && topCard && !isTopLand
+                    ? { ...entry, plusOneCounters: entry.plusOneCounters + 1 }
+                    : entry
+                ),
+                library: topCard ? player.zones.library.slice(1) : player.zones.library,
+                hand: topCard && isTopLand ? [...player.zones.hand, topCard] : player.zones.hand,
+              },
+            }
+          : player
+      ),
+      triggerOccurrences: [],
+      pendingExploreChoice: topCard && !isTopLand
+        ? {
+            playerId: stackItem.casterId,
+            sourceCardId: stackItem.card.instanceId,
+            targetCardId: stackItem.targetCardId ?? '',
+            revealedCard: { ...topCard },
+          }
+        : null,
+      pendingScryChoice: null,
+      pendingSurveilChoice: null,
+      pendingProliferateChoice: null,
+      automated: true,
+    }
+  }
+
+  return {
+    players,
+    triggerOccurrences: [],
+    pendingExploreChoice: null,
+    pendingScryChoice: null,
+    pendingSurveilChoice: null,
+    pendingProliferateChoice: null,
+    automated: false,
+  }
+}
+
 function applyTappedManaCards(player: Player, cards: GameCard[]): Pick<Player, 'zones'> {
   const byId = new Map(cards.map(card => [card.instanceId, card]))
   return {
@@ -1754,8 +1890,14 @@ function getPendingTargetChoice(stack: StackItem[]): GameState['pendingTargetCho
   return {
     playerId: nextTargetItem.casterId,
     stackItemId: nextTargetItem.id,
-    sourceName: nextTargetItem.card.name,
-    source: nextTargetItem.kind === 'trigger' ? 'trigger' : 'spell',
+    sourceName: nextTargetItem.kind === 'ability' && nextTargetItem.abilityLabel
+      ? `${nextTargetItem.card.name} — ${nextTargetItem.abilityLabel}`
+      : nextTargetItem.card.name,
+    source: nextTargetItem.kind === 'trigger'
+      ? 'trigger'
+      : nextTargetItem.kind === 'ability'
+        ? 'activated_ability'
+        : 'spell',
     targetType: nextTargetItem.targetChoiceType!,
   }
 }
@@ -1906,6 +2048,7 @@ function resolveStackTop(state: GameState): GameState {
     },
   }))
   const triggerOccurrences: TriggerOccurrence[] = []
+  let pendingExploreChoice = state.pendingExploreChoice
   let pendingScryChoice = state.pendingScryChoice
   let pendingSurveilChoice = state.pendingSurveilChoice
   let pendingEffectSequence = state.pendingEffectSequence
@@ -2131,6 +2274,15 @@ function resolveStackTop(state: GameState): GameState {
         })
         break
     }
+  } else if (stackItem.kind === 'ability') {
+    const resolved = resolveAbilityStackItem(players, stackItem)
+    players = resolved.players
+    triggerOccurrences.push(...resolved.triggerOccurrences)
+    pendingExploreChoice = resolved.pendingExploreChoice
+    pendingScryChoice = resolved.pendingScryChoice
+    pendingSurveilChoice = resolved.pendingSurveilChoice
+    pendingProliferateChoice = resolved.pendingProliferateChoice
+    spellAutomated = resolved.automated
   } else {
     const addSpellToCasterGraveyard = (allPlayers: Player[]) =>
       allPlayers.map(player =>
@@ -2469,6 +2621,7 @@ function resolveStackTop(state: GameState): GameState {
     ...state,
     players: cleaned.players,
     stack: state.stack.slice(0, -1),
+    pendingExploreChoice,
     pendingScryChoice,
     pendingSurveilChoice,
     pendingEffectSequence,
@@ -2609,7 +2762,11 @@ function describe(state: GameState, action: ActionPayload): string {
       return 'Combat resolved'
     case 'RESOLVE_STACK': {
       const top = state.stack[state.stack.length - 1]
-      return `Resolved ${top?.kind === 'trigger' ? `${top.card.name} — ${top.abilityLabel ?? 'trigger'}` : top?.card.name ?? 'top of stack'}`
+      return `Resolved ${
+        top?.kind === 'trigger' || top?.kind === 'ability'
+          ? `${top.card.name} — ${top.abilityLabel ?? (top.kind === 'trigger' ? 'trigger' : 'ability')}`
+          : top?.card.name ?? 'top of stack'
+      }`
     }
     case 'PASS_PRIORITY':
       return `${player(action.playerId)} passed priority`
@@ -3575,6 +3732,105 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       if (state.stack.length > 0 && state.priorityPlayerId !== action.playerId) return state
       if (state.stack.length === 0 && currentPlayerId !== action.playerId) return state
 
+      const activatingPlayer = state.players.find(player => player.id === action.playerId)
+      const activatingCard =
+        activatingPlayer?.zones.battlefield.find(entry => entry.instanceId === action.cardId) ??
+        activatingPlayer?.zones.lands.find(entry => entry.instanceId === action.cardId) ??
+        null
+      const activatingAbility = activatingPlayer && activatingCard
+        ? getActivatedAbilities(activatingCard, activatingPlayer).find(entry => entry.id === action.abilityId) ?? null
+        : null
+
+      if (activatingPlayer && activatingCard && activatingAbility?.kind === 'explore_target_creature') {
+        if (activatingAbility.requiresTap && activatingCard.tapped) return state
+
+        const targetChoiceType = !action.targetCardId ? 'battlefield_creature' as const : undefined
+        if (targetChoiceType && !hasLegalTarget(state.players, targetChoiceType, action.playerId)) return state
+        if (!targetChoiceType && !isLegalTarget(state.players, 'battlefield_creature', action.playerId, action.targetCardId)) return state
+
+        const payment = autoPayManaCost(
+          activatingPlayer.manaPool,
+          [...activatingPlayer.zones.lands, ...activatingPlayer.zones.battlefield].filter(entry => entry.instanceId !== action.cardId),
+          activatingAbility.genericCost ? `{${activatingAbility.genericCost}}` : null,
+          activatingPlayer
+        )
+        if ((activatingAbility.genericCost ?? 0) > 0 && !payment) return state
+
+        const sourceInBattlefield = activatingPlayer.zones.battlefield.some(entry => entry.instanceId === action.cardId)
+        const sourceInLands = activatingPlayer.zones.lands.some(entry => entry.instanceId === action.cardId)
+        const paidZones = mergePaidCardsIntoZones(activatingPlayer, payment?.cards).zones
+        const baseZones = {
+          ...paidZones,
+          battlefield: paidZones.battlefield.filter(entry => !(sourceInBattlefield && entry.instanceId === action.cardId)),
+          lands: sourceInLands ? paidZones.lands.filter(entry => entry.instanceId !== action.cardId) : paidZones.lands,
+        }
+        const updatedPlayers = state.players.map(player =>
+          player.id === action.playerId
+            ? {
+                ...player,
+                manaPool: payment?.manaPool ?? player.manaPool,
+                zones: activatingAbility.sacrifice ? putLeavingCardInDestination(baseZones, activatingCard) : baseZones,
+              }
+            : player
+        )
+
+        const cleaned = cleanupBattlefieldState(updatedPlayers)
+        const triggerOccurrences: TriggerOccurrence[] = []
+        if (activatingAbility.sacrifice) {
+          pushLeaveBattlefieldOccurrences(triggerOccurrences, action.playerId, activatingCard)
+        }
+        triggerOccurrences.push(...cleaned.triggerOccurrences)
+
+        let nextState = pushStackItem(
+          {
+            ...state,
+            players: cleaned.players,
+          },
+          {
+            card: activatingCard,
+            casterId: action.playerId,
+            casterName: activatingPlayer.name,
+            source: sourceInLands ? 'lands' : 'battlefield',
+            kind: 'ability',
+            abilitySource: 'activated',
+            abilityId: activatingAbility.id,
+            abilityLabel: activatingAbility.label,
+            targetCardId: action.targetCardId,
+            targetChoiceType,
+          }
+        )
+
+        if (targetChoiceType) {
+          const stackItem = nextState.stack[nextState.stack.length - 1]
+          nextState = {
+            ...nextState,
+            pendingTargetChoice: stackItem
+              ? {
+                  playerId: action.playerId,
+                  stackItemId: stackItem.id,
+                  sourceName: `${activatingCard.name} — ${activatingAbility.label}`,
+                  source: 'activated_ability',
+                  targetType: targetChoiceType,
+                }
+              : nextState.pendingTargetChoice,
+          }
+        }
+
+        nextState = queueTriggeredAbilities(nextState, triggerOccurrences)
+
+        return {
+          ...nextState,
+          log: appendLog(state.log, {
+            timestamp: new Date().toISOString(),
+            playerId: action.playerId,
+            playerName: activatingPlayer.name,
+            description: `${activatingPlayer.name} activated ${activatingCard.name} (${activatingAbility.label})`,
+            action,
+            undoable: true,
+          }),
+        }
+      }
+
       let changed = false
       let pendingLibrarySearchChoice = state.pendingLibrarySearchChoice
       let pendingExploreChoice = state.pendingExploreChoice
@@ -3869,6 +4125,83 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       const ability = getPlaneswalkerAbilities(card).find(entry => entry.id === action.abilityId)
       if (!ability) return state
       if ((card.loyalty ?? 0) + ability.loyaltyDelta < 0) return state
+
+      if (ability.supported && ability.effect && ability.target !== 'none') {
+        const targetChoiceType = !action.targetCardId && !action.targetPlayerId ? ability.target : undefined
+        if (targetChoiceType && !hasLegalTarget(state.players, targetChoiceType, action.playerId)) return state
+        if (!targetChoiceType && !isLegalTarget(state.players, ability.target, action.playerId, action.targetCardId, action.targetPlayerId)) return state
+
+        const updatedPlayers = state.players.map(entry =>
+          entry.id === action.playerId
+            ? {
+                ...entry,
+                zones: {
+                  ...entry.zones,
+                  battlefield: entry.zones.battlefield.map(battlefieldCard =>
+                    battlefieldCard.instanceId === action.cardId
+                      ? {
+                          ...battlefieldCard,
+                          loyalty: (battlefieldCard.loyalty ?? 0) + ability.loyaltyDelta,
+                          loyaltyActivatedThisTurn: true,
+                        }
+                      : battlefieldCard
+                  ),
+                },
+              }
+            : entry
+        )
+
+        const cleaned = cleanupBattlefieldState(updatedPlayers)
+        let nextState = pushStackItem(
+          {
+            ...state,
+            players: cleaned.players,
+          },
+          {
+            card,
+            casterId: action.playerId,
+            casterName: player.name,
+            source: 'battlefield',
+            kind: 'ability',
+            abilitySource: 'planeswalker',
+            abilityId: ability.id,
+            abilityLabel: ability.label,
+            targetCardId: action.targetCardId,
+            targetPlayerId: action.targetPlayerId,
+            targetChoiceType,
+          }
+        )
+
+        if (targetChoiceType) {
+          const stackItem = nextState.stack[nextState.stack.length - 1]
+          nextState = {
+            ...nextState,
+            pendingTargetChoice: stackItem
+              ? {
+                  playerId: action.playerId,
+                  stackItemId: stackItem.id,
+                  sourceName: `${card.name} — ${ability.label}`,
+                  source: 'activated_ability',
+                  targetType: targetChoiceType,
+                }
+              : nextState.pendingTargetChoice,
+          }
+        }
+
+        nextState = queueTriggeredAbilities(nextState, cleaned.triggerOccurrences)
+
+        return checkEliminations({
+          ...nextState,
+          log: appendLog(state.log, {
+            timestamp: new Date().toISOString(),
+            playerId: action.playerId,
+            playerName: player.name,
+            description: describe(state, action),
+            action,
+            undoable: true,
+          }),
+        })
+      }
 
       const targetBattlefieldOwner = action.targetCardId
         ? state.players.find(entry =>
