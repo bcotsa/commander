@@ -359,6 +359,17 @@ describe('getSimpleSpellDefinition', () => {
     expect(def!.kind).toBe('destroy_target_creature')
   })
 
+  it('detects counter target spell', () => {
+    const card = {
+      name: 'Counterspell',
+      typeLine: 'Instant',
+      oracleText: 'Counter target spell.',
+    }
+    const def = getSimpleSpellDefinition(card)
+    expect(def).not.toBeNull()
+    expect(def!.kind).toBe('counter_target_spell')
+  })
+
   it('detects damage to any target', () => {
     const card = {
       name: 'Lightning Bolt',

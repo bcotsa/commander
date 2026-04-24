@@ -710,6 +710,95 @@ describe('Casting payments', () => {
     expect(getPlayer(resolved, 'p2').zones.battlefield.find(card => card.instanceId === target.instanceId)).toBeUndefined()
     expect(getPlayer(resolved, 'p2').zones.graveyard.find(card => card.instanceId === target.instanceId)).toBeDefined()
   })
+
+  it('can cast a counterspell and choose a spell on the stack', () => {
+    let state = twoPlayerGame()
+    const murder = makeCard({
+      instanceId: 'murder-counter-target',
+      name: 'Murder',
+      typeLine: 'Instant',
+      manaCost: '{1}{B}{B}',
+      oracleText: 'Destroy target creature.',
+      power: null,
+      toughness: null,
+    })
+    const counterspell = makeCard({
+      instanceId: 'counterspell-1',
+      name: 'Counterspell',
+      typeLine: 'Instant',
+      manaCost: '{U}{U}',
+      oracleText: 'Counter target spell.',
+      power: null,
+      toughness: null,
+    })
+    const target = makeCard({
+      instanceId: 'counterspell-target-creature',
+      name: 'Target Creature',
+      power: 2,
+      toughness: 2,
+    })
+    const swamps = [0, 1, 2].map(index => makeLand({
+      instanceId: `counter-swamp-${index}`,
+      name: 'Swamp',
+      typeLine: 'Basic Land — Swamp',
+      oracleText: '{T}: Add {B}.',
+    }))
+    const islands = [0, 1].map(index => makeLand({
+      instanceId: `counter-island-${index}`,
+      name: 'Island',
+      typeLine: 'Basic Land — Island',
+      oracleText: '{T}: Add {U}.',
+    }))
+
+    state = {
+      ...state,
+      priorityPlayerId: 'p1',
+      players: state.players.map(player => {
+        if (player.id === 'p1') {
+          return { ...player, zones: { ...player.zones, hand: [murder], lands: swamps } }
+        }
+        if (player.id === 'p2') {
+          return { ...player, zones: { ...player.zones, hand: [counterspell], lands: islands, battlefield: [target] } }
+        }
+        return player
+      }),
+    }
+
+    const castMurder = gameReducer(state, {
+      type: 'CAST_SPELL',
+      playerId: 'p1',
+      cardId: murder.instanceId,
+      targetCardId: target.instanceId,
+    })
+
+    expect(castMurder.stack).toHaveLength(1)
+    expect(castMurder.priorityPlayerId).toBe('p2')
+
+    const castCounterspell = gameReducer(castMurder, {
+      type: 'CAST_SPELL',
+      playerId: 'p2',
+      cardId: counterspell.instanceId,
+    })
+
+    expect(castCounterspell.stack).toHaveLength(2)
+    expect(castCounterspell.pendingTargetChoice?.targetType).toBe('stack_spell')
+
+    const counterTargeted = gameReducer(castCounterspell, {
+      type: 'SET_PENDING_TARGET',
+      playerId: 'p2',
+      stackItemId: castCounterspell.pendingTargetChoice?.stackItemId ?? '',
+      targetStackItemId: castMurder.stack[0]?.id,
+    })
+
+    expect(counterTargeted.stack[1]?.targetStackItemId).toBe(castMurder.stack[0]?.id)
+
+    const resolved = gameReducer(counterTargeted, { type: 'RESOLVE_STACK' })
+
+    expect(resolved.stack).toHaveLength(0)
+    expect(getPlayer(resolved, 'p1').zones.graveyard.find(card => card.instanceId === murder.instanceId)).toBeDefined()
+    expect(getPlayer(resolved, 'p2').zones.graveyard.find(card => card.instanceId === counterspell.instanceId)).toBeDefined()
+    expect(getPlayer(resolved, 'p2').zones.battlefield.find(card => card.instanceId === target.instanceId)).toBeDefined()
+  })
 })
 
 // ---------------------------------------------------------------------------

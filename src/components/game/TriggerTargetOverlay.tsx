@@ -1,25 +1,27 @@
 import { getLegalTargetOptions, targetChoiceLabel } from '@/lib/targeting'
-import type { Player, PendingTargetChoiceState } from '@/types/game-state'
+import type { Player, PendingTargetChoiceState, StackItem } from '@/types/game-state'
 
 interface TriggerTargetOverlayProps {
   choice: PendingTargetChoiceState
   players: Player[]
+  stack: StackItem[]
   myPlayerId: string
   canControlAllPlayers: boolean
-  onChoose: (target: { targetCardId?: string; targetPlayerId?: string }) => void
+  onChoose: (target: { targetCardId?: string; targetPlayerId?: string; targetStackItemId?: string }) => void
   onDismiss: () => void
 }
 
 export function TriggerTargetOverlay({
   choice,
   players,
+  stack,
   myPlayerId,
   canControlAllPlayers,
   onChoose,
   onDismiss,
 }: TriggerTargetOverlayProps) {
   const canControl = canControlAllPlayers || choice.playerId === myPlayerId
-  const targets = getLegalTargetOptions(players, choice.targetType, choice.playerId)
+  const targets = getLegalTargetOptions(players, choice.targetType, choice.playerId, stack, choice.stackItemId)
   const targetLabel = targetChoiceLabel(choice.targetType)
 
   const chooserName = players.find(player => player.id === choice.playerId)?.name ?? 'Player'
@@ -63,6 +65,33 @@ export function TriggerTargetOverlay({
                 <span>
                   <span className="block font-semibold text-white group-enabled:group-hover:text-amber-100">{target.player.name}</span>
                   <span className="block text-xs text-slate-400">Life {target.player.life}</span>
+                </span>
+              </button>
+            ) : target.kind === 'stack' ? (
+              <button
+                key={target.stackItem.id}
+                type="button"
+                onClick={() => canControl && onChoose({ targetStackItemId: target.stackItem.id })}
+                disabled={!canControl}
+                className="group flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/90 p-2 text-left text-sm text-slate-200 transition-colors enabled:hover:border-amber-300/60 enabled:hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {target.stackItem.card.imageUri ? (
+                  <img
+                    src={target.stackItem.card.imageUri}
+                    alt=""
+                    className="h-16 w-11 shrink-0 rounded object-cover"
+                  />
+                ) : (
+                  <span className="flex h-16 w-11 shrink-0 items-center justify-center rounded border border-slate-700 bg-slate-950 text-[10px] text-slate-500">
+                    Stack
+                  </span>
+                )}
+                <span>
+                  <span className="block font-semibold text-white group-enabled:group-hover:text-amber-100">
+                    {target.stackItem.abilityLabel ? `${target.stackItem.card.name} — ${target.stackItem.abilityLabel}` : target.stackItem.card.name}
+                  </span>
+                  <span className="block text-xs text-slate-400">{target.stackItem.casterName}</span>
+                  <span className="block text-xs text-slate-500">{target.stackItem.kind}</span>
                 </span>
               </button>
             ) : (

@@ -1239,6 +1239,8 @@ function applyPlaneswalkerEffect(
       return { players: millPlayerLibrary(players, effect.target === 'player' ? targetPlayerId ?? sourcePlayerId : sourcePlayerId, effect.amount), triggerOccurrences }
     case 'proliferate':
       return { players, triggerOccurrences }
+    case 'counter_target_spell':
+      return { players, triggerOccurrences }
     case 'destroy_target_creature':
     case 'destroy_target_creature_or_planeswalker':
     case 'destroy_target_nonland_permanent':
@@ -1813,7 +1815,7 @@ function queueTriggeredAbilities(state: GameState, occurrences: TriggerOccurrenc
         )
         ? occurrence.card.instanceId
         : undefined
-    if (ability.target && ability.target !== 'none' && !targetCardId && !hasLegalTarget(state.players, ability.target, controllerId)) {
+    if (ability.target && ability.target !== 'none' && !targetCardId && !hasLegalTarget(state.players, ability.target, controllerId, state.stack)) {
       return
     }
 
@@ -1881,6 +1883,9 @@ function stackItemNeedsTarget(item: StackItem): boolean {
   if (item.targetChoiceType === 'player' || item.targetChoiceType === 'creature_or_player') {
     return !item.targetCardId && !item.targetPlayerId
   }
+  if (item.targetChoiceType === 'stack_spell') {
+    return !item.targetStackItemId
+  }
   return !item.targetCardId
 }
 
@@ -1903,6 +1908,16 @@ function getPendingTargetChoice(stack: StackItem[]): GameState['pendingTargetCho
 }
 
 function describeTarget(state: GameState, targetCardId?: string, targetPlayerId?: string): string {
+  if (!targetCardId && !targetPlayerId) return ''
+  return describeTargetWithStack(state, targetCardId, targetPlayerId)
+}
+
+function describeTargetWithStack(state: GameState, targetCardId?: string, targetPlayerId?: string, targetStackItemId?: string): string {
+  if (targetStackItemId) {
+    const stackItem = state.stack.find(item => item.id === targetStackItemId)
+    if (!stackItem) return 'a stack item'
+    return stackItem.abilityLabel ? `${stackItem.card.name} — ${stackItem.abilityLabel}` : stackItem.card.name
+  }
   if (targetPlayerId) {
     return state.players.find(player => player.id === targetPlayerId)?.name ?? 'a player'
   }
@@ -2020,6 +2035,17 @@ function moveStackCardToManualDestination(
   }
 
   return { players: nextPlayers, triggerOccurrences }
+}
+
+function moveCounteredStackItem(
+  players: Player[],
+  stackItem: StackItem
+): { players: Player[]; triggerOccurrences: TriggerOccurrence[] } {
+  const destination = defaultManualStackDestination(stackItem, 'counter')
+  if (!destination) {
+    return { players, triggerOccurrences: [] }
+  }
+  return moveStackCardToManualDestination(players, stackItem, destination)
 }
 
 function resolveStackTopManually(
@@ -2184,6 +2210,7 @@ function resolveStackTop(state: GameState): GameState {
   let pendingSurveilChoice = state.pendingSurveilChoice
   let pendingEffectSequence = state.pendingEffectSequence
   let pendingProliferateChoice = state.pendingProliferateChoice
+  let nextStack = state.stack.slice(0, -1)
 
   const targetPlayer = stackItem.targetPlayerId
     ? players.find(player => player.id === stackItem.targetPlayerId) ?? null
@@ -2614,6 +2641,18 @@ function resolveStackTop(state: GameState): GameState {
             sourceName: stackItem.card.name,
           }
           break
+        case 'counter_target_spell': {
+          players = addSpellToCasterGraveyard(players)
+          const targetStackIndex = nextStack.findIndex(item => item.id === stackItem.targetStackItemId)
+          if (targetStackIndex >= 0) {
+            const counteredItem = nextStack[targetStackIndex]!
+            const countered = moveCounteredStackItem(players, counteredItem)
+            players = countered.players
+            triggerOccurrences.push(...countered.triggerOccurrences)
+            nextStack = nextStack.filter(item => item.id !== counteredItem.id)
+          }
+          break
+        }
         case 'destroy_target_creature':
         case 'destroy_target_creature_or_planeswalker':
         case 'destroy_target_nonland_permanent':
@@ -2751,13 +2790,13 @@ function resolveStackTop(state: GameState): GameState {
   const nextBase = {
     ...state,
     players: cleaned.players,
-    stack: state.stack.slice(0, -1),
+    stack: nextStack,
     pendingExploreChoice,
     pendingScryChoice,
     pendingSurveilChoice,
     pendingEffectSequence,
     pendingProliferateChoice,
-    pendingTargetChoice: getPendingTargetChoice(state.stack.slice(0, -1)),
+    pendingTargetChoice: getPendingTargetChoice(nextStack),
     priorityPlayerId: state.turnOrder[state.currentTurnIndex] ?? null,
     priorityPassedIds: [],
     actionSeq: state.actionSeq + 1,
@@ -3350,18 +3389,18 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
       const choice = state.pendingTargetChoice
       if (!choice || choice.playerId !== action.playerId || choice.stackItemId !== action.stackItemId) return state
 
-      if (!isLegalTarget(state.players, choice.targetType, action.playerId, action.targetCardId, action.targetPlayerId)) return state
+      if (!isLegalTarget(state.players, choice.targetType, action.playerId, action.targetCardId, action.targetPlayerId, action.targetStackItemId, state.stack, action.stackItemId)) return state
 
       return {
         ...state,
         stack: state.stack.map(item =>
           item.id === action.stackItemId
-            ? { ...item, targetCardId: action.targetCardId, targetPlayerId: action.targetPlayerId }
+            ? { ...item, targetCardId: action.targetCardId, targetPlayerId: action.targetPlayerId, targetStackItemId: action.targetStackItemId }
             : item
         ),
         pendingTargetChoice: getPendingTargetChoice(state.stack.map(item =>
           item.id === action.stackItemId
-            ? { ...item, targetCardId: action.targetCardId, targetPlayerId: action.targetPlayerId }
+            ? { ...item, targetCardId: action.targetCardId, targetPlayerId: action.targetPlayerId, targetStackItemId: action.targetStackItemId }
             : item
         )),
         actionSeq: state.actionSeq + 1,
@@ -3884,8 +3923,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         if (activatingAbility.requiresTap && activatingCard.tapped) return state
 
         const targetChoiceType = !action.targetCardId ? 'battlefield_creature' as const : undefined
-        if (targetChoiceType && !hasLegalTarget(state.players, targetChoiceType, action.playerId)) return state
-        if (!targetChoiceType && !isLegalTarget(state.players, 'battlefield_creature', action.playerId, action.targetCardId)) return state
+        if (targetChoiceType && !hasLegalTarget(state.players, targetChoiceType, action.playerId, state.stack)) return state
+        if (!targetChoiceType && !isLegalTarget(state.players, 'battlefield_creature', action.playerId, action.targetCardId, undefined, undefined, state.stack)) return state
 
         const payment = autoPayManaCost(
           activatingPlayer.manaPool,
@@ -4267,8 +4306,8 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
 
       if (ability.supported && ability.effect && ability.target !== 'none') {
         const targetChoiceType = !action.targetCardId && !action.targetPlayerId ? ability.target : undefined
-        if (targetChoiceType && !hasLegalTarget(state.players, targetChoiceType, action.playerId)) return state
-        if (!targetChoiceType && !isLegalTarget(state.players, ability.target, action.playerId, action.targetCardId, action.targetPlayerId)) return state
+        if (targetChoiceType && !hasLegalTarget(state.players, targetChoiceType, action.playerId, state.stack)) return state
+        if (!targetChoiceType && !isLegalTarget(state.players, ability.target, action.playerId, action.targetCardId, action.targetPlayerId, undefined, state.stack)) return state
 
         const updatedPlayers = state.players.map(entry =>
           entry.id === action.playerId
@@ -4676,9 +4715,9 @@ export function gameReducer(state: GameState, action: ActionPayload): GameState 
         ? definition.target
         : undefined
 
-      if (targetChoiceType && !hasLegalTarget(state.players, targetChoiceType, action.playerId)) return state
+      if (targetChoiceType && !hasLegalTarget(state.players, targetChoiceType, action.playerId, state.stack)) return state
 
-      if (!targetChoiceType && definition?.target && definition.target !== 'none' && !isLegalTarget(state.players, definition.target, action.playerId, action.targetCardId, action.targetPlayerId)) {
+      if (!targetChoiceType && definition?.target && definition.target !== 'none' && !isLegalTarget(state.players, definition.target, action.playerId, action.targetCardId, action.targetPlayerId, undefined, state.stack)) {
         return state
       }
 

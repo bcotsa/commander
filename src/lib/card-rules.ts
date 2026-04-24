@@ -33,6 +33,7 @@ export type SimpleSpellDefinition =
   | { kind: 'surveil'; amount: number; target: 'none' }
   | { kind: 'mill'; amount: number; target: 'none' | 'player' }
   | { kind: 'proliferate'; target: 'none' }
+  | { kind: 'counter_target_spell'; target: 'stack_spell' }
   | { kind: 'destroy_target_creature'; target: 'battlefield_creature'; loseLife?: number }
   | { kind: 'destroy_target_creature_or_planeswalker'; target: 'battlefield_creature_or_planeswalker'; loseLife?: number }
   | { kind: 'destroy_target_nonland_permanent'; target: 'battlefield_nonland_permanent'; loseLife?: number }
@@ -69,7 +70,7 @@ export interface PlaneswalkerAbilityDefinition {
   id: string
   label: string
   loyaltyDelta: number
-  target: 'none' | 'player' | 'battlefield_creature' | 'battlefield_creature_or_planeswalker' | 'battlefield_nonland_permanent' | 'battlefield_permanent' | 'creature_or_player' | GraveyardTargetType
+  target: 'none' | TargetChoiceType
   effect: PlaneswalkerAbilityEffect | null
   supported: boolean
 }
@@ -1055,6 +1056,10 @@ export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine
 
   if (oracleText.includes('proliferate')) {
     return { kind: 'proliferate', target: 'none' }
+  }
+
+  if (oracleText.includes('counter target spell')) {
+    return { kind: 'counter_target_spell', target: 'stack_spell' }
   }
 
   const minusOneEach = oracleText.match(/put (a|one|two|three|four|five|six|seven|\d+) -1\/-1 counters? on each creature/)

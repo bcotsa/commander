@@ -217,6 +217,7 @@ export interface StackItem {
   kind: 'commander' | 'permanent' | 'spell' | 'trigger' | 'ability'
   targetCardId?: string
   targetPlayerId?: string
+  targetStackItemId?: string
   abilityLabel?: string
   abilitySource?: 'activated' | 'planeswalker'
   abilityId?: string
@@ -289,6 +290,7 @@ export type TargetChoiceType =
   | 'battlefield_permanent'
   | 'creature_or_player'
   | 'player'
+  | 'stack_spell'
   | 'token_you_control'
   | GraveyardTargetType
 export type ManualStackDestination = 'graveyard' | 'exile' | 'battlefield' | 'hand' | 'commandZone'
@@ -324,7 +326,7 @@ export type ActionPayload =
   | { type: 'RESOLVE_SCRY_CHOICE'; playerId: string; topCardIds: string[]; bottomCardIds: string[] }
   | { type: 'RESOLVE_SURVEIL_CHOICE'; playerId: string; topCardIds: string[]; graveyardCardIds: string[] }
   | { type: 'RESOLVE_PROLIFERATE_CHOICE'; playerId: string; targetPlayerIds: string[]; targetCardIds: string[] }
-  | { type: 'SET_PENDING_TARGET'; playerId: string; stackItemId: string; targetCardId?: string; targetPlayerId?: string }
+  | { type: 'SET_PENDING_TARGET'; playerId: string; stackItemId: string; targetCardId?: string; targetPlayerId?: string; targetStackItemId?: string }
   | { type: 'PLAY_LAND'; playerId: string; cardId: string }
   | { type: 'CAST_COMMANDER'; playerId: string; cardId: string; options?: CastOptions }
   | { type: 'CAST_PERMANENT'; playerId: string; cardId: string; options?: CastOptions }

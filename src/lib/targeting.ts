@@ -1,8 +1,9 @@
-import type { GameCard, Player, TargetChoiceType } from '@/types/game-state'
+import type { GameCard, Player, StackItem, TargetChoiceType } from '@/types/game-state'
 
 export type LegalTargetOption =
   | { kind: 'card'; player: Player; card: GameCard }
   | { kind: 'player'; player: Player }
+  | { kind: 'stack'; stackItem: StackItem }
 
 function isCreatureCard(card: Pick<GameCard, 'typeLine' | 'power' | 'toughness'>): boolean {
   return card.typeLine.toLowerCase().includes('creature') && card.power !== null && card.toughness !== null
@@ -27,7 +28,20 @@ function graveyardTargetMatches(targetType: TargetChoiceType, chooserId: string,
   return targetType === 'any_graveyard_creature'
 }
 
-export function getLegalTargetOptions(players: Player[], targetType: TargetChoiceType, chooserId: string): LegalTargetOption[] {
+export function getLegalTargetOptions(
+  players: Player[],
+  targetType: TargetChoiceType,
+  chooserId: string,
+  stack: StackItem[] = [],
+  excludeStackItemId?: string
+): LegalTargetOption[] {
+  if (targetType === 'stack_spell') {
+    return stack
+      .filter(item => item.kind === 'spell' || item.kind === 'permanent' || item.kind === 'commander')
+      .filter(item => item.id !== excludeStackItemId)
+      .map(stackItem => ({ kind: 'stack' as const, stackItem }))
+  }
+
   if (targetType === 'player') {
     return players
       .filter(player => !player.isEliminated)
@@ -96,16 +110,25 @@ export function getLegalTargetOptions(players: Player[], targetType: TargetChoic
   })
 }
 
-export function hasLegalTarget(players: Player[], targetType: TargetChoiceType, chooserId: string): boolean {
-  return getLegalTargetOptions(players, targetType, chooserId).length > 0
+export function hasLegalTarget(players: Player[], targetType: TargetChoiceType, chooserId: string, stack: StackItem[] = [], excludeStackItemId?: string): boolean {
+  return getLegalTargetOptions(players, targetType, chooserId, stack, excludeStackItemId).length > 0
 }
 
-export function isLegalTarget(players: Player[], targetType: TargetChoiceType, chooserId: string, targetCardId?: string, targetPlayerId?: string): boolean {
-  return getLegalTargetOptions(players, targetType, chooserId).some(option =>
-    option.kind === 'player'
-      ? option.player.id === targetPlayerId
-      : option.card.instanceId === targetCardId
-  )
+export function isLegalTarget(
+  players: Player[],
+  targetType: TargetChoiceType,
+  chooserId: string,
+  targetCardId?: string,
+  targetPlayerId?: string,
+  targetStackItemId?: string,
+  stack: StackItem[] = [],
+  excludeStackItemId?: string
+): boolean {
+  return getLegalTargetOptions(players, targetType, chooserId, stack, excludeStackItemId).some(option => {
+    if (option.kind === 'player') return option.player.id === targetPlayerId
+    if (option.kind === 'stack') return option.stackItem.id === targetStackItemId
+    return option.card.instanceId === targetCardId
+  })
 }
 
 export function targetChoiceLabel(targetType: TargetChoiceType): string {
@@ -122,6 +145,8 @@ export function targetChoiceLabel(targetType: TargetChoiceType): string {
       return 'Choose a creature, planeswalker, or player target'
     case 'player':
       return 'Choose a player target'
+    case 'stack_spell':
+      return 'Choose a spell on the stack'
     case 'token_you_control':
       return 'Choose a token you control'
     case 'own_graveyard_creature':

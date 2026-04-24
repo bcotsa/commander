@@ -10,7 +10,14 @@ interface StackPanelProps {
   onManualResolve?: (playerId: string, outcome: 'resolve' | 'counter', destination?: ManualStackDestination) => void
 }
 
-function describeTarget(stackItem: StackItem, players: Player[]): string | null {
+function describeTarget(stackItem: StackItem, players: Player[], stack: StackItem[]): string | null {
+  if (stackItem.targetStackItemId) {
+    const targetStackItem = stack.find(item => item.id === stackItem.targetStackItemId)
+    return targetStackItem
+      ? (targetStackItem.abilityLabel ? `${targetStackItem.card.name} — ${targetStackItem.abilityLabel}` : targetStackItem.card.name)
+      : null
+  }
+
   if (stackItem.targetPlayerId) {
     return players.find(player => player.id === stackItem.targetPlayerId)?.name ?? null
   }
@@ -90,7 +97,7 @@ export function StackPanel({ stack, players, priorityPlayerId, passedIds, manual
 
         <div className="flex max-h-28 flex-col gap-2 overflow-y-auto">
           {ordered.map((stackItem, index) => {
-            const target = describeTarget(stackItem, players)
+            const target = describeTarget(stackItem, players, stack)
             const isTop = index === 0
             return (
               <div

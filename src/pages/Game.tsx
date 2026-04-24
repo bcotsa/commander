@@ -266,6 +266,7 @@ export function Game() {
         <TriggerTargetOverlay
           choice={pendingTargetChoice}
           players={state.players}
+          stack={state.stack}
           myPlayerId={myPlayerId}
           canControlAllPlayers={Boolean(isHost && state.hostControlsAllPlayers)}
           onChoose={(target) => sendAction({
@@ -274,6 +275,7 @@ export function Game() {
             stackItemId: pendingTargetChoice.stackItemId,
             targetCardId: target.targetCardId,
             targetPlayerId: target.targetPlayerId,
+            targetStackItemId: target.targetStackItemId,
           })}
           onDismiss={() => setHiddenTargetChoiceId(pendingTargetChoice.stackItemId)}
         />
