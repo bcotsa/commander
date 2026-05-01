@@ -370,6 +370,17 @@ describe('getSimpleSpellDefinition', () => {
     expect(def!.kind).toBe('counter_target_spell')
   })
 
+  it('detects exile target creature', () => {
+    const card = {
+      name: 'Swords to Plowshares',
+      typeLine: 'Instant',
+      oracleText: 'Exile target creature. Its controller gains life equal to its power.',
+    }
+    const def = getSimpleSpellDefinition(card)
+    expect(def).not.toBeNull()
+    expect(def!.kind).toBe('exile_target_creature')
+  })
+
   it('detects damage to any target', () => {
     const card = {
       name: 'Lightning Bolt',

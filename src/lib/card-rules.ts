@@ -34,6 +34,10 @@ export type SimpleSpellDefinition =
   | { kind: 'mill'; amount: number; target: 'none' | 'player' }
   | { kind: 'proliferate'; target: 'none' }
   | { kind: 'counter_target_spell'; target: 'stack_spell' }
+  | { kind: 'exile_target_creature'; target: 'battlefield_creature' }
+  | { kind: 'exile_target_creature_or_planeswalker'; target: 'battlefield_creature_or_planeswalker' }
+  | { kind: 'exile_target_nonland_permanent'; target: 'battlefield_nonland_permanent' }
+  | { kind: 'exile_target_permanent'; target: 'battlefield_permanent' }
   | { kind: 'destroy_target_creature'; target: 'battlefield_creature'; loseLife?: number }
   | { kind: 'destroy_target_creature_or_planeswalker'; target: 'battlefield_creature_or_planeswalker'; loseLife?: number }
   | { kind: 'destroy_target_nonland_permanent'; target: 'battlefield_nonland_permanent'; loseLife?: number }
@@ -1060,6 +1064,41 @@ export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine
 
   if (oracleText.includes('counter target spell')) {
     return { kind: 'counter_target_spell', target: 'stack_spell' }
+  }
+
+  if (oracleText.includes('exile target creature or planeswalker')) {
+    return {
+      kind: 'exile_target_creature_or_planeswalker',
+      target: 'battlefield_creature_or_planeswalker',
+    }
+  }
+
+  if (oracleText.includes('exile target creature')) {
+    return {
+      kind: 'exile_target_creature',
+      target: 'battlefield_creature',
+    }
+  }
+
+  if (oracleText.includes('exile target nonland permanent')) {
+    return {
+      kind: 'exile_target_nonland_permanent',
+      target: 'battlefield_nonland_permanent',
+    }
+  }
+
+  if (oracleText.includes('exile target permanent')) {
+    return {
+      kind: 'exile_target_permanent',
+      target: 'battlefield_permanent',
+    }
+  }
+
+  if (oracleText.includes('exile target artifact or creature')) {
+    return {
+      kind: 'exile_target_nonland_permanent',
+      target: 'battlefield_nonland_permanent',
+    }
   }
 
   const minusOneEach = oracleText.match(/put (a|one|two|three|four|five|six|seven|\d+) -1\/-1 counters? on each creature/)

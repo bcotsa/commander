@@ -799,6 +799,64 @@ describe('Casting payments', () => {
     expect(getPlayer(resolved, 'p2').zones.graveyard.find(card => card.instanceId === counterspell.instanceId)).toBeDefined()
     expect(getPlayer(resolved, 'p2').zones.battlefield.find(card => card.instanceId === target.instanceId)).toBeDefined()
   })
+
+  it('can cast an exile spell and move the target to exile', () => {
+    let state = twoPlayerGame()
+    const swords = makeCard({
+      instanceId: 'swords-1',
+      name: 'Swords to Plowshares',
+      typeLine: 'Instant',
+      manaCost: '{W}',
+      oracleText: 'Exile target creature. Its controller gains life equal to its power.',
+      power: null,
+      toughness: null,
+    })
+    const target = makeCard({
+      instanceId: 'exile-target-creature-1',
+      name: 'Target Creature',
+      power: 2,
+      toughness: 2,
+    })
+    const plains = makeLand({
+      instanceId: 'plains-1',
+      name: 'Plains',
+      typeLine: 'Basic Land — Plains',
+      oracleText: '{T}: Add {W}.',
+    })
+
+    state = {
+      ...state,
+      players: state.players.map(player => {
+        if (player.id === 'p1') {
+          return { ...player, zones: { ...player.zones, hand: [swords], lands: [plains] } }
+        }
+        if (player.id === 'p2') {
+          return { ...player, zones: { ...player.zones, battlefield: [target] } }
+        }
+        return player
+      }),
+    }
+
+    const cast = gameReducer(state, {
+      type: 'CAST_SPELL',
+      playerId: 'p1',
+      cardId: swords.instanceId,
+    })
+
+    expect(cast.pendingTargetChoice?.targetType).toBe('battlefield_creature')
+
+    const targeted = gameReducer(cast, {
+      type: 'SET_PENDING_TARGET',
+      playerId: 'p1',
+      stackItemId: cast.pendingTargetChoice?.stackItemId ?? '',
+      targetCardId: target.instanceId,
+    })
+
+    const resolved = gameReducer(targeted, { type: 'RESOLVE_STACK' })
+    expect(getPlayer(resolved, 'p2').zones.battlefield.find(card => card.instanceId === target.instanceId)).toBeUndefined()
+    expect(getPlayer(resolved, 'p2').zones.exile.find(card => card.instanceId === target.instanceId)).toBeDefined()
+    expect(getPlayer(resolved, 'p1').zones.graveyard.find(card => card.instanceId === swords.instanceId)).toBeDefined()
+  })
 })
 
 // ---------------------------------------------------------------------------

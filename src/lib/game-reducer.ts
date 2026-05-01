@@ -1122,6 +1122,38 @@ function moveBattlefieldCardToGraveyard(player: Player, cardId: string): Player 
   }
 }
 
+function moveBattlefieldCardToExile(player: Player, cardId: string): Player {
+  const fromBattlefield = player.zones.battlefield.find(card => card.instanceId === cardId)
+  if (fromBattlefield) {
+    const without = {
+      ...player.zones,
+      battlefield: player.zones.battlefield.filter(card => card.instanceId !== cardId),
+    }
+    return {
+      ...player,
+      zones: {
+        ...without,
+        exile: fromBattlefield.isToken ? without.exile : [...without.exile, normalizeLeavingCard(fromBattlefield)],
+      },
+    }
+  }
+
+  const fromLands = player.zones.lands.find(card => card.instanceId === cardId)
+  if (!fromLands) return player
+
+  const without = {
+    ...player.zones,
+    lands: player.zones.lands.filter(card => card.instanceId !== cardId),
+  }
+  return {
+    ...player,
+    zones: {
+      ...without,
+      exile: fromLands.isToken ? without.exile : [...without.exile, normalizeLeavingCard(fromLands)],
+    },
+  }
+}
+
 function cleanupBattlefieldState(players: Player[]): { players: Player[]; triggerOccurrences: TriggerOccurrence[] } {
   const triggerOccurrences: TriggerOccurrence[] = []
 
@@ -1241,6 +1273,25 @@ function applyPlaneswalkerEffect(
       return { players, triggerOccurrences }
     case 'counter_target_spell':
       return { players, triggerOccurrences }
+    case 'exile_target_creature':
+    case 'exile_target_creature_or_planeswalker':
+    case 'exile_target_nonland_permanent':
+    case 'exile_target_permanent': {
+      const deadCard = targetBattlefieldOwner && targetCardId
+        ? targetBattlefieldOwner.zones.battlefield.find(entry => entry.instanceId === targetCardId) ??
+          targetBattlefieldOwner.zones.lands.find(entry => entry.instanceId === targetCardId) ??
+          null
+        : null
+      const nextPlayers = players.map(player =>
+        player.id === targetBattlefieldOwner?.id && targetCardId
+          ? moveBattlefieldCardToExile(player, targetCardId)
+          : player
+      )
+      if (deadCard && isCreatureCard(deadCard)) {
+        triggerOccurrences.push({ type: 'creature_dies', controllerId: targetBattlefieldOwner!.id, card: deadCard })
+      }
+      return { players: nextPlayers, triggerOccurrences }
+    }
     case 'destroy_target_creature':
     case 'destroy_target_creature_or_planeswalker':
     case 'destroy_target_nonland_permanent':
@@ -2650,6 +2701,25 @@ function resolveStackTop(state: GameState): GameState {
             players = countered.players
             triggerOccurrences.push(...countered.triggerOccurrences)
             nextStack = nextStack.filter(item => item.id !== counteredItem.id)
+          }
+          break
+        }
+        case 'exile_target_creature':
+        case 'exile_target_creature_or_planeswalker':
+        case 'exile_target_nonland_permanent':
+        case 'exile_target_permanent': {
+          const deadCard = targetBattlefieldOwner && stackItem.targetCardId
+            ? targetBattlefieldOwner.zones.battlefield.find(entry => entry.instanceId === stackItem.targetCardId) ??
+              targetBattlefieldOwner.zones.lands.find(entry => entry.instanceId === stackItem.targetCardId) ??
+              null
+            : null
+          players = addSpellToCasterGraveyard(players).map(player =>
+            player.id === targetBattlefieldOwner?.id && stackItem.targetCardId
+              ? moveBattlefieldCardToExile(player, stackItem.targetCardId)
+              : player
+          )
+          if (deadCard && isCreatureCard(deadCard)) {
+            triggerOccurrences.push({ type: 'creature_dies', controllerId: targetBattlefieldOwner!.id, card: deadCard })
           }
           break
         }
