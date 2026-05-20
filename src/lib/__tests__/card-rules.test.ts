@@ -481,6 +481,83 @@ describe('getSimpleSpellDefinition', () => {
       expect(def.loseLife).toBe(2)
     }
   })
+
+  it('parses real oracle texts from Hazel Squirrels deck', () => {
+    const cases: Array<{ name: string; typeLine: string; oracleText: string; expectedKind: string }> = [
+      { name: 'Chatterstorm', typeLine: 'Sorcery', oracleText: 'Create a 1/1 green Squirrel creature token.\nStorm (When you cast this spell, copy it for each spell cast before it this turn.)', expectedKind: 'create_tokens' },
+      { name: 'Decree of Pain', typeLine: 'Sorcery', oracleText: "Destroy all creatures. They can't be regenerated. Draw a card for each creature destroyed this way.\nCycling {3}{B}{B} — When you cycle this card, all creatures get -2/-2 until end of turn.", expectedKind: 'draw_cards' },
+      { name: 'For the Common Good', typeLine: 'Sorcery', oracleText: "Create X tokens that are copies of target token you control. Then tokens you control gain indestructible until your next turn. You gain 1 life for each token you control.", expectedKind: 'gain_life' },
+      { name: 'Maelstrom Pulse', typeLine: 'Sorcery', oracleText: 'Destroy target nonland permanent. Then destroy all other permanents with the same name as that permanent.', expectedKind: 'destroy_target_nonland_permanent' },
+      { name: 'Pest Infestation', typeLine: 'Sorcery', oracleText: 'Destroy up to X target artifacts and/or enchantments. Create twice X 1/1 black and green Pest creature tokens with "When this token dies, you gain 1 life."', expectedKind: 'gain_life' },
+      { name: 'Plumb the Forbidden', typeLine: 'Instant', oracleText: 'As an additional cost to cast this spell, sacrifice a creature.\nDraw two cards. You lose 2 life.', expectedKind: 'draw_cards' },
+      { name: 'Putrefy', typeLine: 'Instant', oracleText: 'Destroy target artifact or creature.', expectedKind: 'destroy_target_nonland_permanent' },
+      { name: 'Saw in Half', typeLine: 'Sorcery', oracleText: "Destroy target creature. If that creature dies this way, its controller creates two tokens that are copies of that creature, except their power is half that creature's power and their toughness is half that creature's toughness. Round up each time.", expectedKind: 'destroy_target_creature' },
+      { name: 'Shamanic Revelation', typeLine: 'Sorcery', oracleText: 'Draw a card for each creature you control.\nFerocious — You gain 4 life if you control a creature with power 4 or greater.', expectedKind: 'draw_cards' },
+      { name: 'Swarmyard Massacre', typeLine: 'Sorcery', oracleText: "Create two 1/1 green Squirrel creature tokens. Then each creature that isn't an Insect, Rat, Spider, or Squirrel gets -1/-1 until end of turn for each creature you control that's an Insect, Rat, Spider, or Squirrel.", expectedKind: 'create_tokens' },
+      { name: 'Tear Asunder', typeLine: 'Instant', oracleText: 'Kicker {2}{B} (You may pay an additional {2}{B} as you cast this spell.)\nExile target artifact or enchantment. If this spell was kicked, instead exile target nonland permanent.', expectedKind: 'exile_target_nonland_permanent' },
+      { name: 'Second Harvest', typeLine: 'Instant', oracleText: "For each token you control, create a token that's a copy of that permanent.", expectedKind: 'copy_all_tokens' },
+    ]
+    for (const { name, typeLine, oracleText, expectedKind } of cases) {
+      const def = getSimpleSpellDefinition({ name, typeLine, oracleText })
+      expect(def, `${name} should have a definition`).not.toBeNull()
+      expect(def!.kind, `${name} should map to ${expectedKind}`).toBe(expectedKind)
+    }
+  })
+
+  it('parses real oracle texts from Auntie Ool Blight deck', () => {
+    const cases: Array<{ name: string; typeLine: string; oracleText: string; expectedKind: string }> = [
+      { name: "Assassin's Trophy", typeLine: 'Instant', oracleText: "Destroy target permanent an opponent controls. Its controller may search their library for a basic land card, put it onto the battlefield, then shuffle.", expectedKind: 'destroy_target_permanent' },
+      { name: 'Chain Reaction', typeLine: 'Sorcery', oracleText: 'Chain Reaction deals X damage to each creature, where X is the number of creatures on the battlefield.', expectedKind: 'mass_damage_creatures' },
+      { name: 'Hoarder\'s Greed', typeLine: 'Sorcery', oracleText: 'Draw three cards. You lose 3 life.', expectedKind: 'draw_cards' },
+      { name: 'Incremental Blight', typeLine: 'Sorcery', oracleText: 'Put a -1/-1 counter on target creature, two -1/-1 counters on another target creature, and three -1/-1 counters on a third target creature.', expectedKind: 'put_minus_one_counter_target_creature' },
+      { name: 'Infernal Grasp', typeLine: 'Instant', oracleText: 'Destroy target creature. You lose 2 life.', expectedKind: 'destroy_target_creature' },
+      { name: "Night's Whisper", typeLine: 'Sorcery', oracleText: 'You draw two cards and you lose 2 life.', expectedKind: 'draw_cards' },
+      { name: 'Persist', typeLine: 'Instant', oracleText: 'Return target creature card from your graveyard to the battlefield. That creature gains haste until end of turn.', expectedKind: 'return_graveyard_creature_to_battlefield' },
+      { name: 'Putrefy', typeLine: 'Instant', oracleText: 'Destroy target artifact or creature.', expectedKind: 'destroy_target_nonland_permanent' },
+      { name: 'Terminate', typeLine: 'Instant', oracleText: "Destroy target creature. It can't be regenerated.", expectedKind: 'destroy_target_creature' },
+      { name: 'Aberrant Return', typeLine: 'Sorcery', oracleText: 'Put one, two, or three target creature cards from graveyards onto the battlefield under your control. Each of them enters with an additional -1/-1 counter on it.', expectedKind: 'return_graveyard_creature_to_battlefield' },
+      { name: "Eventide's Shadow", typeLine: 'Sorcery', oracleText: 'Remove any number of counters from among permanents on the battlefield. You draw cards and lose life equal to the number of counters removed this way.', expectedKind: 'remove_all_counters_draw_lose_life' },
+    ]
+    for (const { name, typeLine, oracleText, expectedKind } of cases) {
+      const def = getSimpleSpellDefinition({ name, typeLine, oracleText })
+      expect(def, `${name} should have a definition`).not.toBeNull()
+      expect(def!.kind, `${name} should map to ${expectedKind}`).toBe(expectedKind)
+    }
+  })
+
+  it('detects Aberrant Return with -1/-1 counter flag', () => {
+    const def = getSimpleSpellDefinition({
+      name: 'Aberrant Return',
+      typeLine: 'Sorcery',
+      oracleText: 'Put one, two, or three target creature cards from graveyards onto the battlefield under your control. Each of them enters with an additional -1/-1 counter on it.',
+    })
+    expect(def).not.toBeNull()
+    expect(def!.kind).toBe('return_graveyard_creature_to_battlefield')
+    if (def!.kind === 'return_graveyard_creature_to_battlefield') {
+      expect(def.target).toBe('any_graveyard_creature')
+      expect(def.minusOneCounters).toBe(1)
+    }
+  })
+
+  it('detects Second Harvest token doubling', () => {
+    const def = getSimpleSpellDefinition({
+      name: 'Second Harvest',
+      typeLine: 'Instant',
+      oracleText: "For each token you control, create a token that's a copy of that permanent.",
+    })
+    expect(def).not.toBeNull()
+    expect(def!.kind).toBe('copy_all_tokens')
+  })
+
+  it("detects Eventide's Shadow counter removal draw", () => {
+    const def = getSimpleSpellDefinition({
+      name: "Eventide's Shadow",
+      typeLine: 'Sorcery',
+      oracleText: 'Remove any number of counters from among permanents on the battlefield. You draw cards and lose life equal to the number of counters removed this way.',
+    })
+    expect(def).not.toBeNull()
+    expect(def!.kind).toBe('remove_all_counters_draw_lose_life')
+  })
 })
 
 describe('getTriggeredAbilities', () => {

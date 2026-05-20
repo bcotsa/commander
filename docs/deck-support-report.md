@@ -1,18 +1,18 @@
 # Commander Deck Support Report
 
-Generated: 2026-04-19T14:40:00.446Z
+Generated: 2026-05-20T16:02:30.688Z
 
 This report resolves the built-in decklists through the same Scryfall decklist importer used by the lobby, then audits the resulting card snapshots with `auditImportedDeck`.
 
 ## Pool Summary
 
-Pool automated coverage: 65/168 unique cards (38.7%)  
-Pool runtime-verified coverage: 5/168 unique cards (3.0%)
+Pool automated coverage: 69/168 unique cards (41.1%)  
+Pool runtime-verified coverage: 30/168 unique cards (17.9%)
 
 | Deck | Tier | Cards | Unique | Automated | Runtime Verified | Partial | Manual | Unsupported | Blockers |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Hazel Squirrels | 1 | 99 | 84 | 31 (36.9%) | 3 (3.6%) | 21 | 28 | 4 | 5 |
-| Auntie Ool Blight | 1 | 99 | 84 | 34 (40.5%) | 2 (2.4%) | 21 | 25 | 4 | 5 |
+| Hazel Squirrels | 1 | 99 | 84 | 33 (39.3%) | 15 (17.9%) | 21 | 28 | 2 | 3 |
+| Auntie Ool Blight | 1 | 99 | 84 | 36 (42.9%) | 15 (17.9%) | 21 | 25 | 2 | 3 |
 
 ## Top 10 Gaps
 
@@ -20,14 +20,14 @@ Pool runtime-verified coverage: 5/168 unique cards (3.0%)
 | ---: | --- | ---: | --- | --- | --- | --- | --- |
 | 1 | Hazel Squirrels | 1 | Promise of Aclazotz // Foul Rebirth | unsupported | engine | bespoke | instant/sorcery has no automated spell definition |
 | 2 | Hazel Squirrels | 1 | Rootcast Apprenticeship | unsupported | engine | bespoke | instant/sorcery has no automated spell definition |
-| 3 | Hazel Squirrels | 1 | Second Harvest | unsupported | engine | bespoke | instant/sorcery has no automated spell definition |
-| 4 | Auntie Ool Blight | 1 | Auntie Ool, Cursewretch | manual | commander | bespoke | no automated card text detected |
-| 5 | Auntie Ool Blight | 1 | Aberrant Return | unsupported | removal | generic | instant/sorcery has no automated spell definition |
-| 6 | Auntie Ool Blight | 1 | Burning Curiosity | unsupported | removal | bespoke | instant/sorcery has no automated spell definition |
-| 7 | Auntie Ool Blight | 1 | Eventide's Shadow | unsupported | draw | generic | instant/sorcery has no automated spell definition |
-| 8 | Hazel Squirrels | 1 | Tear Asunder | unsupported | removal | bespoke | instant/sorcery has no automated spell definition |
-| 9 | Hazel Squirrels | 1 | Hazel of the Rootbloom | partial | commander | bespoke | review remaining Oracle text for unsupported clauses |
-| 10 | Auntie Ool Blight | 1 | Fire Covenant | unsupported | utility | bespoke | instant/sorcery has no automated spell definition |
+| 3 | Auntie Ool Blight | 1 | Auntie Ool, Cursewretch | manual | commander | bespoke | no automated card text detected |
+| 4 | Auntie Ool Blight | 1 | Burning Curiosity | unsupported | removal | bespoke | instant/sorcery has no automated spell definition |
+| 5 | Hazel Squirrels | 1 | Hazel of the Rootbloom | partial | commander | bespoke | review remaining Oracle text for unsupported clauses |
+| 6 | Auntie Ool Blight | 1 | Fire Covenant | unsupported | utility | bespoke | instant/sorcery has no automated spell definition |
+| 7 | Hazel Squirrels | 1 | Academy Manufactor | manual | engine | bespoke | no automated card text detected |
+| 8 | Hazel Squirrels | 1 | Bastion of Remembrance | manual | engine | generic | permanent can be cast, but no automated card text detected |
+| 9 | Hazel Squirrels | 1 | Beastmaster Ascension | manual | engine | generic | permanent can be cast, but no automated card text detected |
+| 10 | Hazel Squirrels | 1 | Bramble Sovereign | manual | engine | bespoke | no automated card text detected |
 
 ## Hazel Squirrels
 
@@ -35,7 +35,7 @@ Deck id: `SQUIRREL_TEST_DECK`
 Tier: 1  
 Cards: 99  
 Unique cards: 84  
-Blockers: 5
+Blockers: 3
 
 ### Import Notes
 
@@ -46,30 +46,32 @@ Blockers: 5
 | Card | Qty | Role | Candidate | Source | Confidence | Reasons | Gaps |
 | --- | ---: | --- | --- | --- | --- | --- | --- |
 | Bojuka Bog | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
-| Chatterstorm | 1 | engine | generic | generic | parser-match | simple-spell | - |
+| Chatterstorm | 1 | engine | generic | generic | runtime-verified | simple-spell | - |
 | Command Tower | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
 | Deadly Dispute | 1 | draw | bespoke | bespoke | runtime-verified | bespoke-handler, custom-spell-resolution, simple-spell | - |
-| Decree of Pain | 1 | removal | generic | generic | parser-match | simple-spell, effect-sequence | - |
+| Decree of Pain | 1 | removal | generic | generic | runtime-verified | simple-spell, effect-sequence | - |
 | Exotic Orchard | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
-| For the Common Good | 1 | engine | generic | generic | parser-match | simple-spell | - |
+| For the Common Good | 1 | engine | generic | generic | runtime-verified | simple-spell | - |
 | Forest | 9 | mana | generic | generic | runtime-verified | activated-ability, land-mana | - |
 | Golgari Rot Farm | 1 | mana | generic | generic | parser-match | activated-ability, land-mana, land-entry-effect | - |
 | Grim Backwoods | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
 | Haunted Mire | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
 | Jungle Hollow | 1 | mana | generic | generic | parser-match | activated-ability, triggered-ability, land-mana, land-entry-effect | - |
 | Llanowar Wastes | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
-| Maelstrom Pulse | 1 | removal | generic | generic | parser-match | simple-spell | - |
+| Maelstrom Pulse | 1 | removal | generic | generic | runtime-verified | simple-spell | - |
 | Oran-Rief, the Vastwood | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
 | Path of Ancestry | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
-| Pest Infestation | 1 | engine | generic | generic | parser-match | simple-spell | - |
-| Plumb the Forbidden | 1 | draw | generic | generic | parser-match | simple-spell | - |
-| Putrefy | 1 | removal | generic | generic | parser-match | simple-spell | - |
-| Saw in Half | 1 | removal | generic | generic | parser-match | simple-spell | - |
-| Shamanic Revelation | 1 | draw | generic | generic | parser-match | simple-spell, effect-sequence | - |
+| Pest Infestation | 1 | engine | generic | generic | runtime-verified | simple-spell | - |
+| Plumb the Forbidden | 1 | draw | generic | generic | runtime-verified | simple-spell | - |
+| Putrefy | 1 | removal | generic | generic | runtime-verified | simple-spell | - |
+| Saw in Half | 1 | removal | generic | generic | runtime-verified | simple-spell | - |
+| Second Harvest | 1 | engine | generic | generic | runtime-verified | simple-spell | - |
+| Shamanic Revelation | 1 | draw | generic | generic | runtime-verified | simple-spell, effect-sequence | - |
 | Swamp | 8 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
 | Swarmyard | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
-| Swarmyard Massacre | 1 | removal | generic | generic | parser-match | simple-spell | - |
+| Swarmyard Massacre | 1 | removal | generic | generic | runtime-verified | simple-spell | - |
 | Tainted Wood | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
+| Tear Asunder | 1 | removal | generic | generic | runtime-verified | simple-spell | - |
 | Temple of Malady | 1 | mana | generic | generic | parser-match | activated-ability, triggered-ability, land-mana, land-entry-effect | - |
 | The Shire | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
 | Tranquil Thicket | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
@@ -142,8 +144,6 @@ Blockers: 5
 | --- | ---: | --- | --- | --- | --- | --- | --- |
 | Promise of Aclazotz // Foul Rebirth | 1 | engine | bespoke | none | manual-only | core-cast-play | instant/sorcery has no automated spell definition |
 | Rootcast Apprenticeship | 1 | engine | bespoke | none | manual-only | core-cast-play | instant/sorcery has no automated spell definition |
-| Second Harvest | 1 | engine | bespoke | none | manual-only | core-cast-play | instant/sorcery has no automated spell definition |
-| Tear Asunder | 1 | removal | bespoke | none | manual-only | core-cast-play | instant/sorcery has no automated spell definition |
 
 ## Auntie Ool Blight
 
@@ -151,44 +151,46 @@ Deck id: `BLIGHT_TEST_DECK`
 Tier: 1  
 Cards: 99  
 Unique cards: 84  
-Blockers: 5
+Blockers: 3
 
 ### Automated
 
 | Card | Qty | Role | Candidate | Source | Confidence | Reasons | Gaps |
 | --- | ---: | --- | --- | --- | --- | --- | --- |
-| Assassin's Trophy | 1 | removal | generic | generic | parser-match | simple-spell | - |
+| Aberrant Return | 1 | removal | generic | generic | runtime-verified | simple-spell | - |
+| Assassin's Trophy | 1 | removal | generic | generic | runtime-verified | simple-spell | - |
 | Black Sun's Zenith | 1 | removal | bespoke | bespoke | runtime-verified | bespoke-handler, custom-spell-resolution | - |
 | Canyon Slough | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
-| Cathartic Pyre | 1 | removal | bespoke | bespoke | parser-match | bespoke-handler, custom-spell-resolution, simple-spell | - |
-| Cathartic Reunion | 1 | draw | bespoke | bespoke | parser-match | bespoke-handler, custom-spell-resolution, simple-spell | - |
-| Chain Reaction | 1 | utility | generic | generic | parser-match | simple-spell | - |
+| Cathartic Pyre | 1 | removal | bespoke | bespoke | runtime-verified | bespoke-handler, custom-spell-resolution, simple-spell | - |
+| Cathartic Reunion | 1 | draw | bespoke | bespoke | runtime-verified | bespoke-handler, custom-spell-resolution, simple-spell | - |
+| Chain Reaction | 1 | utility | generic | generic | runtime-verified | simple-spell | - |
 | Cinder Glade | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
 | Command Tower | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
 | Dragonskull Summit | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
+| Eventide's Shadow | 1 | draw | generic | generic | runtime-verified | simple-spell | - |
 | Exotic Orchard | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
 | Festering Thicket | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
 | Forest | 6 | mana | generic | generic | runtime-verified | activated-ability, land-mana | - |
 | Golgari Rot Farm | 1 | mana | generic | generic | parser-match | activated-ability, land-mana, land-entry-effect | - |
 | Gruul Turf | 1 | mana | generic | generic | parser-match | activated-ability, land-mana, land-entry-effect | - |
-| Hoarder's Greed | 1 | draw | generic | generic | parser-match | simple-spell | - |
+| Hoarder's Greed | 1 | draw | generic | generic | runtime-verified | simple-spell | - |
 | Ifnir Deadlands | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
-| Incremental Blight | 1 | removal | generic | generic | parser-match | simple-spell | - |
-| Infernal Grasp | 1 | removal | generic | generic | parser-match | simple-spell | - |
+| Incremental Blight | 1 | removal | generic | generic | runtime-verified | simple-spell | - |
+| Infernal Grasp | 1 | removal | generic | generic | runtime-verified | simple-spell | - |
 | Mountain | 4 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
 | Nesting Grounds | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
-| Night's Whisper | 1 | draw | generic | generic | parser-match | simple-spell | - |
+| Night's Whisper | 1 | draw | generic | generic | runtime-verified | simple-spell | - |
 | Painful Truths | 1 | draw | bespoke | bespoke | parser-match | bespoke-handler, custom-spell-resolution | - |
 | Path of Ancestry | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
-| Persist | 1 | removal | generic | generic | parser-match | simple-spell | - |
-| Putrefy | 1 | removal | generic | generic | parser-match | simple-spell | - |
+| Persist | 1 | removal | generic | generic | runtime-verified | simple-spell | - |
+| Putrefy | 1 | removal | generic | generic | runtime-verified | simple-spell | - |
 | Rakdos Carnarium | 1 | mana | generic | generic | parser-match | activated-ability, land-mana, land-entry-effect | - |
 | Rootbound Crag | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
 | Savage Lands | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
 | Sheltered Thicket | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
 | Smoldering Marsh | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
 | Swamp | 8 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
-| Terminate | 1 | removal | generic | generic | parser-match | simple-spell | - |
+| Terminate | 1 | removal | generic | generic | runtime-verified | simple-spell | - |
 | Vernal Fen | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
 | Woodland Cemetery | 1 | mana | generic | generic | parser-match | activated-ability, land-mana | - |
 
@@ -252,7 +254,5 @@ Blockers: 5
 
 | Card | Qty | Role | Candidate | Source | Confidence | Reasons | Gaps |
 | --- | ---: | --- | --- | --- | --- | --- | --- |
-| Aberrant Return | 1 | removal | generic | none | manual-only | core-cast-play | instant/sorcery has no automated spell definition |
 | Burning Curiosity | 1 | removal | bespoke | none | manual-only | core-cast-play | instant/sorcery has no automated spell definition |
-| Eventide's Shadow | 1 | draw | generic | none | manual-only | core-cast-play | instant/sorcery has no automated spell definition |
 | Fire Covenant | 1 | utility | bespoke | none | manual-only | core-cast-play | instant/sorcery has no automated spell definition |

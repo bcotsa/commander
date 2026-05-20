@@ -49,6 +49,8 @@ export type SimpleSpellDefinition =
   | { kind: 'mass_damage_creatures'; amount: number | 'creature_count'; target: 'none' }
   | { kind: 'return_graveyard_creature_to_battlefield'; target: GraveyardTargetType; tapped?: boolean; minusOneCounters?: number; exileOnLeave?: boolean }
   | { kind: 'return_graveyard_creature_to_hand'; target: GraveyardTargetType }
+  | { kind: 'copy_all_tokens'; target: 'none' }
+  | { kind: 'remove_all_counters_draw_lose_life'; target: 'none' }
 
 export type CastChoiceSpec =
   | { kind: 'x_value'; title: string; min: number; max: number }
@@ -1223,6 +1225,23 @@ export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine
   const massDamage = oracleText.match(/deals? (\d+) damage to each creature/)
   if (massDamage) {
     return { kind: 'mass_damage_creatures', amount: Number(massDamage[1]), target: 'none' }
+  }
+
+  if (oracleText.includes("for each token you control, create a token that's a copy of that permanent")) {
+    return { kind: 'copy_all_tokens', target: 'none' }
+  }
+
+  const putFromGraveyards = oracleText.match(/put (?:(?:one,?\s*)?(?:two,?\s*or\s*)?(?:three\s*)?)?target creature cards? from (?:a )?graveyards? onto the battlefield(?: under your control)?/)
+  if (putFromGraveyards) {
+    return {
+      kind: 'return_graveyard_creature_to_battlefield',
+      target: 'any_graveyard_creature',
+      minusOneCounters: oracleText.includes('-1/-1 counter') ? 1 : undefined,
+    }
+  }
+
+  if (oracleText.includes('remove any number of counters from among permanents on the battlefield')) {
+    return { kind: 'remove_all_counters_draw_lose_life', target: 'none' }
   }
 
   return null

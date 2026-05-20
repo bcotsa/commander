@@ -53,6 +53,33 @@ const VERIFICATIONS: SupportVerification[] = [
     testFile: 'src/lib/__tests__/card-rules.test.ts',
     testName: 'summarizes resolved deck support levels and queues unsupported spells first',
   },
+  {
+    reasonCode: 'simple-spell',
+    testFile: 'src/lib/__tests__/card-rules.test.ts',
+    testName: 'parses real oracle texts from Hazel Squirrels deck',
+  },
+  {
+    reasonCode: 'simple-spell',
+    testFile: 'src/lib/__tests__/card-rules.test.ts',
+    testName: 'parses real oracle texts from Auntie Ool Blight deck',
+  },
+  {
+    reasonCode: 'effect-sequence',
+    testFile: 'src/lib/__tests__/card-rules.test.ts',
+    testName: 'parses real oracle texts from Hazel Squirrels deck',
+  },
+  {
+    reasonCode: 'simple-spell',
+    cardNames: ['Second Harvest'],
+    testFile: 'src/lib/__tests__/game-reducer.test.ts',
+    testName: 'creates a copy of each token the caster controls',
+  },
+  {
+    reasonCode: 'simple-spell',
+    cardNames: ["Eventide's Shadow"],
+    testFile: 'src/lib/__tests__/game-reducer.test.ts',
+    testName: 'removes all counters, caster draws and loses that much life',
+  },
 ]
 
 function normalizeCardName(name: string): string {

@@ -2825,6 +2825,45 @@ function resolveStackTop(state: GameState): GameState {
           }
           break
         }
+        case 'copy_all_tokens': {
+          players = addSpellToCasterGraveyard(players)
+          const casterPlayer = players.find(p => p.id === stackItem.casterId)
+          if (casterPlayer) {
+            const tokenSnapshot = casterPlayer.zones.battlefield.filter(card => card.isToken)
+            const copies = tokenSnapshot.map(token => copyTokenCard(token))
+            players = players.map(player =>
+              player.id === stackItem.casterId
+                ? { ...player, zones: { ...player.zones, battlefield: [...player.zones.battlefield, ...copies] } }
+                : player
+            )
+            for (const copy of copies) {
+              triggerOccurrences.push({ type: 'token_created', controllerId: stackItem.casterId, card: copy })
+              triggerOccurrences.push({ type: 'enters_battlefield', controllerId: stackItem.casterId, card: copy })
+              if (isCreatureCard(copy)) {
+                triggerOccurrences.push({ type: 'creature_enters', controllerId: stackItem.casterId, card: copy })
+              }
+            }
+          }
+          break
+        }
+        case 'remove_all_counters_draw_lose_life': {
+          let totalCounters = 0
+          players = addSpellToCasterGraveyard(players).map(player => ({
+            ...player,
+            zones: {
+              ...player.zones,
+              battlefield: player.zones.battlefield.map(card => {
+                const removed = card.plusOneCounters + card.minusOneCounters
+                totalCounters += removed
+                return removed > 0 ? { ...card, plusOneCounters: 0, minusOneCounters: 0 } : card
+              }),
+            },
+          }))
+          if (totalCounters > 0) {
+            players = drawCardsForPlayer(players, stackItem.casterId, totalCounters, totalCounters)
+          }
+          break
+        }
         case 'return_graveyard_creature_to_battlefield':
         case 'return_graveyard_creature_to_hand':
           players = addSpellToCasterGraveyard(players)

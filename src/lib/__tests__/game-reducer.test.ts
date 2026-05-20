@@ -1977,6 +1977,113 @@ describe('Queued effect sequences', () => {
 })
 
 // ---------------------------------------------------------------------------
+// New Phase 2C spell kinds
+// ---------------------------------------------------------------------------
+
+describe('copy_all_tokens spell (Second Harvest)', () => {
+  it('creates a copy of each token the caster controls', () => {
+    let state = twoPlayerGame()
+    const harvest = makeCard({
+      instanceId: 'second-harvest-1',
+      name: 'Second Harvest',
+      typeLine: 'Instant',
+      manaCost: '{2}{G}{G}',
+      oracleText: "For each token you control, create a token that's a copy of that permanent.",
+      power: null,
+      toughness: null,
+    })
+    const squirrel1 = makeCard({ instanceId: 'squirrel-a', name: 'Squirrel', typeLine: 'Token Creature — Squirrel', power: 1, toughness: 1, isToken: true })
+    const squirrel2 = makeCard({ instanceId: 'squirrel-b', name: 'Squirrel', typeLine: 'Token Creature — Squirrel', power: 1, toughness: 1, isToken: true })
+    const forests = [0, 1, 2, 3].map(i => makeLand({ instanceId: `forest-${i}`, name: 'Forest', typeLine: 'Basic Land — Forest', oracleText: '{T}: Add {G}.' }))
+
+    state = {
+      ...state,
+      players: state.players.map(player =>
+        player.id === 'p1'
+          ? { ...player, zones: { ...player.zones, hand: [harvest], battlefield: [squirrel1, squirrel2], lands: forests } }
+          : player
+      ),
+    }
+
+    const cast = gameReducer(state, { type: 'CAST_SPELL', playerId: 'p1', cardId: harvest.instanceId })
+    const resolved = gameReducer(cast, { type: 'RESOLVE_STACK' })
+
+    const p1Tokens = getPlayer(resolved, 'p1').zones.battlefield.filter(card => card.isToken)
+    expect(p1Tokens).toHaveLength(4)
+    expect(getPlayer(resolved, 'p1').zones.graveyard.some(c => c.instanceId === harvest.instanceId)).toBe(true)
+  })
+
+  it('does nothing when caster controls no tokens', () => {
+    let state = twoPlayerGame()
+    const harvest = makeCard({
+      instanceId: 'second-harvest-empty',
+      name: 'Second Harvest',
+      typeLine: 'Instant',
+      manaCost: '{2}{G}{G}',
+      oracleText: "For each token you control, create a token that's a copy of that permanent.",
+      power: null,
+      toughness: null,
+    })
+    const forests = [0, 1, 2, 3].map(i => makeLand({ instanceId: `forest-e${i}`, name: 'Forest', typeLine: 'Basic Land — Forest', oracleText: '{T}: Add {G}.' }))
+
+    state = {
+      ...state,
+      players: state.players.map(player =>
+        player.id === 'p1'
+          ? { ...player, zones: { ...player.zones, hand: [harvest], lands: forests } }
+          : player
+      ),
+    }
+
+    const cast = gameReducer(state, { type: 'CAST_SPELL', playerId: 'p1', cardId: harvest.instanceId })
+    const resolved = gameReducer(cast, { type: 'RESOLVE_STACK' })
+
+    expect(getPlayer(resolved, 'p1').zones.battlefield.filter(c => c.isToken)).toHaveLength(0)
+  })
+})
+
+describe("remove_all_counters_draw_lose_life spell (Eventide's Shadow)", () => {
+  it('removes all counters, caster draws and loses that much life', () => {
+    let state = twoPlayerGame()
+    const shadow = makeCard({
+      instanceId: 'eventides-shadow-1',
+      name: "Eventide's Shadow",
+      typeLine: 'Sorcery',
+      manaCost: '{2}{B}',
+      oracleText: 'Remove any number of counters from among permanents on the battlefield. You draw cards and lose life equal to the number of counters removed this way.',
+      power: null,
+      toughness: null,
+    })
+    const creature1 = makeCard({ instanceId: 'blighted-1', name: 'Blighted Creature', power: 2, toughness: 4, minusOneCounters: 3 })
+    const creature2 = makeCard({ instanceId: 'blighted-2', name: 'Other Creature', power: 1, toughness: 3, minusOneCounters: 2 })
+    const swamp = makeLand({ instanceId: 'swamp-s1', name: 'Swamp', typeLine: 'Basic Land — Swamp', oracleText: '{T}: Add {B}.' })
+    const swamp2 = makeLand({ instanceId: 'swamp-s2', name: 'Swamp', typeLine: 'Basic Land — Swamp', oracleText: '{T}: Add {B}.' })
+    const swamp3 = makeLand({ instanceId: 'swamp-s3', name: 'Swamp', typeLine: 'Basic Land — Swamp', oracleText: '{T}: Add {B}.' })
+
+    const libraryCards = [0, 1, 2, 3, 4, 5].map(i => makeCard({ instanceId: `lib-${i}`, name: `Library Card ${i}` }))
+
+    state = {
+      ...state,
+      players: state.players.map(player => {
+        if (player.id === 'p1') return { ...player, zones: { ...player.zones, hand: [shadow], lands: [swamp, swamp2, swamp3], library: libraryCards } }
+        if (player.id === 'p2') return { ...player, zones: { ...player.zones, battlefield: [creature1, creature2] } }
+        return player
+      }),
+    }
+
+    const cast = gameReducer(state, { type: 'CAST_SPELL', playerId: 'p1', cardId: shadow.instanceId })
+    const resolved = gameReducer(cast, { type: 'RESOLVE_STACK' })
+
+    const p1 = getPlayer(resolved, 'p1')
+    const p2 = getPlayer(resolved, 'p2')
+    expect(p2.zones.battlefield.find(c => c.instanceId === 'blighted-1')?.minusOneCounters).toBe(0)
+    expect(p2.zones.battlefield.find(c => c.instanceId === 'blighted-2')?.minusOneCounters).toBe(0)
+    expect(p1.zones.hand).toHaveLength(5)
+    expect(p1.life).toBe(40 - 5)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Sequence number
 // ---------------------------------------------------------------------------
 
