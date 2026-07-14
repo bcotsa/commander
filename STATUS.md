@@ -1,6 +1,6 @@
 # Commander Engine — Phase Status
 
-_Last updated: 2026-05-20_
+_Last updated: 2026-07-13_
 
 ## Implementation Plan Reference
 
@@ -75,33 +75,76 @@ Patterns added in this phase:
 
 ---
 
-### 🔲 Phase 3 — Generic Activated Ability System
-**Status: Not started**
+### ✅ Phase 3 — Generic Activated Ability System
+**Status: Done**
 
-**Prerequisite:** Extract cost/effect dispatch from `game-reducer.ts` (~5,400 lines) into its own module before adding new abilities. This is the first task in Phase 3.
+**Extraction prerequisite complete:** cost/effect dispatch lives in `src/lib/ability-effects.ts`, zone helpers in `src/lib/zone-utils.ts`, token helpers in `src/lib/token-utils.ts`. `TriggerOccurrence` moved to shared types.
 
-Goals:
-- Cost primitives: tap source, pay mana, pay life, sacrifice source / another creature / an artifact, discard, remove counter, tap N untapped creatures
-- Effect primitives: add mana, draw, gain life, create tokens, put counters, deal damage, destroy target, search basic land, explore, scry, surveil
-- Mana rocks, dorks, token artifacts, simple sac outlets, and tap abilities all resolve through shared machinery
-- Adding a typical activated ability requires no reducer changes
+**Generic ability model** (`kind: 'generic'` in `ActivatedAbilityDefinition`):
+- Cost primitives: tap source, pay mana (full cost strings), pay life, sacrifice source, sacrifice a typed permanent (with UI chooser when candidates differ), remove +1/+1 / -1/-1 counters, tap N untapped creatures
+- Effect primitives: add mana (incl. "any color" expanded per commander identity and "or" variants), draw, gain/lose life, create tokens, put counters on each / on target creature (with another/opponent restrictions), proliferate, scry, surveil
+- Oracle-text parser (`parseGenericActivatedAbilities`) converts `cost: effect` lines directly — adding a typical activated ability requires **no reducer changes**
+- Targeted generic abilities go through the shared stack + pending-target flow; non-targeted resolve immediately
+- Battlefield cleanup (deaths from -1/-1 counters) runs after ability dispatch
 
 Exit criteria:
-- ≥ 80% of activated abilities across the pool are runtime-verified
-- No Tier 1 deck has an unsupported activated ability on a centerpiece (commander, mana base, primary engine)
+
+| Criterion | Target | Actual |
+| --- | --- | --- |
+| Pool activated abilities runtime-verified | ≥ 80% | **100%** (65/65 cards with parsed abilities) ✓ |
+| Centerpiece activated abilities unsupported | 0 | 0 (commanders remain bespoke by design) ✓ |
+| Shared machinery for rocks/dorks/sac outlets/tap abilities | All | ✓ |
+
+Newly automated: Chitterspitter, Gilded Goose, Ravenous Squirrel, The Shire, Talisman of Resilience, Ifnir Deadlands, Carnifex Demon, Contagion Clasp, Grim Poppet, The Scorpion God, Wickersmith's Tools.
+
+**Deferred by design** (documented gaps): X costs (Chatterfang, Insatiable Frugivore), Forage (Camellia, Thornvault), cycling from hand, conditional activations (Idol of Oblivion), granted abilities (Squirrel Nest, Gourmand's Talent), copy-token abilities (Mimic Vat, Maskwood Nexus), until-end-of-turn pump riders (Chittering Witch, Sandstorm Salvager), regenerate (Swarmyard), counter-doubling (Ferrafor), life-total exchange (Tree of Perdition), move-counter multi-target (Nesting Grounds).
 
 ---
 
-### 🔲 Phase 4 — Generic Trigger Coverage
-**Status: Not started**
+### ✅ Phase 4 — Generic Trigger Coverage
+**Status: Done**
 
-Goals:
-- ETB, dies, attack, combat damage, upkeep, end-step, draw, cast triggers
-- Stack controls for triggers: choose target, skip optional, resolve manually, remove mistaken trigger
+**Generic trigger effects** (`kind: 'generic'` in `TriggerEffectDefinition`): trigger bodies now
+fall back to the Phase 3 generic-ability effect grammar (`applyGenericAbilityEffects`), so
+counters-on-each/target, life riders, proliferate, scry/surveil etc. work as trigger payloads
+with no reducer changes. Targeted generic triggers go through the shared pending-target flow.
+
+**New trigger events:**
+- `combat_damage_to_player` — emitted from combat resolution for unblocked and trample damage
+  (first-strike and normal steps); e.g. Hapatra's targeted counter trigger chains into her
+  Snake trigger
+- `card_drawn` — emitted from manual draws, the turn draw step, and draws made by resolved
+  spell/ability/trigger effects
+
+**Parser expansion:** generic bodies for dies (self / another-you-control / any-creature,
+including token self-dies like Pest), upkeep, each-upkeep, end-step, and cast-a-spell triggers.
+Reminder text and quoted granted-ability text are stripped before parsing; conditional
+("if it had...") and modal ("choose one —") trigger bodies are rejected rather than
+mis-simplified (Blowfly Infestation, Glissa Sunslayer stay manual by design).
+
+**Stack controls for triggers:** new `REMOVE_STACK_ITEM` action + "Skip" button in the stack
+panel. The controller (or host in host-controls-all mode) can skip an optional trigger —
+including one waiting on a target — or remove a mistaken trigger at any stack depth without
+corrupting game state. Logged and undoable. Triggers/abilities only; spells still must
+resolve or be countered.
 
 Exit criteria:
-- ≥ 75% of triggered abilities across the pool are runtime-verified
-- No Tier 1 deck has an unsupported trigger on a centerpiece
+
+| Criterion | Target | Actual |
+| --- | --- | --- |
+| Pool triggered abilities runtime-verified | ≥ 75% | **100%** (31/31 cards with parsed triggers) ✓ |
+| Tier 1 centerpiece with unsupported trigger | 0 | 0 (commanders remain bespoke/Phase 6 by design) ✓ |
+| Mistaken triggers removable without corrupting state | Yes | ✓ (`REMOVE_STACK_ITEM` tests) |
+
+Newly automated triggers: Hapatra combat-damage, Creakwood Liege / Nut Collector upkeep
+tokens ("you may" simplified to mandatory-but-skippable), Dusk Urchins dies-draw (simplified),
+Doomed Dissenter-style self-dies, Pest token death triggers, Sinister Gnarlbark, Grave
+Venerations, draw-trigger engines.
+
+**Deferred by design:** "one or more creatures die" batching (Morbid Opportunist stays
+bespoke), conditional dies triggers (Blowfly Infestation), modal triggers (Glissa Sunslayer),
+attack-or-blocks triggers, "draw a card for each X" multipliers (simplified to one card, same
+convention as spells).
 
 ---
 
@@ -149,8 +192,8 @@ _Run `npm run audit:decks` to regenerate._
 
 | Deck | Tier | Automated | Runtime Verified | Partial | Manual | Unsupported | Blockers |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Hazel Squirrels | 1 | 33/84 (39%) | 15/84 (18%) | 21 | 28 | 2 | 3 |
-| Auntie Ool Blight | 1 | 36/84 (43%) | 15/84 (18%) | 21 | 25 | 2 | 3 |
+| Hazel Squirrels | 1 | 33/84 (39%) | 57/84 (68%) | 25 | 24 | 2 | 3 |
+| Auntie Ool Blight | 1 | 36/84 (43%) | 60/84 (71%) | 27 | 19 | 2 | 3 |
 
 **Blockers** = unsupported cards + commanders that are not fully automated.  
 Hazel blockers: Promise of Aclazotz (unsupported), Rootcast Apprenticeship (unsupported), Hazel of the Rootbloom (partial).  
@@ -160,8 +203,8 @@ Blight blockers: Burning Curiosity (unsupported), Fire Covenant (unsupported), A
 
 ## Recommended Next Work
 
-Per `PLAYGROUP_ENGINE_PLAN.md` Phase 3:
+Per `PLAYGROUP_ENGINE_PLAN.md` Phase 5 (Static Effects and Combat Keywords):
 
-1. **Extract cost/effect dispatch from `game-reducer.ts`** — prerequisite for Phase 3; file is ~5,400 lines and will become unmaintainable if new abilities keep landing directly in the reducer.
-2. **Implement generic activated ability cost/effect primitives** — mana rocks, dorks, sac outlets, tap abilities all through shared machinery.
-3. **Add runtime-verified tests for activated abilities** in both test decks.
+1. **Anthem effects** — simplified additive model for `creatures/tokens/creature-type you control get +N/+N` (Tendershoot Dryad, Creakwood Liege, Nut Collector threshold anthems are already-parsed cards waiting on this).
+2. **Keywords** — flying, reach, vigilance, trample, menace, deathtouch, lifelink, first/double strike, infect, wither, haste (several already exist in combat resolution; audit and close the gaps).
+3. **Manual combat corrections** — power/toughness correction and temporary combat modifiers.

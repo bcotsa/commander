@@ -8,6 +8,7 @@ interface StackPanelProps {
   passedIds: string[]
   manualPlayerId?: string | null
   onManualResolve?: (playerId: string, outcome: 'resolve' | 'counter', destination?: ManualStackDestination) => void
+  onRemoveStackItem?: (playerId: string, stackItemId: string) => void
 }
 
 function describeTarget(stackItem: StackItem, players: Player[], stack: StackItem[]): string | null {
@@ -67,7 +68,7 @@ function manualOptions(stackItem: StackItem): Array<{ label: string; outcome: 'r
   return options
 }
 
-export function StackPanel({ stack, players, priorityPlayerId, passedIds, manualPlayerId, onManualResolve }: StackPanelProps) {
+export function StackPanel({ stack, players, priorityPlayerId, passedIds, manualPlayerId, onManualResolve, onRemoveStackItem }: StackPanelProps) {
   if (stack.length === 0) {
     return (
       <div className="border-b border-slate-800 bg-slate-950/70 px-3 py-2">
@@ -127,9 +128,9 @@ export function StackPanel({ stack, players, priorityPlayerId, passedIds, manual
                   <span>{stackItem.kind}</span>
                   {target && <span>Target: {target}</span>}
                 </div>
-                {isTop && manualPlayerId && onManualResolve && (
+                {manualPlayerId && (isTop || stackItem.kind === 'trigger' || stackItem.kind === 'ability') && (
                   <div className="mt-2 flex flex-wrap gap-1">
-                    {manualOptions(stackItem).map(option => (
+                    {isTop && onManualResolve && manualOptions(stackItem).map(option => (
                       <button
                         key={`${option.label}-${option.destination ?? 'default'}`}
                         type="button"
@@ -145,6 +146,15 @@ export function StackPanel({ stack, players, priorityPlayerId, passedIds, manual
                         {option.label}
                       </button>
                     ))}
+                    {onRemoveStackItem && (stackItem.kind === 'trigger' || stackItem.kind === 'ability') && (
+                      <button
+                        type="button"
+                        onClick={() => onRemoveStackItem(stackItem.casterId, stackItem.id)}
+                        className="rounded-md bg-amber-900 px-2 py-1 text-[10px] font-medium text-amber-100 transition-colors hover:bg-amber-800"
+                      >
+                        Skip
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { gameReducer, createInitialGameState, createPlayer } from '../game-reducer'
+import { getActivatedAbilities } from '../card-rules'
 import type { GameState, GameCard, Player } from '@/types/game-state'
 
 // ---------------------------------------------------------------------------
@@ -2098,5 +2099,592 @@ describe('Action sequence', () => {
     const seq1 = state.actionSeq
     state = gameReducer(state, { type: 'LIFE_CHANGE', targetId: 'p1', delta: 1 })
     expect(state.actionSeq).toBeGreaterThan(seq1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Generic activated abilities (Phase 3)
+// ---------------------------------------------------------------------------
+
+describe('Generic activated abilities', () => {
+  function withZones(state: GameState, playerId: string, zones: Partial<Player['zones']>): GameState {
+    return {
+      ...state,
+      players: state.players.map(player =>
+        player.id === playerId ? { ...player, zones: { ...player.zones, ...zones } } : player
+      ),
+    }
+  }
+
+  it('creates a token after paying mana and tapping the source (Chitterspitter)', () => {
+    const chitterspitter = makeCard({
+      instanceId: 'chitterspitter-1',
+      name: 'Chitterspitter',
+      typeLine: 'Artifact',
+      power: null,
+      toughness: null,
+      oracleText: '{G}, {T}: Create a 1/1 green Squirrel creature token.',
+    })
+    const forest = makeLand({ instanceId: 'forest-gen-1' })
+    const state = withZones(twoPlayerGame(), 'p1', { battlefield: [chitterspitter], lands: [forest] })
+
+    const next = gameReducer(state, {
+      type: 'ACTIVATE_ABILITY',
+      playerId: 'p1',
+      cardId: chitterspitter.instanceId,
+      abilityId: 'generic-0',
+    })
+
+    const p1 = getPlayer(next, 'p1')
+    expect(p1.zones.battlefield.find(card => card.instanceId === chitterspitter.instanceId)?.tapped).toBe(true)
+    expect(p1.zones.lands[0]?.tapped).toBe(true)
+    expect(p1.zones.battlefield.filter(card => card.isToken && card.name === 'Squirrel')).toHaveLength(1)
+  })
+
+  it('auto-sacrifices the only matching permanent for a sac cost (Gilded Goose)', () => {
+    const goose = makeCard({
+      instanceId: 'goose-1',
+      name: 'Gilded Goose',
+      typeLine: 'Creature — Bird',
+      power: 0,
+      toughness: 2,
+      oracleText: '{1}{G}, {T}: Create a Food token.\n{T}, Sacrifice a Food: Add one mana of any color.',
+    })
+    const food = makeCard({
+      instanceId: 'food-sac-1',
+      name: 'Food',
+      typeLine: 'Token Artifact — Food',
+      power: null,
+      toughness: null,
+      isToken: true,
+      tokenKey: 'food',
+    })
+    const state = withZones(twoPlayerGame(), 'p1', { battlefield: [goose, food] })
+    const player = getPlayer(state, 'p1')
+    const abilities = getActivatedAbilities(goose, player)
+    const manaAbility = abilities.find(ability => ability.kind === 'generic' && ability.effects[0]?.kind === 'add_mana' && ability.effects[0].color === 'G')
+    expect(manaAbility).toBeDefined()
+
+    const next = gameReducer(state, {
+      type: 'ACTIVATE_ABILITY',
+      playerId: 'p1',
+      cardId: goose.instanceId,
+      abilityId: manaAbility?.id ?? '',
+    })
+
+    const p1 = getPlayer(next, 'p1')
+    expect(p1.manaPool.G).toBe(1)
+    expect(p1.zones.battlefield.find(card => card.instanceId === food.instanceId)).toBeUndefined()
+    expect(p1.zones.battlefield.find(card => card.instanceId === goose.instanceId)?.tapped).toBe(true)
+    expect(p1.zones.graveyard).toHaveLength(0)
+  })
+
+  it('requires an explicit selection for heterogeneous sacrifice costs (Ravenous Squirrel)', () => {
+    const squirrel = makeCard({
+      instanceId: 'ravenous-1',
+      name: 'Ravenous Squirrel',
+      typeLine: 'Creature — Squirrel',
+      power: 1,
+      toughness: 1,
+      oracleText: '{1}{B}{G}, Sacrifice an artifact or creature: You gain 1 life and draw a card.',
+    })
+    const bear = makeCard({ instanceId: 'bear-1', name: 'Bear' })
+    const relic = makeCard({ instanceId: 'relic-1', name: 'Relic', typeLine: 'Artifact', power: null, toughness: null })
+    const lands = [
+      makeLand({ instanceId: 'swamp-rs', name: 'Swamp', typeLine: 'Basic Land — Swamp', oracleText: '{T}: Add {B}.' }),
+      makeLand({ instanceId: 'forest-rs' }),
+      makeLand({ instanceId: 'forest-rs-2' }),
+    ]
+    const library = [makeCard({ instanceId: 'lib-rs-1', name: 'Library Card' })]
+    const state = withZones(twoPlayerGame(), 'p1', { battlefield: [squirrel, bear, relic], lands, library })
+
+    const unselected = gameReducer(state, {
+      type: 'ACTIVATE_ABILITY',
+      playerId: 'p1',
+      cardId: squirrel.instanceId,
+      abilityId: 'generic-0',
+    })
+    expect(unselected).toBe(state)
+
+    const next = gameReducer(state, {
+      type: 'ACTIVATE_ABILITY',
+      playerId: 'p1',
+      cardId: squirrel.instanceId,
+      abilityId: 'generic-0',
+      options: { selectedCardIds: [relic.instanceId] },
+    })
+
+    const p1 = getPlayer(next, 'p1')
+    expect(p1.life).toBe(41)
+    expect(p1.zones.hand.map(card => card.instanceId)).toContain('lib-rs-1')
+    expect(p1.zones.battlefield.find(card => card.instanceId === relic.instanceId)).toBeUndefined()
+    expect(p1.zones.graveyard.find(card => card.instanceId === relic.instanceId)).toBeDefined()
+    expect(p1.zones.battlefield.find(card => card.instanceId === bear.instanceId)).toBeDefined()
+  })
+
+  it('removes a counter as a cost and spreads counters to each other creature (Carnifex Demon)', () => {
+    const carnifex = makeCard({
+      instanceId: 'carnifex-1',
+      name: 'Carnifex Demon',
+      typeLine: 'Creature — Phyrexian Demon',
+      power: 6,
+      toughness: 6,
+      minusOneCounters: 2,
+      oracleText: '{B}, Remove a -1/-1 counter from this creature: Put a -1/-1 counter on each other creature.',
+    })
+    const ally = makeCard({ instanceId: 'ally-1', name: 'Ally', power: 3, toughness: 3 })
+    const weakling = makeCard({ instanceId: 'weakling-1', name: 'Weakling', power: 1, toughness: 1 })
+    const swamp = makeLand({ instanceId: 'swamp-cd', name: 'Swamp', typeLine: 'Basic Land — Swamp', oracleText: '{T}: Add {B}.' })
+    let state = withZones(twoPlayerGame(), 'p1', { battlefield: [carnifex, ally], lands: [swamp] })
+    state = withZones(state, 'p2', { battlefield: [weakling] })
+
+    const next = gameReducer(state, {
+      type: 'ACTIVATE_ABILITY',
+      playerId: 'p1',
+      cardId: carnifex.instanceId,
+      abilityId: 'generic-0',
+    })
+
+    const p1 = getPlayer(next, 'p1')
+    const p2 = getPlayer(next, 'p2')
+    expect(p1.zones.battlefield.find(card => card.instanceId === carnifex.instanceId)?.minusOneCounters).toBe(1)
+    expect(p1.zones.battlefield.find(card => card.instanceId === ally.instanceId)?.minusOneCounters).toBe(1)
+    expect(p2.zones.battlefield.find(card => card.instanceId === weakling.instanceId)).toBeUndefined()
+    expect(p2.zones.graveyard.find(card => card.instanceId === weakling.instanceId)).toBeDefined()
+  })
+
+  it('resolves targeted counter placement through the stack (The Scorpion God)', () => {
+    const scorpion = makeCard({
+      instanceId: 'scorpion-1',
+      name: 'The Scorpion God',
+      typeLine: 'Legendary Creature — God',
+      power: 6,
+      toughness: 5,
+      oracleText: '{1}{B}{R}: Put a -1/-1 counter on another target creature.',
+    })
+    const victim = makeCard({ instanceId: 'victim-1', name: 'Victim', power: 3, toughness: 3 })
+    const lands = [
+      makeLand({ instanceId: 'swamp-sg', name: 'Swamp', typeLine: 'Basic Land — Swamp', oracleText: '{T}: Add {B}.' }),
+      makeLand({ instanceId: 'mountain-sg', name: 'Mountain', typeLine: 'Basic Land — Mountain', oracleText: '{T}: Add {R}.' }),
+      makeLand({ instanceId: 'mountain-sg-2', name: 'Mountain', typeLine: 'Basic Land — Mountain', oracleText: '{T}: Add {R}.' }),
+    ]
+    let state = withZones(twoPlayerGame(), 'p1', { battlefield: [scorpion], lands })
+    state = withZones(state, 'p2', { battlefield: [victim] })
+
+    const activated = gameReducer(state, {
+      type: 'ACTIVATE_ABILITY',
+      playerId: 'p1',
+      cardId: scorpion.instanceId,
+      abilityId: 'generic-0',
+    })
+
+    expect(activated.stack).toHaveLength(1)
+    expect(activated.pendingTargetChoice?.source).toBe('activated_ability')
+    expect(activated.pendingTargetChoice?.targetType).toBe('battlefield_creature')
+
+    const targeted = gameReducer(activated, {
+      type: 'SET_PENDING_TARGET',
+      playerId: 'p1',
+      stackItemId: activated.pendingTargetChoice?.stackItemId ?? '',
+      targetCardId: victim.instanceId,
+    })
+
+    const resolved = gameReducer(targeted, { type: 'RESOLVE_STACK' })
+    expect(getPlayer(resolved, 'p2').zones.battlefield.find(card => card.instanceId === victim.instanceId)?.minusOneCounters).toBe(1)
+  })
+
+  it('opens a proliferate choice from a generic ability (Contagion Clasp)', () => {
+    const clasp = makeCard({
+      instanceId: 'clasp-1',
+      name: 'Contagion Clasp',
+      typeLine: 'Artifact',
+      power: null,
+      toughness: null,
+      oracleText: '{4}, {T}: Proliferate. (Choose any number of permanents and/or players, then give each another counter of each kind already there.)',
+    })
+    const lands = Array.from({ length: 4 }, (_, i) => makeLand({ instanceId: `forest-cc-${i}` }))
+    const state = withZones(twoPlayerGame(), 'p1', { battlefield: [clasp], lands })
+
+    const next = gameReducer(state, {
+      type: 'ACTIVATE_ABILITY',
+      playerId: 'p1',
+      cardId: clasp.instanceId,
+      abilityId: 'generic-0',
+    })
+
+    expect(next.pendingProliferateChoice?.playerId).toBe('p1')
+    expect(getPlayer(next, 'p1').zones.battlefield.find(card => card.instanceId === clasp.instanceId)?.tapped).toBe(true)
+  })
+
+  it('applies self-damage riders on pain-mana abilities (Talisman of Resilience)', () => {
+    const talisman = makeCard({
+      instanceId: 'talisman-1',
+      name: 'Talisman of Resilience',
+      typeLine: 'Artifact',
+      power: null,
+      toughness: null,
+      oracleText: '{T}: Add {C}.\n{T}: Add {B} or {G}. This artifact deals 1 damage to you.',
+    })
+    const state = withZones(twoPlayerGame(), 'p1', { battlefield: [talisman] })
+    const abilities = getActivatedAbilities(talisman, getPlayer(state, 'p1'))
+    const blackPain = abilities.find(ability => ability.kind === 'generic' && ability.effects[0]?.kind === 'add_mana' && ability.effects[0].color === 'B')
+    expect(blackPain).toBeDefined()
+
+    const next = gameReducer(state, {
+      type: 'ACTIVATE_ABILITY',
+      playerId: 'p1',
+      cardId: talisman.instanceId,
+      abilityId: blackPain?.id ?? '',
+    })
+
+    const p1 = getPlayer(next, 'p1')
+    expect(p1.manaPool.B).toBe(1)
+    expect(p1.life).toBe(39)
+    expect(p1.zones.battlefield.find(card => card.instanceId === talisman.instanceId)?.tapped).toBe(true)
+  })
+
+  it('taps an untapped creature as part of an ability cost (The Shire)', () => {
+    const shire = makeLand({
+      instanceId: 'shire-1',
+      name: 'The Shire',
+      typeLine: 'Legendary Land',
+      oracleText: '{T}: Add {G}.\n{1}{G}, {T}, Tap an untapped creature you control: Create a Food token.',
+    })
+    const helper = makeCard({ instanceId: 'helper-1', name: 'Helper', power: 2, toughness: 2 })
+    const forests = [
+      makeLand({ instanceId: 'forest-sh-1' }),
+      makeLand({ instanceId: 'forest-sh-2' }),
+    ]
+    const state = withZones(twoPlayerGame(), 'p1', { battlefield: [helper], lands: [shire, ...forests] })
+    const abilities = getActivatedAbilities(shire, getPlayer(state, 'p1'))
+    const foodAbility = abilities.find(ability => ability.kind === 'generic')
+    expect(foodAbility).toBeDefined()
+
+    const next = gameReducer(state, {
+      type: 'ACTIVATE_ABILITY',
+      playerId: 'p1',
+      cardId: shire.instanceId,
+      abilityId: foodAbility?.id ?? '',
+    })
+
+    const p1 = getPlayer(next, 'p1')
+    expect(p1.zones.battlefield.filter(card => card.isToken && card.name === 'Food')).toHaveLength(1)
+    expect(p1.zones.battlefield.find(card => card.instanceId === helper.instanceId)?.tapped).toBe(true)
+    expect(p1.zones.lands.find(card => card.instanceId === shire.instanceId)?.tapped).toBe(true)
+  })
+
+  it('pays life costs and rejects activation when life is insufficient', () => {
+    const deadlands = makeLand({
+      instanceId: 'ifnir-1',
+      name: 'Ifnir Deadlands',
+      typeLine: 'Land — Desert',
+      oracleText: '{T}: Add {C}.\n{2}{B}{B}, {T}, Sacrifice a Desert: Put two -1/-1 counters on target creature an opponent controls. Activate only as a sorcery.',
+    })
+    const victim = makeCard({ instanceId: 'ifnir-victim', name: 'Victim', power: 4, toughness: 4 })
+    const swamps = Array.from({ length: 4 }, (_, i) =>
+      makeLand({ instanceId: `swamp-if-${i}`, name: 'Swamp', typeLine: 'Basic Land — Swamp', oracleText: '{T}: Add {B}.' })
+    )
+    let state = withZones(twoPlayerGame(), 'p1', { lands: [deadlands, ...swamps] })
+    state = withZones(state, 'p2', { battlefield: [victim] })
+
+    const abilities = getActivatedAbilities(deadlands, getPlayer(state, 'p1'))
+    const sacAbility = abilities.find(ability => ability.kind === 'generic')
+    expect(sacAbility).toBeDefined()
+
+    const activated = gameReducer(state, {
+      type: 'ACTIVATE_ABILITY',
+      playerId: 'p1',
+      cardId: deadlands.instanceId,
+      abilityId: sacAbility?.id ?? '',
+    })
+
+    expect(activated.stack).toHaveLength(1)
+    expect(getPlayer(activated, 'p1').zones.lands.find(card => card.instanceId === deadlands.instanceId)).toBeUndefined()
+    expect(getPlayer(activated, 'p1').zones.graveyard.find(card => card.instanceId === deadlands.instanceId)).toBeDefined()
+
+    const targeted = gameReducer(activated, {
+      type: 'SET_PENDING_TARGET',
+      playerId: 'p1',
+      stackItemId: activated.pendingTargetChoice?.stackItemId ?? '',
+      targetCardId: victim.instanceId,
+    })
+    const resolved = gameReducer(targeted, { type: 'RESOLVE_STACK' })
+    expect(getPlayer(resolved, 'p2').zones.battlefield.find(card => card.instanceId === victim.instanceId)?.minusOneCounters).toBe(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Generic trigger coverage (Phase 4)
+// ---------------------------------------------------------------------------
+
+describe('Generic trigger coverage', () => {
+  function withZones(state: GameState, playerId: string, zones: Partial<Player['zones']>): GameState {
+    return {
+      ...state,
+      players: state.players.map(player =>
+        player.id === playerId ? { ...player, zones: { ...player.zones, ...zones } } : player
+      ),
+    }
+  }
+
+  it('resolves generic trigger effects through the stack (end step counters)', () => {
+    const cultivator = makeCard({
+      instanceId: 'cultivator-1',
+      name: 'Verdant Cultivator',
+      oracleText: 'At the beginning of your end step, put a +1/+1 counter on each creature.',
+    })
+    const ally = makeCard({ instanceId: 'ally-1', name: 'Ally' })
+    const enemy = makeCard({ instanceId: 'enemy-1', name: 'Enemy' })
+    let state = withZones(twoPlayerGame(), 'p1', { battlefield: [cultivator, ally] })
+    state = withZones(state, 'p2', { battlefield: [enemy] })
+
+    // main1 -> combat -> main2 -> end (queues the end step trigger)
+    state = gameReducer(state, { type: 'NEXT_STEP' })
+    state = gameReducer(state, { type: 'NEXT_STEP' })
+    state = gameReducer(state, { type: 'NEXT_STEP' })
+
+    expect(state.currentPhase).toBe('end')
+    expect(state.stack).toHaveLength(1)
+    expect(state.stack[0].kind).toBe('trigger')
+    expect(state.stack[0].triggerEffect?.kind).toBe('generic')
+
+    const resolved = gameReducer(state, { type: 'RESOLVE_STACK' })
+    expect(getPlayer(resolved, 'p1').zones.battlefield.find(c => c.instanceId === 'cultivator-1')?.plusOneCounters).toBe(1)
+    expect(getPlayer(resolved, 'p1').zones.battlefield.find(c => c.instanceId === 'ally-1')?.plusOneCounters).toBe(1)
+    expect(getPlayer(resolved, 'p2').zones.battlefield.find(c => c.instanceId === 'enemy-1')?.plusOneCounters).toBe(1)
+  })
+
+  it('queues and resolves combat damage to player triggers', () => {
+    const magpie = makeCard({
+      instanceId: 'magpie-1',
+      name: 'Thieving Magpie',
+      power: 1,
+      toughness: 3,
+      oracleText: 'Whenever this creature deals combat damage to a player, draw a card.',
+    })
+    const libraryCard = makeCard({ instanceId: 'lib-magpie-1', name: 'Library Card' })
+    let state = withZones(twoPlayerGame(), 'p1', { battlefield: [magpie], library: [libraryCard] })
+    state = { ...state, currentPhase: 'combat' }
+
+    state = gameReducer(state, { type: 'DECLARE_ATTACKER', playerId: 'p1', cardId: 'magpie-1', defendingPlayerId: 'p2' })
+    state = gameReducer(state, { type: 'RESOLVE_COMBAT' })
+
+    expect(getPlayer(state, 'p2').life).toBe(39)
+    expect(state.stack).toHaveLength(1)
+    expect(state.stack[0].kind).toBe('trigger')
+    expect(state.stack[0].abilityLabel).toBe('Combat damage trigger')
+
+    const resolved = gameReducer(state, { type: 'RESOLVE_STACK' })
+    expect(getPlayer(resolved, 'p1').zones.hand.some(c => c.instanceId === 'lib-magpie-1')).toBe(true)
+  })
+
+  it('resolves targeted combat damage triggers and chains follow-up triggers (Hapatra)', () => {
+    const hapatra = makeCard({
+      instanceId: 'hapatra-1',
+      name: 'Hapatra, Vizier of Poisons',
+      power: 2,
+      toughness: 2,
+      oracleText: 'Whenever Hapatra, Vizier of Poisons deals combat damage to a player, you may put a -1/-1 counter on target creature.\nWhenever you put one or more -1/-1 counters on a creature, create a 1/1 green Snake creature token with deathtouch.',
+    })
+    const victim = makeCard({ instanceId: 'victim-hap-1', name: 'Victim', power: 4, toughness: 4 })
+    let state = withZones(twoPlayerGame(), 'p1', { battlefield: [hapatra] })
+    state = withZones(state, 'p2', { battlefield: [victim] })
+    state = { ...state, currentPhase: 'combat' }
+
+    state = gameReducer(state, { type: 'DECLARE_ATTACKER', playerId: 'p1', cardId: 'hapatra-1', defendingPlayerId: 'p2' })
+    state = gameReducer(state, { type: 'RESOLVE_COMBAT' })
+
+    expect(state.stack).toHaveLength(1)
+    expect(state.pendingTargetChoice?.source).toBe('trigger')
+    expect(state.pendingTargetChoice?.targetType).toBe('battlefield_creature')
+
+    state = gameReducer(state, {
+      type: 'SET_PENDING_TARGET',
+      playerId: 'p1',
+      stackItemId: state.pendingTargetChoice?.stackItemId ?? '',
+      targetCardId: 'victim-hap-1',
+    })
+    state = gameReducer(state, { type: 'RESOLVE_STACK' })
+
+    expect(getPlayer(state, 'p2').zones.battlefield.find(c => c.instanceId === 'victim-hap-1')?.minusOneCounters).toBe(1)
+    // The counter placement chains Hapatra's Snake trigger onto the stack
+    expect(state.stack).toHaveLength(1)
+    state = gameReducer(state, { type: 'RESOLVE_STACK' })
+    expect(getPlayer(state, 'p1').zones.battlefield.some(c => c.isToken && c.name === 'Snake')).toBe(true)
+  })
+
+  it('queues whenever-you-draw triggers from manual draws', () => {
+    const archivist = makeCard({
+      instanceId: 'archivist-1',
+      name: 'Sylvan Archivist',
+      oracleText: 'Whenever you draw a card, create a Treasure token.',
+    })
+    const libraryCard = makeCard({ instanceId: 'lib-arch-1', name: 'Library Card' })
+    let state = withZones(twoPlayerGame(), 'p1', { battlefield: [archivist], library: [libraryCard] })
+
+    state = gameReducer(state, { type: 'DRAW_CARD', playerId: 'p1' })
+    expect(getPlayer(state, 'p1').zones.hand.some(c => c.instanceId === 'lib-arch-1')).toBe(true)
+    expect(state.stack).toHaveLength(1)
+    expect(state.stack[0].abilityLabel).toBe('Draw trigger')
+
+    const resolved = gameReducer(state, { type: 'RESOLVE_STACK' })
+    expect(getPlayer(resolved, 'p1').zones.battlefield.some(c => c.isToken && c.name === 'Treasure')).toBe(true)
+  })
+
+  it('does not queue draw triggers when the library is empty', () => {
+    const archivist = makeCard({
+      instanceId: 'archivist-2',
+      name: 'Sylvan Archivist',
+      oracleText: 'Whenever you draw a card, create a Treasure token.',
+    })
+    const state = withZones(twoPlayerGame(), 'p1', { battlefield: [archivist], library: [] })
+    const next = gameReducer(state, { type: 'DRAW_CARD', playerId: 'p1' })
+    expect(next.stack).toHaveLength(0)
+  })
+
+  it('queues draw triggers from the turn draw step', () => {
+    const archivist = makeCard({
+      instanceId: 'archivist-3',
+      name: 'Sylvan Archivist',
+      oracleText: 'Whenever you draw a card, create a Treasure token.',
+    })
+    const libraryCard = makeCard({ instanceId: 'lib-arch-3', name: 'Library Card' })
+    let state = withZones(twoPlayerGame(), 'p2', { battlefield: [archivist], library: [libraryCard] })
+    state = { ...state, currentPhase: 'end' }
+
+    // Advancing past p1's end step rolls into p2's turn: untap, upkeep, draw
+    state = gameReducer(state, { type: 'NEXT_STEP' })
+
+    expect(getPlayer(state, 'p2').zones.hand.some(c => c.instanceId === 'lib-arch-3')).toBe(true)
+    expect(state.stack).toHaveLength(1)
+    expect(state.stack[0].casterId).toBe('p2')
+    expect(state.stack[0].abilityLabel).toBe('Draw trigger')
+  })
+
+  it('emits draw triggers for draws made by resolved effects', () => {
+    const archivist = makeCard({
+      instanceId: 'archivist-4',
+      name: 'Sylvan Archivist',
+      oracleText: 'Whenever you draw a card, create a Treasure token.',
+    })
+    const magpie = makeCard({
+      instanceId: 'magpie-2',
+      name: 'Thieving Magpie',
+      power: 1,
+      toughness: 3,
+      oracleText: 'Whenever this creature deals combat damage to a player, draw a card.',
+    })
+    const libraryCard = makeCard({ instanceId: 'lib-arch-4', name: 'Library Card' })
+    let state = withZones(twoPlayerGame(), 'p1', { battlefield: [archivist, magpie], library: [libraryCard] })
+    state = { ...state, currentPhase: 'combat' }
+
+    state = gameReducer(state, { type: 'DECLARE_ATTACKER', playerId: 'p1', cardId: 'magpie-2', defendingPlayerId: 'p2' })
+    state = gameReducer(state, { type: 'RESOLVE_COMBAT' })
+    // Resolve the combat damage trigger (draw a card) — the draw chains the archivist trigger
+    state = gameReducer(state, { type: 'RESOLVE_STACK' })
+    expect(state.stack).toHaveLength(1)
+    expect(state.stack[0].abilityLabel).toBe('Draw trigger')
+
+    state = gameReducer(state, { type: 'RESOLVE_STACK' })
+    expect(getPlayer(state, 'p1').zones.battlefield.some(c => c.isToken && c.name === 'Treasure')).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Trigger stack controls (Phase 4)
+// ---------------------------------------------------------------------------
+
+describe('REMOVE_STACK_ITEM', () => {
+  function withZones(state: GameState, playerId: string, zones: Partial<Player['zones']>): GameState {
+    return {
+      ...state,
+      players: state.players.map(player =>
+        player.id === playerId ? { ...player, zones: { ...player.zones, ...zones } } : player
+      ),
+    }
+  }
+
+  function stateWithHapatraTrigger() {
+    const hapatra = makeCard({
+      instanceId: 'hapatra-skip-1',
+      name: 'Hapatra, Vizier of Poisons',
+      power: 2,
+      toughness: 2,
+      oracleText: 'Whenever Hapatra, Vizier of Poisons deals combat damage to a player, you may put a -1/-1 counter on target creature.',
+    })
+    const victim = makeCard({ instanceId: 'victim-skip-1', name: 'Victim', power: 4, toughness: 4 })
+    let state = withZones(twoPlayerGame(), 'p1', { battlefield: [hapatra] })
+    state = withZones(state, 'p2', { battlefield: [victim] })
+    state = { ...state, currentPhase: 'combat' }
+    state = gameReducer(state, { type: 'DECLARE_ATTACKER', playerId: 'p1', cardId: 'hapatra-skip-1', defendingPlayerId: 'p2' })
+    return gameReducer(state, { type: 'RESOLVE_COMBAT' })
+  }
+
+  it('lets the controller skip an optional trigger without applying its effect', () => {
+    let state = stateWithHapatraTrigger()
+    expect(state.stack).toHaveLength(1)
+    expect(state.pendingTargetChoice).not.toBeNull()
+
+    state = gameReducer(state, { type: 'REMOVE_STACK_ITEM', playerId: 'p1', stackItemId: state.stack[0].id })
+
+    expect(state.stack).toHaveLength(0)
+    expect(state.pendingTargetChoice).toBeNull()
+    expect(getPlayer(state, 'p2').zones.battlefield.find(c => c.instanceId === 'victim-skip-1')?.minusOneCounters).toBe(0)
+    expect(state.log[state.log.length - 1].description).toContain('skipped')
+  })
+
+  it('rejects removal by a player who does not control the trigger', () => {
+    const state = stateWithHapatraTrigger()
+    const next = gameReducer(state, { type: 'REMOVE_STACK_ITEM', playerId: 'p2', stackItemId: state.stack[0].id })
+    expect(next).toBe(state)
+  })
+
+  it('allows removal by others when the host controls all players', () => {
+    let state = stateWithHapatraTrigger()
+    state = { ...state, hostControlsAllPlayers: true }
+    const next = gameReducer(state, { type: 'REMOVE_STACK_ITEM', playerId: 'p2', stackItemId: state.stack[0].id })
+    expect(next.stack).toHaveLength(0)
+  })
+
+  it('does not remove spell stack items', () => {
+    let state = twoPlayerGame()
+    const spellCard = makeCard({ instanceId: 'spell-skip-1', name: 'Some Spell', typeLine: 'Instant', power: null, toughness: null })
+    state = {
+      ...state,
+      stack: [{
+        id: 'stack-spell-1',
+        card: spellCard,
+        casterId: 'p1',
+        casterName: 'Alice',
+        source: 'hand' as const,
+        kind: 'spell' as const,
+      }],
+    }
+    const next = gameReducer(state, { type: 'REMOVE_STACK_ITEM', playerId: 'p1', stackItemId: 'stack-spell-1' })
+    expect(next).toBe(state)
+  })
+
+  it('removes a mistaken trigger below the top of the stack', () => {
+    let state = stateWithHapatraTrigger()
+    const triggerId = state.stack[0].id
+    const spellCard = makeCard({ instanceId: 'spell-top-1', name: 'Response Spell', typeLine: 'Instant', power: null, toughness: null })
+    state = {
+      ...state,
+      stack: [
+        ...state.stack,
+        {
+          id: 'stack-spell-top',
+          card: spellCard,
+          casterId: 'p2',
+          casterName: 'Bob',
+          source: 'hand' as const,
+          kind: 'spell' as const,
+        },
+      ],
+    }
+
+    const next = gameReducer(state, { type: 'REMOVE_STACK_ITEM', playerId: 'p1', stackItemId: triggerId })
+    expect(next.stack).toHaveLength(1)
+    expect(next.stack[0].id).toBe('stack-spell-top')
   })
 })

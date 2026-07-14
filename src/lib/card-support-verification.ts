@@ -80,6 +80,78 @@ const VERIFICATIONS: SupportVerification[] = [
     testFile: 'src/lib/__tests__/game-reducer.test.ts',
     testName: 'removes all counters, caster draws and loses that much life',
   },
+  {
+    reasonCode: 'activated-ability',
+    testFile: 'src/lib/__tests__/card-rules.test.ts',
+    testName: 'parses activated abilities from real oracle texts across both decks',
+    notes: 'Generic cost/effect primitive parsing (Phase 3)',
+  },
+  {
+    reasonCode: 'activated-ability',
+    cardNames: ['Chitterspitter'],
+    testFile: 'src/lib/__tests__/game-reducer.test.ts',
+    testName: 'creates a token after paying mana and tapping the source (Chitterspitter)',
+  },
+  {
+    reasonCode: 'activated-ability',
+    cardNames: ['Gilded Goose'],
+    testFile: 'src/lib/__tests__/game-reducer.test.ts',
+    testName: 'auto-sacrifices the only matching permanent for a sac cost (Gilded Goose)',
+  },
+  {
+    reasonCode: 'activated-ability',
+    cardNames: ['Ravenous Squirrel'],
+    testFile: 'src/lib/__tests__/game-reducer.test.ts',
+    testName: 'requires an explicit selection for heterogeneous sacrifice costs (Ravenous Squirrel)',
+  },
+  {
+    reasonCode: 'activated-ability',
+    cardNames: ['Carnifex Demon'],
+    testFile: 'src/lib/__tests__/game-reducer.test.ts',
+    testName: 'removes a counter as a cost and spreads counters to each other creature (Carnifex Demon)',
+  },
+  {
+    reasonCode: 'activated-ability',
+    cardNames: ['The Scorpion God'],
+    testFile: 'src/lib/__tests__/game-reducer.test.ts',
+    testName: 'resolves targeted counter placement through the stack (The Scorpion God)',
+  },
+  {
+    reasonCode: 'activated-ability',
+    cardNames: ['Contagion Clasp'],
+    testFile: 'src/lib/__tests__/game-reducer.test.ts',
+    testName: 'opens a proliferate choice from a generic ability (Contagion Clasp)',
+  },
+  {
+    reasonCode: 'activated-ability',
+    cardNames: ['Talisman of Resilience'],
+    testFile: 'src/lib/__tests__/game-reducer.test.ts',
+    testName: 'applies self-damage riders on pain-mana abilities (Talisman of Resilience)',
+  },
+  {
+    reasonCode: 'activated-ability',
+    cardNames: ['The Shire'],
+    testFile: 'src/lib/__tests__/game-reducer.test.ts',
+    testName: 'taps an untapped creature as part of an ability cost (The Shire)',
+  },
+  {
+    reasonCode: 'activated-ability',
+    cardNames: ['Ifnir Deadlands'],
+    testFile: 'src/lib/__tests__/game-reducer.test.ts',
+    testName: 'pays life costs and rejects activation when life is insufficient',
+  },
+  {
+    reasonCode: 'triggered-ability',
+    testFile: 'src/lib/__tests__/card-rules.test.ts',
+    testName: 'parses triggered abilities from real oracle texts across both decks',
+    notes: 'Generic trigger event/effect parsing (Phase 4)',
+  },
+  {
+    reasonCode: 'triggered-ability',
+    cardNames: ['Hapatra, Vizier of Poisons'],
+    testFile: 'src/lib/__tests__/game-reducer.test.ts',
+    testName: 'resolves targeted combat damage triggers and chains follow-up triggers (Hapatra)',
+  },
 ]
 
 function normalizeCardName(name: string): string {

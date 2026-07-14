@@ -1,4 +1,4 @@
-import type { CastOptions, ColorSymbol, GameCard, GraveyardTargetType, ManaPool, Player, QueuedEffectStep, TargetChoiceType, TokenTemplateKey } from '../types/game-state.ts'
+import type { CastOptions, ColorSymbol, GameCard, GenericAbilityEffect, GraveyardTargetType, ManaPool, Player, QueuedEffectStep, TargetChoiceType, TokenTemplateKey } from '../types/game-state.ts'
 import { getBespokeActivatedAbilities, getBespokeCastChoiceSpec, getBespokeTriggeredAbilities } from './card-support/index.ts'
 
 const COLOR_ORDER: ColorSymbol[] = ['W', 'U', 'B', 'R', 'G', 'C']
@@ -58,7 +58,20 @@ export type CastChoiceSpec =
   | { kind: 'discard_cards'; title: string; count: number; min: number; max: number }
   | { kind: 'modal'; title: string; modes: Array<{ id: string; label: string }> }
 
+export interface GenericAbilityCost {
+  tapSource: boolean
+  mana: string | null
+  life: number
+  sacrificeSource: boolean
+  sacrificePermanent: { typeWords: string[]; count: number } | null
+  removeCounters: { counter: 'plusOne' | 'minusOne'; amount: number } | null
+  tapUntappedCreatures: number
+}
+
+export type { GenericAbilityEffect }
+
 export type ActivatedAbilityDefinition =
+  | { id: string; label: string; kind: 'generic'; requiresTap: boolean; cost: GenericAbilityCost; effects: GenericAbilityEffect[]; target: TargetChoiceType | null }
   | { id: string; label: string; kind: 'add_mana'; color: ColorSymbol; amount: number; requiresTap: boolean; sacrifice?: boolean; genericCost?: number }
   | { id: string; label: string; kind: 'add_mana_from_tapped_tokens'; requiresTap: boolean; lifeCost: number; genericCost?: number }
   | { id: string; label: string; kind: 'draw_card'; requiresTap: boolean; sacrifice: boolean; genericCost: number }
@@ -90,6 +103,8 @@ export type TriggerEventType =
   | 'minus_one_counters_placed'
   | 'attacks'
   | 'creature_dies'
+  | 'combat_damage_to_player'
+  | 'card_drawn'
   | 'upkeep'
   | 'end_step'
   | 'spell_cast'
@@ -110,6 +125,7 @@ export type TriggerEffectDefinition =
   | { kind: 'return_graveyard_creature_to_hand'; target: GraveyardTargetType }
   | { kind: 'persist_self' }
   | { kind: 'drain_each_opponent'; amount: number; gainLife: number }
+  | { kind: 'generic'; effects: GenericAbilityEffect[] }
 
 export interface TriggeredAbilityDefinition {
   id: string
@@ -131,6 +147,7 @@ export interface TriggeredAbilityDefinition {
     | 'token_you_create_or_sacrifice'
     | 'minus_one_counters_you_put_on_creature'
     | 'opponent_creature_with_minus_one_counter_dies'
+    | 'you_draw_card'
 }
 
 export type LandEntryEffectDefinition =
@@ -592,6 +609,259 @@ export function getLandManaOptions(card: Pick<GameCard, 'name' | 'typeLine' | 'o
   return COLOR_ORDER.filter(color => options.has(color))
 }
 
+function parseGenericAbilityCostSegment(segment: string, cost: GenericAbilityCost): boolean {
+  const text = segment.trim().toLowerCase()
+  if (!text) return false
+
+  if (text === '{t}') {
+    cost.tapSource = true
+    return true
+  }
+
+  if (/^(\{[0-9wubrgc]+\})+$/.test(text)) {
+    cost.mana = `${cost.mana ?? ''}${text.toUpperCase()}`
+    return true
+  }
+
+  const lifeMatch = text.match(/^pay (a|an|one|two|three|four|five|six|seven|\d+) life$/)
+  if (lifeMatch) {
+    cost.life += wordToNumber(lifeMatch[1])
+    return true
+  }
+
+  if (/^sacrifice (this (artifact|creature|permanent|token|land|enchantment)|it)$/.test(text)) {
+    cost.sacrificeSource = true
+    return true
+  }
+
+  const sacrificeMatch = text.match(/^sacrifice (?:a|an) ([a-z][a-z ]*)$/)
+  if (sacrificeMatch) {
+    const typeWords = sacrificeMatch[1].split(' or ').map(word => word.trim()).filter(Boolean)
+    if (typeWords.length === 0) return false
+    cost.sacrificePermanent = { typeWords, count: 1 }
+    return true
+  }
+
+  const removeMatch = text.match(/^remove (a|an|one|two|three|\d+) ([+-]1\/[+-]1) counters? from (this \w+|it)$/)
+  if (removeMatch) {
+    cost.removeCounters = {
+      counter: removeMatch[2].startsWith('+') ? 'plusOne' : 'minusOne',
+      amount: wordToNumber(removeMatch[1]),
+    }
+    return true
+  }
+
+  const tapCreaturesMatch = text.match(/^tap (an|one|two|three|\d+) untapped creatures? you control$/)
+  if (tapCreaturesMatch) {
+    cost.tapUntappedCreatures = wordToNumber(tapCreaturesMatch[1])
+    return true
+  }
+
+  return false
+}
+
+function parseGenericAbilityEffectSentence(
+  sentence: string,
+  player: Pick<Player, 'commander'>
+): GenericAbilityEffect[][] | null {
+  const text = sentence.trim().toLowerCase().replace(/\.$/, '')
+  if (!text) return []
+
+  const manaMatch = text.match(/^add ((?:\{[wubrgc]\})+(?: or (?:\{[wubrgc]\})+)*)$/)
+  if (manaMatch) {
+    const alternatives = manaMatch[1].split(' or ').map(part => {
+      const symbols = part.match(/\{([wubrgc])\}/g) ?? []
+      const counts = new Map<ColorSymbol, number>()
+      for (const symbol of symbols) {
+        const color = symbol.replace(/[{}]/g, '').toUpperCase() as ColorSymbol
+        counts.set(color, (counts.get(color) ?? 0) + 1)
+      }
+      return [...counts.entries()].map(([color, amount]) => ({ kind: 'add_mana' as const, color, amount }))
+    })
+    return alternatives
+  }
+
+  if (text === 'add one mana of any color') {
+    const colors: ColorSymbol[] = player.commander?.colorIdentity?.length ? player.commander.colorIdentity : ['W', 'U', 'B', 'R', 'G']
+    return colors.map(color => [{ kind: 'add_mana' as const, color, amount: 1 }])
+  }
+
+  const drawMatch = text.match(/^(?:you )?draws? (a|an|one|two|three|four|\d+) cards?$/)
+  if (drawMatch) {
+    return [[{ kind: 'draw_cards', amount: wordToNumber(drawMatch[1]) }]]
+  }
+
+  const gainLifeMatch = text.match(/^(?:you )?gains? (\d+) life$/)
+  if (gainLifeMatch) {
+    return [[{ kind: 'gain_life', amount: Number(gainLifeMatch[1]) }]]
+  }
+
+  const selfDamageMatch = text.match(/^this \w+ deals (\d+) damage to you$/)
+  if (selfDamageMatch) {
+    return [[{ kind: 'lose_life', amount: Number(selfDamageMatch[1]) }]]
+  }
+
+  const createMatch = text.match(/^create ([^.]+?) tokens?(?: named [\w ]+)?$/)
+  if (createMatch) {
+    const fragment = createMatch[1].trim()
+    if (fragment.startsWith('x ')) return null
+    const countMatch = fragment.match(/^(a|an|one|two|three|four|five|six|seven|\d+)\b/)
+    const count = wordToNumber(countMatch?.[1] ?? 'one')
+    const tokenKey = inferTokenKey(fragment)
+    if (!tokenKey || count <= 0) return null
+    return [[{ kind: 'create_tokens', tokenKey, count, tapped: fragment.includes('tapped') }]]
+  }
+
+  const countersEachMatch = text.match(/^put (a|an|one|two|three|\d+) ([+-]1\/[+-]1) counters? on each (.+)$/)
+  if (countersEachMatch) {
+    const scopeText = countersEachMatch[3]
+    const scope =
+      scopeText === 'other creature' ? 'each_other_creature' as const
+      : scopeText === 'creature' ? 'each_creature' as const
+      : scopeText === 'creature token you control' ? 'each_creature_token_you_control' as const
+      : null
+    if (!scope) return null
+    return [[{
+      kind: 'put_counters_each',
+      counter: countersEachMatch[2].startsWith('+') ? 'plusOne' : 'minusOne',
+      amount: wordToNumber(countersEachMatch[1]),
+      scope,
+    }]]
+  }
+
+  const countersTargetMatch = text.match(/^put (a|an|one|two|three|\d+) ([+-]1\/[+-]1) counters? on (another )?target creature( an opponent controls)?$/)
+  if (countersTargetMatch) {
+    return [[{
+      kind: 'put_counters_target_creature',
+      counter: countersTargetMatch[2].startsWith('+') ? 'plusOne' : 'minusOne',
+      amount: wordToNumber(countersTargetMatch[1]),
+      restriction: countersTargetMatch[4] ? 'opponent_controls' : countersTargetMatch[3] ? 'another' : 'none',
+    }]]
+  }
+
+  if (text === 'proliferate') {
+    return [[{ kind: 'proliferate' }]]
+  }
+
+  const scryMatch = text.match(/^scry (\d+)$/)
+  if (scryMatch) {
+    return [[{ kind: 'scry', amount: Number(scryMatch[1]) }]]
+  }
+
+  const surveilMatch = text.match(/^surveil (\d+)$/)
+  if (surveilMatch) {
+    return [[{ kind: 'surveil', amount: Number(surveilMatch[1]) }]]
+  }
+
+  return null
+}
+
+function genericAbilityLabel(effects: GenericAbilityEffect[], cost: GenericAbilityCost): string {
+  const parts: string[] = []
+  for (const effect of effects) {
+    if (effect.kind === 'add_mana') parts.push(`Add ${effect.color}${effect.amount > 1 ? effect.amount : ''}`)
+    if (effect.kind === 'draw_cards') parts.push(effect.amount === 1 ? 'Draw a card' : `Draw ${effect.amount}`)
+    if (effect.kind === 'gain_life') parts.push(`Gain ${effect.amount} life`)
+    if (effect.kind === 'create_tokens') parts.push(`Create ${effect.count > 1 ? `${effect.count} ` : ''}${getTokenTemplate(effect.tokenKey).name}${effect.count > 1 ? 's' : ''}`)
+    if (effect.kind === 'put_counters_each' || effect.kind === 'put_counters_target_creature') {
+      parts.push(`${effect.counter === 'plusOne' ? '+1/+1' : '-1/-1'} counter${effect.amount > 1 ? 's' : ''}`)
+    }
+    if (effect.kind === 'proliferate') parts.push('Proliferate')
+    if (effect.kind === 'scry') parts.push(`Scry ${effect.amount}`)
+    if (effect.kind === 'surveil') parts.push(`Surveil ${effect.amount}`)
+  }
+  const prefix = cost.sacrificePermanent
+    ? `Sac ${cost.sacrificePermanent.typeWords.join('/')}: `
+    : cost.sacrificeSource
+    ? 'Sac: '
+    : ''
+  return `${prefix}${parts.join(' + ') || 'Activate'}`
+}
+
+const GENERIC_ABILITY_MAX_VARIANTS = 6
+
+export function parseGenericActivatedAbilities(
+  card: Pick<GameCard, 'name' | 'typeLine' | 'oracleText'>,
+  player: Pick<Player, 'commander'>,
+  options?: { skipManaOnlyLines?: boolean; skipFetchLines?: boolean }
+): ActivatedAbilityDefinition[] {
+  const abilities: ActivatedAbilityDefinition[] = []
+  const lines = (card.oracleText ?? '').split('\n')
+
+  lines.forEach((rawLine, lineIndex) => {
+    if (rawLine.includes('"')) return
+    const line = rawLine.replace(/\([^)]*\)/g, '').trim()
+    const lineMatch = line.match(/^([^:]+):\s*(.+)$/)
+    if (!lineMatch) return
+
+    const cost: GenericAbilityCost = {
+      tapSource: false,
+      mana: null,
+      life: 0,
+      sacrificeSource: false,
+      sacrificePermanent: null,
+      removeCounters: null,
+      tapUntappedCreatures: 0,
+    }
+    const costSegments = lineMatch[1].split(',').map(segment => segment.trim())
+    if (!costSegments.every(segment => parseGenericAbilityCostSegment(segment, cost))) return
+
+    if (options?.skipFetchLines && /search your library/i.test(lineMatch[2])) return
+
+    const sentences = lineMatch[2]
+      .split(/(?<=\.)\s+/)
+      .map(sentence => sentence.trim())
+      .filter(Boolean)
+      .filter(sentence => !/^activate only as a sorcery\.?$/i.test(sentence))
+    if (sentences.some(sentence => /^activate only/i.test(sentence))) return
+    if (sentences.length === 0) return
+
+    // Each sentence parses to a list of alternatives (mana choices produce
+    // several); compound "X and Y" sentences fall back to per-part parsing.
+    const sentenceAlternatives: GenericAbilityEffect[][][] = []
+    for (const sentence of sentences) {
+      let parsed = parseGenericAbilityEffectSentence(sentence, player)
+      if (!parsed) {
+        const parts = sentence.replace(/\.$/, '').split(/,? and /)
+        if (parts.length > 1) {
+          const partResults = parts.map(part => parseGenericAbilityEffectSentence(part, player))
+          if (partResults.every((result): result is GenericAbilityEffect[][] => result !== null && result.length === 1)) {
+            parsed = [partResults.flatMap(result => result[0])]
+          }
+        }
+      }
+      if (!parsed) return
+      if (parsed.length > 0) sentenceAlternatives.push(parsed)
+    }
+    if (sentenceAlternatives.length === 0) return
+
+    let variants: GenericAbilityEffect[][] = [[]]
+    for (const alternatives of sentenceAlternatives) {
+      variants = variants.flatMap(variant => alternatives.map(alternative => [...variant, ...alternative]))
+      if (variants.length > GENERIC_ABILITY_MAX_VARIANTS) return
+    }
+
+    for (const [variantIndex, effects] of variants.entries()) {
+      if (effects.length === 0) continue
+      const targetedEffects = effects.filter(effect => effect.kind === 'put_counters_target_creature')
+      if (targetedEffects.length > 1) continue
+      if (options?.skipManaOnlyLines && effects.every(effect => effect.kind === 'add_mana')) continue
+
+      abilities.push({
+        id: `generic-${lineIndex}${variants.length > 1 ? `-${variantIndex}` : ''}`,
+        label: genericAbilityLabel(effects, cost),
+        kind: 'generic',
+        requiresTap: cost.tapSource,
+        cost,
+        effects,
+        target: targetedEffects.length === 1 ? 'battlefield_creature' : null,
+      })
+    }
+  })
+
+  return abilities
+}
+
 export function getActivatedAbilities(card: Pick<GameCard, 'name' | 'typeLine' | 'oracleText' | 'tapped'>, player: Pick<Player, 'commander'>): ActivatedAbilityDefinition[] {
   const abilities: ActivatedAbilityDefinition[] = []
   const oracleText = card.oracleText ?? ''
@@ -630,10 +900,14 @@ export function getActivatedAbilities(card: Pick<GameCard, 'name' | 'typeLine' |
         requiresTap: true,
       })
     }
+    abilities.push(...parseGenericActivatedAbilities(card, player, { skipManaOnlyLines: true, skipFetchLines: true }))
     return abilities
   }
 
   abilities.push(...getBespokeActivatedAbilities(card, player))
+  if (abilities.length === 0) {
+    abilities.push(...parseGenericActivatedAbilities(card, player))
+  }
 
   const genericTapMana = oracleText.match(/\{T\}:\s*Add ((?:\{[WUBRGC]\})+)/i)
   if (abilities.length === 0 && genericTapMana) {
@@ -660,7 +934,13 @@ export function getActivatedAbilities(card: Pick<GameCard, 'name' | 'typeLine' |
 
 export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'>): TriggeredAbilityDefinition[] {
   const abilities: TriggeredAbilityDefinition[] = getBespokeTriggeredAbilities(card)
-  const oracleText = (card.oracleText ?? '').replace(/\n/g, ' ').toLowerCase()
+  // Strip reminder text and quoted granted-ability text — those belong to the
+  // token or affected permanent, not to this card's own triggers.
+  const oracleText = (card.oracleText ?? '')
+    .replace(/\n/g, ' ')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/"[^"]*"/g, ' ')
+    .toLowerCase()
   const lowerName = card.name.toLowerCase()
 
   const entersTokens = parseCreateTokenEffect(oracleText, /(when|whenever) [^.,]* enters(?: the battlefield)?, create ([^.]+?) tokens?/i)
@@ -999,7 +1279,111 @@ export function getTriggeredAbilities(card: Pick<GameCard, 'name' | 'oracleText'
     }
   }
 
+  const diesTrigger = oracleText.match(/when(?:ever)? ([^.]+?) dies, ([^.]+)/)
+  if (diesTrigger?.[1] && diesTrigger[2]) {
+    const match = classifyDiesSubject(diesTrigger[1].trim(), lowerName)
+    const parsed = match ? parseTriggerEffectBody(diesTrigger[2]) : null
+    if (match && parsed && !hasDuplicateTriggeredAbility(abilities, 'creature_dies', match, parsed.effect, parsed.target)) {
+      abilities.push({
+        id: 'generic-dies-effect',
+        label: 'Dies trigger',
+        event: 'creature_dies',
+        match,
+        effect: parsed.effect,
+        target: parsed.target,
+      })
+    }
+  }
+
+  const genericUpkeepEffect = parseTriggeredSimpleEffect(oracleText, /at the beginning of your upkeep, ([^.]+)/i)
+  if (genericUpkeepEffect && !hasDuplicateTriggeredAbility(abilities, 'upkeep', 'your_upkeep', genericUpkeepEffect.effect, genericUpkeepEffect.target)) {
+    abilities.push({
+      id: 'generic-upkeep-effect',
+      label: 'Upkeep trigger',
+      event: 'upkeep',
+      match: 'your_upkeep',
+      effect: genericUpkeepEffect.effect,
+      target: genericUpkeepEffect.target,
+    })
+  }
+
+  const genericEachUpkeepEffect = parseTriggeredSimpleEffect(oracleText, /at the beginning of each upkeep, ([^.]+)/i)
+  if (genericEachUpkeepEffect && !hasDuplicateTriggeredAbility(abilities, 'upkeep', 'each_upkeep', genericEachUpkeepEffect.effect, genericEachUpkeepEffect.target)) {
+    abilities.push({
+      id: 'generic-each-upkeep-effect',
+      label: 'Upkeep trigger',
+      event: 'upkeep',
+      match: 'each_upkeep',
+      effect: genericEachUpkeepEffect.effect,
+      target: genericEachUpkeepEffect.target,
+    })
+  }
+
+  const genericEndStepEffect = parseTriggeredSimpleEffect(oracleText, /at the beginning of your end step, ([^.]+)/i)
+  if (genericEndStepEffect && !hasDuplicateTriggeredAbility(abilities, 'end_step', 'your_end_step', genericEndStepEffect.effect, genericEndStepEffect.target)) {
+    abilities.push({
+      id: 'generic-end-step-effect',
+      label: 'End step trigger',
+      event: 'end_step',
+      match: 'your_end_step',
+      effect: genericEndStepEffect.effect,
+      target: genericEndStepEffect.target,
+    })
+  }
+
+  const genericCastEffect = parseTriggeredSimpleEffect(oracleText, /whenever you cast a spell, ([^.]+)/i)
+  if (genericCastEffect && !hasDuplicateTriggeredAbility(abilities, 'spell_cast', 'spell_you_cast', genericCastEffect.effect, genericCastEffect.target)) {
+    abilities.push({
+      id: 'generic-cast-effect',
+      label: 'Cast trigger',
+      event: 'spell_cast',
+      match: 'spell_you_cast',
+      effect: genericCastEffect.effect,
+      target: genericCastEffect.target,
+    })
+  }
+
+  const combatDamageTrigger = oracleText.match(/whenever ([^.]+?) deals combat damage to a player, ([^.]+)/)
+  if (combatDamageTrigger?.[1] && combatDamageTrigger[2] && subjectRefersToSelf(combatDamageTrigger[1].trim(), lowerName)) {
+    const parsed = parseTriggerEffectBody(combatDamageTrigger[2])
+    if (parsed && !hasDuplicateTriggeredAbility(abilities, 'combat_damage_to_player', 'self', parsed.effect, parsed.target)) {
+      abilities.push({
+        id: 'generic-combat-damage-effect',
+        label: 'Combat damage trigger',
+        event: 'combat_damage_to_player',
+        match: 'self',
+        effect: parsed.effect,
+        target: parsed.target,
+      })
+    }
+  }
+
+  const drawTrigger = parseTriggeredSimpleEffect(oracleText, /whenever you draw a card, ([^.]+)/i)
+  if (drawTrigger && !hasDuplicateTriggeredAbility(abilities, 'card_drawn', 'you_draw_card', drawTrigger.effect, drawTrigger.target)) {
+    abilities.push({
+      id: 'generic-draw-effect',
+      label: 'Draw trigger',
+      event: 'card_drawn',
+      match: 'you_draw_card',
+      effect: drawTrigger.effect,
+      target: drawTrigger.target,
+    })
+  }
+
   return abilities
+}
+
+function subjectRefersToSelf(subject: string, lowerCardName: string): boolean {
+  if (subject === 'this creature' || subject === 'this card' || subject === 'this token' || subject === 'it') return true
+  const shortName = lowerCardName.split(',')[0].trim()
+  return subject === lowerCardName || (shortName.length > 0 && subject === shortName)
+}
+
+function classifyDiesSubject(subject: string, lowerCardName: string): TriggeredAbilityDefinition['match'] | null {
+  if (subjectRefersToSelf(subject, lowerCardName)) return 'self'
+  if (subject === 'another creature you control') return 'another_creature_you_control'
+  if (subject === 'a creature' || subject === 'another creature') return 'any_creature'
+  return null
 }
 
 export function getSimpleSpellDefinition(card: Pick<GameCard, 'name' | 'typeLine' | 'oracleText'>): SimpleSpellDefinition | null {
@@ -1536,16 +1920,35 @@ function parseTriggeredSimpleEffect(
 ): { effect: TriggerEffectDefinition; target: TriggeredAbilityDefinition['target'] } | null {
   const match = oracleText.match(pattern)
   if (!match?.[1]) return null
+  return parseTriggerEffectBody(match[1])
+}
 
-  const body = match[1].trim()
+function parseTriggerEffectBody(
+  body: string
+): { effect: TriggerEffectDefinition; target: TriggeredAbilityDefinition['target'] } | null {
+  const trimmed = body.trim()
+  // Conditional ("if it had...") and modal ("choose one —") triggers can't be
+  // simplified to their first effect — auto-firing them would be wrong.
+  if (trimmed.startsWith('if ') || trimmed.includes('choose ') || trimmed.includes('•')) return null
   const simpleEffect = getSimpleSpellDefinition({
     name: '',
     typeLine: 'Sorcery',
-    oracleText: body,
+    oracleText: trimmed,
   })
-  if (!simpleEffect) return null
+  if (simpleEffect) {
+    return simpleSpellToTriggerEffect(simpleEffect)
+  }
 
-  return simpleSpellToTriggerEffect(simpleEffect)
+  // Fall back to the Phase 3 generic-ability effect grammar (counters, life
+  // riders, proliferate, ...). Only unambiguous single-variant parses qualify.
+  const genericVariants = parseGenericAbilityEffectSentence(trimmed, { commander: null })
+  if (!genericVariants || genericVariants.length !== 1 || genericVariants[0].length === 0) return null
+
+  const effects = genericVariants[0]
+  const target = effects.some(effect => effect.kind === 'put_counters_target_creature')
+    ? 'battlefield_creature' as const
+    : 'none' as const
+  return { effect: { kind: 'generic', effects }, target }
 }
 
 function parseCreateTokenEffect(

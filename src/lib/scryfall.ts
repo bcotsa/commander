@@ -2,6 +2,20 @@ import type { ScryfallCard, ScryfallSearchResult } from '@/types/scryfall'
 import type { CommanderCard, ColorSymbol, ImportedDeck, ImportedDeckCard, TokenTemplateKey } from '../types/game-state.ts'
 
 const BASE = 'https://api.scryfall.com'
+
+// Scryfall rejects requests carrying a default HTTP-library User-Agent
+// (subcode generic_user_agent). Browsers drop the header silently, so this
+// only takes effect in Node (scripts/audit-deck-support.mjs, tests).
+function scryfallFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'CommanderTracker/0.7 (github.com/bcotsa/Commander)',
+      ...init?.headers,
+    },
+  })
+}
 const TOKEN_QUERY_BY_KEY: Record<TokenTemplateKey, string> = {
   treasure: '"Treasure" t:token',
   food: '"Food" t:token',
@@ -23,7 +37,7 @@ const tokenImageInflight = new Map<TokenTemplateKey, Promise<string>>()
 export async function searchCommanders(query: string): Promise<ScryfallCard[]> {
   if (!query.trim()) return []
   const q = encodeURIComponent(`is:commander game:paper name:${query}`)
-  const res = await fetch(`${BASE}/cards/search?q=${q}&order=name&unique=cards`)
+  const res = await scryfallFetch(`${BASE}/cards/search?q=${q}&order=name&unique=cards`)
   if (!res.ok) return []
   const data: ScryfallSearchResult = await res.json()
   return data.data ?? []
@@ -32,14 +46,14 @@ export async function searchCommanders(query: string): Promise<ScryfallCard[]> {
 export async function searchCards(query: string): Promise<ScryfallCard[]> {
   if (!query.trim()) return []
   const q = encodeURIComponent(`game:paper ${query}`)
-  const res = await fetch(`${BASE}/cards/search?q=${q}&order=name&unique=cards`)
+  const res = await scryfallFetch(`${BASE}/cards/search?q=${q}&order=name&unique=cards`)
   if (!res.ok) return []
   const data: ScryfallSearchResult = await res.json()
   return data.data ?? []
 }
 
 export async function getCardByName(name: string): Promise<ScryfallCard | null> {
-  const res = await fetch(`${BASE}/cards/named?fuzzy=${encodeURIComponent(name)}`)
+  const res = await scryfallFetch(`${BASE}/cards/named?fuzzy=${encodeURIComponent(name)}`)
   if (!res.ok) return null
   return res.json()
 }
@@ -55,7 +69,7 @@ export async function getTokenImageUri(tokenKey: TokenTemplateKey): Promise<stri
   const promise = (async () => {
     try {
       const q = encodeURIComponent(query)
-      const res = await fetch(`${BASE}/cards/search?q=${q}&include_extras=true&unique=art&order=released`)
+      const res = await scryfallFetch(`${BASE}/cards/search?q=${q}&include_extras=true&unique=art&order=released`)
       if (!res.ok) {
         tokenImageCache.set(tokenKey, '')
         return ''
@@ -100,7 +114,7 @@ export async function getCardsByNames(names: string[]): Promise<CardLookupResult
     let res: Response | null = null
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        res = await fetch(`${BASE}/cards/collection`, {
+        res = await scryfallFetch(`${BASE}/cards/collection`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ identifiers }),

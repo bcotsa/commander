@@ -82,6 +82,18 @@ export type TokenTemplateKey =
   | 'worm'
   | 'wolf'
 
+export type GenericAbilityEffect =
+  | { kind: 'add_mana'; color: ColorSymbol; amount: number }
+  | { kind: 'draw_cards'; amount: number }
+  | { kind: 'gain_life'; amount: number }
+  | { kind: 'lose_life'; amount: number }
+  | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number; tapped?: boolean }
+  | { kind: 'put_counters_each'; counter: 'plusOne' | 'minusOne'; amount: number; scope: 'each_creature' | 'each_other_creature' | 'each_creature_token_you_control' }
+  | { kind: 'put_counters_target_creature'; counter: 'plusOne' | 'minusOne'; amount: number; restriction: 'none' | 'another' | 'opponent_controls' }
+  | { kind: 'proliferate' }
+  | { kind: 'scry'; amount: number }
+  | { kind: 'surveil'; amount: number }
+
 export type TriggerEffectPayload =
   | { kind: 'create_tokens'; tokenKey: TokenTemplateKey; count: number; tapped?: boolean }
   | { kind: 'copy_token'; count: number; doubleIfTargetSubtype?: string }
@@ -96,6 +108,22 @@ export type TriggerEffectPayload =
   | { kind: 'return_graveyard_creature_to_battlefield'; target: GraveyardTargetType; tapped?: boolean; minusOneCounters?: number; exileOnLeave?: boolean }
   | { kind: 'return_graveyard_creature_to_hand'; target: GraveyardTargetType }
   | { kind: 'drain_each_opponent'; amount: number; gainLife: number }
+  | { kind: 'generic'; effects: GenericAbilityEffect[] }
+
+export type TriggerOccurrence =
+  | { type: 'enters_battlefield'; controllerId: string; card: GameCard }
+  | { type: 'land_enters'; controllerId: string; card: GameCard }
+  | { type: 'creature_enters'; controllerId: string; card: GameCard }
+  | { type: 'token_created'; controllerId: string; card: GameCard }
+  | { type: 'token_sacrificed'; controllerId: string; card: GameCard }
+  | { type: 'minus_one_counters_placed'; sourcePlayerId: string; controllerId: string; card: GameCard; amount: number }
+  | { type: 'attacks'; controllerId: string; card: GameCard }
+  | { type: 'creature_dies'; controllerId: string; card: GameCard }
+  | { type: 'combat_damage_to_player'; controllerId: string; card: GameCard; defendingPlayerId: string; amount: number }
+  | { type: 'card_drawn'; controllerId: string; amount: number }
+  | { type: 'upkeep'; activePlayerId: string }
+  | { type: 'end_step'; activePlayerId: string }
+  | { type: 'spell_cast'; controllerId: string; card: GameCard }
 
 export type QueuedEffectStep =
   | { kind: 'draw_cards'; amount: number; loseLife?: number }
@@ -339,6 +367,7 @@ export type ActionPayload =
   | { type: 'RESOLVE_COMBAT' }
   | { type: 'RESOLVE_STACK' }
   | { type: 'MANUAL_RESOLVE_STACK'; playerId: string; outcome: 'resolve' | 'counter'; destination?: ManualStackDestination }
+  | { type: 'REMOVE_STACK_ITEM'; playerId: string; stackItemId: string }
   | { type: 'PASS_PRIORITY'; playerId: string }
   | { type: 'SET_PLAYER_NAME'; playerId: string; name: string }
   | { type: 'UNDO' }

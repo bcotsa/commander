@@ -5,6 +5,7 @@ import { ColorPips } from '@/components/ui/ColorPips'
 import { CardPreview } from '@/components/ui/CardPreview'
 import type { CastOptions, ColorSymbol, Player, GameCard, ZoneName, TurnPhase, CombatState } from '@/types/game-state'
 import { canAutoPayManaCost, formatManaPool, getActivatedAbilities, getCastChoiceSpec, getPlaneswalkerAbilities, getSimpleSpellDefinition } from '@/lib/card-rules'
+import { canPayGenericAbilityCost } from '@/lib/ability-effects'
 import { getTokenImageUri } from '@/lib/scryfall'
 import { hasLegalTarget } from '@/lib/targeting'
 
@@ -461,6 +462,7 @@ export function PlayerTile({
   const [selected, setSelected] = useState<{ zone: ZoneName; card: GameCard } | null>(null)
   const [pendingCastCard, setPendingCastCard] = useState<{ zone: ZoneName; card: GameCard } | null>(null)
   const [pendingTokenManaAbility, setPendingTokenManaAbility] = useState<{ card: GameCard; abilityId: string } | null>(null)
+  const [pendingSacrificeAbility, setPendingSacrificeAbility] = useState<{ card: GameCard; abilityId: string; abilityLabel: string; candidates: GameCard[] } | null>(null)
   const [expandedZone, setExpandedZone] = useState<{ zone: 'graveyard' | 'exile'; title: string } | null>(null)
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null)
   const cardButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({})
@@ -505,6 +507,9 @@ export function PlayerTile({
     if (ability.kind === 'add_mana_from_tapped_tokens') {
       return !selected.card.tapped && player.life >= ability.lifeCost && battlefield.some(entry => entry.isToken && !entry.tapped)
     }
+    if (ability.kind === 'generic') {
+      return canPayGenericAbilityCost(player, selected.card, ability.cost)
+    }
     if (!ability.genericCost) return true
     return canAutoPayManaCost(
       player.manaPool,
@@ -512,6 +517,16 @@ export function PlayerTile({
       `{${ability.genericCost}}`,
       player
     )
+  }
+
+  function getGenericSacrificeCandidates(ability: ReturnType<typeof getActivatedAbilities>[number]): GameCard[] {
+    if (ability.kind !== 'generic' || !ability.cost.sacrificePermanent) return []
+    const typeWords = ability.cost.sacrificePermanent.typeWords
+    return [...battlefield, ...lands].filter(entry => {
+      const typeLine = entry.typeLine.toLowerCase()
+      const name = entry.name.toLowerCase()
+      return typeWords.some(word => typeLine.includes(word) || name === word)
+    })
   }
 
   function registerCardRef(cardId: string, node: HTMLButtonElement | null) {
@@ -525,6 +540,7 @@ export function PlayerTile({
       setSelected(null)
       setPendingCastCard(null)
       setPendingTokenManaAbility(null)
+      setPendingSacrificeAbility(null)
       setExpandedZone(null)
     }
 
@@ -585,6 +601,12 @@ export function PlayerTile({
             <button
               key={ability.id}
               onClick={() => {
+                const sacrificeCandidates = getGenericSacrificeCandidates(ability)
+                if (ability.kind === 'generic' && ability.cost.sacrificePermanent && new Set(sacrificeCandidates.map(entry => entry.name)).size > 1) {
+                  setPendingSacrificeAbility({ card, abilityId: ability.id, abilityLabel: ability.label, candidates: sacrificeCandidates })
+                  setSelected(null)
+                  return
+                }
                 onActivateAbility(card.instanceId, ability.id)
                 setSelected(null)
               }}
@@ -1142,6 +1164,40 @@ export function PlayerTile({
             setSelected(null)
           }}
         />,
+        document.body
+      )}
+
+      {pendingSacrificeAbility && createPortal(
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-violet-800 bg-slate-950/95 p-4 shadow-2xl">
+            <div className="mb-2 text-sm font-medium text-violet-200">
+              {pendingSacrificeAbility.card.name} — {pendingSacrificeAbility.abilityLabel}
+            </div>
+            <div className="mb-3 text-xs text-slate-400">Choose a permanent to sacrifice</div>
+            <div className="flex max-h-64 flex-col gap-1 overflow-y-auto">
+              {pendingSacrificeAbility.candidates.map(candidate => (
+                <button
+                  key={candidate.instanceId}
+                  onClick={() => {
+                    onActivateAbility(pendingSacrificeAbility.card.instanceId, pendingSacrificeAbility.abilityId, undefined, {
+                      selectedCardIds: [candidate.instanceId],
+                    })
+                    setPendingSacrificeAbility(null)
+                  }}
+                  className="rounded-md bg-slate-800 px-3 py-2 text-left text-xs font-medium text-white transition-colors hover:bg-red-900"
+                >
+                  {candidate.name}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setPendingSacrificeAbility(null)}
+              className="mt-3 w-full rounded-md bg-slate-700 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-slate-600"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>,
         document.body
       )}
 

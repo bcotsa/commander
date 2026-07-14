@@ -103,6 +103,11 @@ export function Game() {
           outcome,
           destination,
         })}
+        onRemoveStackItem={(playerId, stackItemId) => sendAction({
+          type: 'REMOVE_STACK_ITEM',
+          playerId,
+          stackItemId,
+        })}
       />
 
       {/* Player grid — fills remaining space */}
